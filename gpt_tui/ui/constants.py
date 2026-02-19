@@ -47,7 +47,7 @@ GROQ_MODELS: list[tuple[str, str]] = [
     ("mixtral-8x7b-32768",             "Mixtral 8x7B           [free · long ctx]"),
 ]
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "gemini-2.0-flash"
 
 # ─── Context window ──────────────────────────────────────────────────
 # Auto-summarization fires when total message chars exceed this.
