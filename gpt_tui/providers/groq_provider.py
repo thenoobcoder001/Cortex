@@ -56,4 +56,54 @@ class GroqProvider:
             delta = chunk.choices[0].delta.content or ""
             if delta:
                 parts.append(delta)
-        return "".join(
+        return "".join(parts).strip() or "(No content returned.)"
+
+    # ── Tool-calling (agentic) ────────────────────────────────────────
+    def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        tools: list[dict[str, Any]],
+    ) -> tuple[str | None, dict | None, list | None]:
+        """Single model call with tools.
+
+        Returns one of:
+          (final_text, None, None)         – model produced a text reply
+          (None, asst_msg_dict, tool_calls) – model wants to call tools
+        """
+        if not self.available:
+            raise RuntimeError("groq package missing")
+        if not self.api_key:
+            raise RuntimeError("missing GROQ API key")
+
+        client = Groq(api_key=self.api_key)
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            temperature=0.2,
+        )
+        choice = response.choices[0]
+        msg = choice.message
+
+        if msg.tool_calls:
+            # Serialise the assistant message so we can append it to messages
+            asst_dict: dict[str, Any] = {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+            return None, asst_dict, msg.tool_calls
+
+        return (msg.content or "(No response.)"), None, None
