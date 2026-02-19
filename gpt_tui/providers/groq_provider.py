@@ -68,8 +68,9 @@ class GroqProvider:
         """Single model call with tools.
 
         Returns one of:
-          (final_text, None, None)         – model produced a text reply
-          (None, asst_msg_dict, tool_calls) – model wants to call tools
+          (final_text, None, None)          – model produced a text reply
+          (None, asst_msg_dict, tool_calls)  – model wants to call tools
+        Raises RuntimeError on API errors.
         """
         if not self.available:
             raise RuntimeError("groq package missing")
@@ -77,18 +78,26 @@ class GroqProvider:
             raise RuntimeError("missing GROQ API key")
 
         client = Groq(api_key=self.api_key)
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=0.2,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=0.2,
+                max_tokens=8192,   # enough room for large file content in tool args
+            )
+        except Exception as exc:
+            err = str(exc)
+            # Groq returns 400 when tool call JSON is malformed / too long
+            if "tool_use_failed" in err or "failed_generation" in err:
+                raise RuntimeError("__TOOL_FAILED__") from exc
+            raise
+
         choice = response.choices[0]
         msg = choice.message
 
         if msg.tool_calls:
-            # Serialise the assistant message so we can append it to messages
             asst_dict: dict[str, Any] = {
                 "role": "assistant",
                 "content": msg.content or "",
