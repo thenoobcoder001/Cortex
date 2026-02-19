@@ -20,7 +20,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 @dataclass
 class AppConfig:
     api_key: str = ""
-    model: str = "llama-3.3-70b-versatile"
+    model: str = "gemini-2.0-flash"
     repo_root: str = ""
 
     @classmethod
@@ -33,7 +33,7 @@ class AppConfig:
             return cls()
         return cls(
             api_key=str(data.get("api_key", "")),
-            model=str(data.get("model", "llama-3.3-70b-versatile")),
+            model=str(data.get("model", "gemini-2.0-flash")),
             repo_root=str(data.get("repo_root", "")),
         )
 

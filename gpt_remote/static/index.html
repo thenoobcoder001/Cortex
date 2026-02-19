@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Codex Remote</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d0f14;
+            --surface: #161b22;
+            --accent: #ff6b6b;
+            --text: #e6edf3;
+            --text-dim: #8b949e;
+            --glass: rgba(22, 27, 34, 0.8);
+            --bubble-user: #1f6feb;
+            --bubble-ai: #21262d;
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Outfit', sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── Header ── */
+        header {
+            padding: 16px 20px;
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-weight: 600;
+            font-size: 1.2rem;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            background: #238636;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #238636;
+        }
+
+        /* ── Chat area ── */
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            font-size: 1rem;
+            line-height: 1.5;
+            position: relative;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .user {
+            align-self: flex-end;
+            background: var(--bubble-user);
+            border-bottom-right-radius: 4px;
+        }
+
+        .ai {
+            align-self: flex-start;
+            background: var(--bubble-ai);
+            border-bottom-left-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .system-log {
+            align-self: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            background: rgba(0, 0, 0, 0.2);
+            padding: 4px 12px;
+            border-radius: 12px;
+            text-align: center;
+            max-width: 90%;
+        }
+
+        pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            margin: 10px 0;
+            color: #d1d5db;
+        }
+
+        /* ── Input bar ── */
+        .input-wrapper {
+            padding: 20px;
+            background: var(--glass);
+            backdrop-filter: blur(16px);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .input-box {
+            background: #1c2128;
+            border: 1px solid #30363d;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            padding: 4px 6px 4px 16px;
+            transition: border-color 0.2s;
+        }
+
+        .input-box:focus-within {
+            border-color: var(--accent);
+        }
+
+        input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            padding: 10px 0;
+            font-size: 1rem;
+            outline: none;
+            font-family: inherit;
+        }
+
+        button#send-btn {
+            background: var(--accent);
+            border: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button#send-btn:active {
+            transform: scale(0.9);
+        }
+
+        /* ── Thinking Indicator ── */
+        .thinking {
+            display: flex;
+            gap: 4px;
+            padding: 4px 0;
+        }
+
+        .thinking span {
+            width: 6px;
+            height: 6px;
+            background: var(--text-dim);
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .thinking span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .thinking span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+
+            0%,
+            80%,
+            100% {
+                transform: scale(0);
+            }
+
+            40% {
+                transform: scale(1.0);
+            }
+        }
+
+        /* ── Tool execution bar ── */
+        #tool-status {
+            position: fixed;
+            bottom: 100px;
+            left: 20px;
+            right: 20px;
+            background: rgba(255, 107, 107, 0.1);
+            border: 1px solid rgba(255, 107, 107, 0.2);
+            color: var(--accent);
+            padding: 8px 16px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            display: none;
+            backdrop-filter: blur(8px);
+            z-index: 50;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+            </svg>
+            CODEX <span>REMOTE</span>
+        </div>
+        <div class="status">
+            <div class="dot"></div>
+            Online
+        </div>
+    </header>
+
+    <div id="chat-container">
+        <!-- Messages go here -->
+    </div>
+
+    <div id="tool-status">
+        Executing tool...
+    </div>
+
+    <div class="input-wrapper">
+        <form id="chat-form" class="input-box">
+            <input type="text" id="user-input" placeholder="Ask anything..." autocomplete="off">
+            <button type="submit" id="send-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const container = document.getElementById('chat-container');
+        const form = document.getElementById('chat-form');
+        const input = document.getElementById('user-input');
+        const toolStatus = document.getElementById('tool-status');
+
+        function appendMessage(role, content, type = 'text') {
+            const div = document.createElement('div');
+
+            if (role === 'system') {
+                div.className = 'system-log';
+                div.textContent = content;
+            } else {
+                div.className = `message ${role === 'user' ? 'user' : 'ai'}`;
+
+                // Very basic code block handling
+                if (content.includes('```')) {
+                    const parts = content.split('```');
+                    div.innerHTML = parts.map((p, i) =>
+                        i % 2 === 1 ? `<pre>${p.trim()}</pre>` : p.replace(/\n/g, '<br>')
+                    ).join('');
+                } else {
+                    div.innerHTML = content.replace(/\n/g, '<br>');
+                }
+            }
+
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            return div;
+        }
+
+        function showThinking() {
+            const div = document.createElement('div');
+            div.className = 'message ai';
+            div.id = 'thinking-indicator';
+            div.innerHTML = `<div class="thinking"><span></span><span></span><span></span></div>`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function hideThinking() {
+            const el = document.getElementById('thinking-indicator');
+            if (el) el.remove();
+        }
+
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            const text = input.value.trim();
+            if (!text) return;
+
+            input.value = '';
+            appendMessage('user', text);
+            showThinking();
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                let aiMessage = null;
+                let fullText = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = JSON.parse(line.substring(5));
+
+                        if (data.type === 'status') {
+                            // Update tool status or minor logs
+                            if (data.message.includes('Using tool')) {
+                                toolStatus.textContent = data.message;
+                                toolStatus.style.display = 'block';
+                            } else {
+                                toolStatus.style.display = 'none';
+                                appendMessage('system', data.message);
+                            }
+                        } else if (data.type === 'content') {
+                            hideThinking();
+                            fullText += data.content;
+                            if (!aiMessage) {
+                                aiMessage = appendMessage('ai', fullText);
+                            } else {
+                                // Re-render message (simple but effective for this demo)
+                                aiMessage.innerHTML = fullText.includes('```')
+                                    ? fullText.split('```').map((p, i) => i % 2 === 1 ? `<pre>${p.trim()}</pre>` : p.replace(/\n/g, '<br>')).join('')
+                                    : fullText.replace(/\n/g, '<br>');
+                            }
+                        }
+                    }
+                }
+                toolStatus.style.display = 'none';
+
+            } catch (err) {
+                hideThinking();
+                appendMessage('system', 'Error: ' + err.message);
+            }
+        };
+
+        // Welcome message
+        appendMessage('system', 'Codex Remote initialized. Connected to laptop.');
+        appendMessage('ai', 'Hello! I am your Codex assistant. I am running on your laptop and can execute commands, edit files, and more. What can I do for you?');
+
+    </script>
+</body>
+
+</html>
