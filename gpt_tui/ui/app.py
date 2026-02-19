@@ -1,3 +1,14 @@
+"""
+app.py — GptTuiApp: UI layout, lifecycle, event handlers, agentic worker loop.
+
+Responsibilities:
+  - Compose the Textual UI (layout, CSS, bindings)
+  - Handle user input, keyboard shortcuts, slash commands
+  - Run the agentic "ask_model" loop (model → tools → model → reply)
+  - Delegate tool execution to ToolsMixin
+  - Delegate branding/constants to constants.py
+  - Delegate modals to modals.py
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -26,278 +37,60 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 from textual import work, on
+from textual.events import Key
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     DirectoryTree,
     Footer,
     Header,
-    Input,
     RichLog,
     Static,
-    Label,
+    TextArea,
 )
 
 from gpt_tui.config import AppConfig
+from gpt_tui.providers.gemini_provider import GeminiProvider
 from gpt_tui.providers.groq_provider import GroqProvider
 from gpt_tui.services.file_service import RepoFileService
 
-# ─── Tool schemas for Groq native tool calling ───────────────────────
-TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Create or overwrite a file on disk with the given content.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Relative or absolute file path."},
-                    "content": {"type": "string", "description": "Full file content to write."},
-                },
-                "required": ["path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edit_file",
-            "description": "Edit a file by replacing an exact string with new content. Use this for targeted changes without rewriting the whole file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Relative or absolute file path."},
-                    "old_str": {"type": "string", "description": "The exact string to find and replace."},
-                    "new_str": {"type": "string", "description": "The replacement string."},
-                },
-                "required": ["path", "old_str", "new_str"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read and return the content of a file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Relative or absolute file path."},
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_file",
-            "description": "Permanently delete a file from disk.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Relative or absolute file path to delete."},
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "rename_file",
-            "description": "Rename or move a file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "old_path": {"type": "string", "description": "Current file path."},
-                    "new_path": {"type": "string", "description": "New file path."},
-                },
-                "required": ["old_path", "new_path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_directory",
-            "description": "Create a directory (and any missing parents).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Directory path to create."},
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_files",
-            "description": "List files in a directory within the repo.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "directory": {"type": "string", "description": "Directory path (optional, defaults to repo root)."},
-                },
-                "required": [],
-            },
-        },
-    },
-]
-
-
-# ─── Branding ────────────────────────────────────────────────────────
-APP_NAME = "GPT TUI"
-VERSION = "0.2.0"
-
-WELCOME_ART = r"""[bold #ff6b6b]
-   ██████╗ ██████╗ ████████╗  ████████╗██╗   ██╗██╗
-  ██╔════╝ ██╔══██╗╚══██╔══╝  ╚══██╔══╝██║   ██║██║
-  ██║  ███╗██████╔╝   ██║        ██║   ██║   ██║██║
-  ██║   ██║██╔═══╝    ██║        ██║   ██║   ██║██║
-  ╚██████╔╝██║        ██║        ██║   ╚██████╔╝██║
-   ╚═════╝ ╚═╝        ╚═╝        ╚═╝    ╚═════╝ ╚═╝[/]
-"""
-
-WELCOME_MSG = (
-    f"[dim #7a8a9e]v{VERSION}[/]  ·  "
-    "[dim #7a8a9e]Windows-first coding assistant[/]  ·  "
-    "[dim #7a8a9e]Powered by Groq[/]\n"
-    "[dim #536374]─────────────────────────────────────────────────────[/]\n"
-    "[#7a8a9e]Ctrl+K[/] [dim]settings[/]  │  "
-    "[#7a8a9e]/help[/] [dim]commands[/]  │  "
-    "[#7a8a9e]Ctrl+L[/] [dim]clear[/]  │  "
-    "[#7a8a9e]Ctrl+2[/] [dim]files[/]"
+from gpt_tui.ui.constants import (
+    APP_NAME,
+    CONTEXT_CHAR_LIMIT,
+    DEFAULT_MODEL,
+    MAX_TOOL_ROUNDS,
+    TOOLS,
+    WELCOME_ART,
+    WELCOME_MSG,
 )
+from gpt_tui.ui.modals import ApiKeyModal, ModelPickerModal
+from gpt_tui.ui.tool_executor import ToolsMixin
 
 
-# ─── API Key Modal ───────────────────────────────────────────────────
-class ApiKeyModal(ModalScreen[str | None]):
-    """Modal popup for API key configuration."""
+class ChatInput(TextArea):
+    """A TextArea that sends on Enter and allows newlines on Shift+Enter."""
 
-    CSS = """
-    ApiKeyModal {
-        align: center middle;
-    }
+    BINDINGS = [
+        Binding("enter", "submit", "Submit", show=False, priority=True),
+    ]
 
-    #modal_overlay {
-        width: 70;
-        height: auto;
-        border: heavy #ff6b6b 50%;
-        background: #13161b;
-        padding: 2 3;
-    }
+    def action_submit(self) -> None:
+        self.app.action_submit_prompt()
 
-    #modal_header {
-        text-align: center;
-        text-style: bold;
-        color: #ff6b6b;
-        margin-bottom: 1;
-    }
-
-    #modal_divider {
-        color: #2a3040;
-        margin-bottom: 1;
-    }
-
-    .modal_label {
-        color: #8a97a6;
-        margin-top: 1;
-        text-style: bold;
-    }
-
-    .modal_hint {
-        color: #4a5568;
-    }
-
-    #api_input {
-        margin: 1 0;
-        border: tall #2a3442;
-        background: #0b0e12;
-        color: #e8f0fa;
-    }
-
-    #api_input:focus {
-        border: tall #ff6b6b;
-    }
-
-    #provider_info {
-        color: #5ec4ff;
-        margin-bottom: 1;
-    }
-
-    #modal_buttons {
-        height: auto;
-        align: right middle;
-        margin-top: 1;
-    }
-
-    #cancel_btn {
-        margin-right: 1;
-        background: #2a3040;
-        color: #8a97a6;
-        border: none;
-    }
-
-    #save_btn {
-        background: #ff6b6b;
-        color: #ffffff;
-        border: none;
-        text-style: bold;
-    }
-
-    #cancel_btn:hover {
-        background: #3a4050;
-    }
-
-    #save_btn:hover {
-        background: #ff8585;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="modal_overlay"):
-            yield Static("⚙  SETTINGS & API CONFIG", id="modal_header")
-            yield Static("─" * 64, id="modal_divider")
-            yield Label("Provider", classes="modal_label")
-            yield Static("  Groq  ·  llama-3.3-70b-versatile", id="provider_info")
-            yield Label("API Key", classes="modal_label")
-            yield Static("  Get your key at console.groq.com", classes="modal_hint")
-            yield Input(
-                placeholder="  gsk_...",
-                id="api_input",
-                password=True,
-            )
-            with Horizontal(id="modal_buttons"):
-                yield Button("Cancel", id="cancel_btn")
-                yield Button("Save & Validate", id="save_btn")
-
-    def on_mount(self) -> None:
-        self.query_one("#api_input", Input).focus()
-
-    @on(Button.Pressed, "#save_btn")
-    def save(self) -> None:
-        key = self.query_one("#api_input", Input).value.strip()
-        self.dismiss(key)
-
-    @on(Button.Pressed, "#cancel_btn")
-    def cancel(self) -> None:
-        self.dismiss(None)
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "api_input":
-            key = event.value.strip()
-            self.dismiss(key)
+    def on_key(self, event: Key) -> None:
+        """Force Enter to submit; Shift+Enter keeps newline behavior."""
+        is_enter = event.key == "enter"
+        is_shift = bool(getattr(event, "shift", False))
+        if is_enter and not is_shift:
+            event.stop()
+            event.prevent_default()
+            self.app.action_submit_prompt()
 
 
 # ─── Main App ────────────────────────────────────────────────────────
-class GptTuiApp(App[None]):
+class GptTuiApp(ToolsMixin, App[None]):
     CSS = """
     Screen {
         background: #0d0f14;
@@ -315,9 +108,7 @@ class GptTuiApp(App[None]):
     }
 
     /* ── Main body ── */
-    #body {
-        height: 1fr;
-    }
+    #body { height: 1fr; }
 
     /* ── Chat panel (left / main) ── */
     #chat_panel {
@@ -355,10 +146,10 @@ class GptTuiApp(App[None]):
     }
 
     #prompt {
+        height: 12;
         border: tall #2a3442;
         background: #13161e;
         color: #e8f0fa;
-        padding: 0 1;
     }
 
     #prompt:focus {
@@ -406,7 +197,7 @@ class GptTuiApp(App[None]):
         width: 1fr;
     }
 
-    #settings_btn {
+    .sidebar_icon_btn {
         min-width: 4;
         background: transparent;
         color: #4a5568;
@@ -414,11 +205,9 @@ class GptTuiApp(App[None]):
         padding: 0 1;
     }
 
-    #settings_btn:hover {
-        color: #ff6b6b;
-    }
+    .sidebar_icon_btn:hover { color: #ff6b6b; }
 
-    /* file tree takes upper ~40% of sidebar */
+    /* file tree */
     #file_tree {
         height: 40%;
         background: transparent;
@@ -426,20 +215,15 @@ class GptTuiApp(App[None]):
         border-bottom: solid #1c2030;
     }
 
-    DirectoryTree > .directory-tree--folder {
-        color: #ffcb6b;
-    }
-
-    DirectoryTree > .directory-tree--file {
-        color: #8a97a6;
-    }
+    DirectoryTree > .directory-tree--folder { color: #ffcb6b; }
+    DirectoryTree > .directory-tree--file   { color: #8a97a6; }
 
     DirectoryTree:focus > .directory-tree--cursor {
         background: #1c2030;
         color: #e8f0fa;
     }
 
-    /* file preview pane in sidebar */
+    /* file preview pane */
     #preview_header {
         height: auto;
         background: #13161e;
@@ -461,9 +245,7 @@ class GptTuiApp(App[None]):
         padding: 0 1;
     }
 
-    #preview_close:hover {
-        color: #ff6b6b;
-    }
+    #preview_close:hover { color: #ff6b6b; }
 
     #file_preview {
         height: 1fr;
@@ -473,45 +255,45 @@ class GptTuiApp(App[None]):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "Quit"),
-        Binding("ctrl+l", "clear_chat", "Clear"),
-        Binding("ctrl+1", "focus_prompt", "Prompt"),
-        Binding("ctrl+2", "focus_tree", "Files"),
-        Binding("ctrl+3", "focus_preview", "Preview"),
-        Binding("ctrl+r", "refresh_tree", "Refresh"),
-        Binding("ctrl+k", "open_settings", "Settings"),
+        Binding("ctrl+c", "quit",           "Quit"),
+        Binding("ctrl+l", "clear_chat",     "Clear"),
+        Binding("ctrl+1", "focus_prompt",   "Prompt"),
+        Binding("ctrl+2", "focus_tree",     "Files"),
+        Binding("ctrl+3", "focus_preview",  "Preview"),
+        Binding("ctrl+r", "refresh_tree",   "Refresh"),
+        Binding("ctrl+k", "open_settings",  "Settings"),
+        Binding("ctrl+t", "pick_model",     "Model"),
+        Binding("ctrl+g", "copy_last",      "Copy"),
+        Binding("ctrl+enter", "submit_prompt", "Send", show=False),
     ]
 
+    # ── Layout ────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="body"):
-            # ─ Main chat panel ─
+            # Chat panel
             with Vertical(id="chat_panel"):
                 with Horizontal(id="status_bar"):
-                    yield Static("", id="chip_conn", classes="chip")
+                    yield Static("", id="chip_conn",  classes="chip")
                     yield Static("", id="chip_model", classes="chip")
-                    yield Static("", id="chip_repo", classes="chip")
+                    yield Static("", id="chip_repo",  classes="chip")
                 yield RichLog(id="chat_log", wrap=True, highlight=True, markup=True)
                 with Vertical(id="input_area"):
-                    yield Input(placeholder="  Ask anything or /help ...", id="prompt")
+                    yield ChatInput(id="prompt")
                     with Horizontal(id="input_footer"):
                         yield Static("Ready.", id="status_line")
-                        yield Static("", id="model_badge")
-            # ─ Sidebar ─
+                        yield Static("",       id="model_badge")
+            # Sidebar
             with Vertical(id="sidebar"):
                 with Horizontal(id="sidebar_header"):
                     yield Static("FILES", id="panel_title")
-                    yield Button("⚙", id="settings_btn")
+                    yield Button("▣", id="model_switch_btn", classes="sidebar_icon_btn")
+                    yield Button("⚙", id="settings_btn",    classes="sidebar_icon_btn")
                 yield DirectoryTree(str(Path.cwd()), id="file_tree")
                 with Horizontal(id="preview_header"):
                     yield Static("PREVIEW", id="preview_label")
                     yield Button("✕", id="preview_close")
-                yield RichLog(
-                    id="file_preview",
-                    wrap=True,
-                    highlight=True,
-                    markup=True,
-                )
+                yield RichLog(id="file_preview", wrap=True, highlight=True, markup=True)
         yield Footer()
 
     # ── Lifecycle ─────────────────────────────────────────────────────
@@ -520,10 +302,17 @@ class GptTuiApp(App[None]):
         self.config = AppConfig.load()
         repo_root = self._initial_repo_root()
         self.files = RepoFileService(repo_root=repo_root)
+        self._last_code_block: str = ""
 
-        key = self.config.api_key.strip() or os.getenv("GROQ_API_KEY", "").strip()
-        self.provider = GroqProvider(api_key=key)
-        self.model = self.config.model
+        # Providers
+        groq_key   = self.config.api_key.strip() or os.getenv("GROQ_API_KEY", "").strip()
+        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self.groq_provider   = GroqProvider(api_key=groq_key)
+        self.gemini_provider = GeminiProvider(api_key=gemini_key)
+        self.model    = self.config.model or DEFAULT_MODEL
+        self.provider = self._provider_for_model(self.model)
+
+        # Conversation history
         self.messages: list[dict[str, Any]] = [
             {
                 "role": "system",
@@ -540,22 +329,24 @@ class GptTuiApp(App[None]):
 
         self._refresh_header()
 
-        # ── Welcome banner ──
+        # Welcome banner
         log = self.query_one("#chat_log", RichLog)
         log.write(WELCOME_ART)
         log.write(WELCOME_MSG)
         log.write("")
 
         ts = self._timestamp()
-        if not self.provider.available:
-            log.write(f"[bold #ff6b6b]{ts}[/] [dim #ff6b6b]system[/]  Groq SDK missing. Run: pip install groq")
-        elif not self.provider.connected:
+        if not self.provider.connected:
             log.write(
                 f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
-                "No API key configured. Press [bold #ff6b6b]Ctrl+K[/] to set up."
+                "No API key. Press [bold #ff6b6b]Ctrl+K[/] for settings."
             )
         else:
-            log.write(f"[bold #7ad97a]{ts}[/] [dim #7ad97a]system[/]  API key loaded. Ready to code!")
+            pname = "Gemini" if self.model.startswith("gemini") else "Groq"
+            log.write(
+                f"[bold #7ad97a]{ts}[/] [dim #7ad97a]system[/]  "
+                f"{pname} connected. Ready to code!"
+            )
 
         log.write(
             f"[bold #5ec4ff]{ts}[/] [dim #5ec4ff]system[/]  "
@@ -565,25 +356,33 @@ class GptTuiApp(App[None]):
         tree = self.query_one("#file_tree", DirectoryTree)
         tree.path = self.files.repo_root
         tree.reload()
-        self.query_one("#prompt", Input).focus()
+        self.query_one("#prompt", ChatInput).focus()
 
     # ── Actions ───────────────────────────────────────────────────────
     def action_open_settings(self) -> None:
         def handle_key(key: str | None) -> None:
-            if key is not None and key:
+            if key:
                 self._set_status("Validating API key...")
                 self.validate_and_save_api_key(key)
-
         self.push_screen(ApiKeyModal(), handle_key)
 
-    def action_focus_prompt(self) -> None:
-        self.query_one("#prompt", Input).focus()
+    def action_pick_model(self) -> None:
+        def handle_pick(model: str | None) -> None:
+            if model:
+                self.model = model
+                self.config.model = model
+                self.config.save()
+                self.provider = self._provider_for_model(model)
+                self._refresh_header()
+                pname = "Gemini" if model.startswith("gemini") else "Groq"
+                self._log_system(
+                    f"Switched to [bold #5ec4ff]{model}[/] ({pname})"
+                )
+        self.push_screen(ModelPickerModal(self.model), handle_pick)
 
-    def action_focus_tree(self) -> None:
-        self.query_one("#file_tree", DirectoryTree).focus()
-
-    def action_focus_preview(self) -> None:
-        self.query_one("#file_preview", RichLog).focus()
+    def action_focus_prompt(self)  -> None: self.query_one("#prompt", ChatInput).focus()
+    def action_focus_tree(self)    -> None: self.query_one("#file_tree", DirectoryTree).focus()
+    def action_focus_preview(self) -> None: self.query_one("#file_preview", RichLog).focus()
 
     def action_refresh_tree(self) -> None:
         self.query_one("#file_tree", DirectoryTree).reload()
@@ -594,28 +393,36 @@ class GptTuiApp(App[None]):
         self.messages = [self.messages[0]]
         self._log_system("Chat cleared.")
 
+    def action_copy_last(self) -> None:
+        """Shortcut for ctrl+g."""
+        self._cmd_copy()
+
     # ── Event handlers ────────────────────────────────────────────────
+    def action_submit_prompt(self) -> None:
+        """Handle prompt submission."""
+        inp = self.query_one("#prompt", ChatInput)
+        text = inp.text.strip()
+        inp.text = ""
+        if not text:
+            return
+        if text.startswith("/"):
+            self._handle_command(text)
+            return
+        self._log_user(text)
+        self.messages.append({"role": "user", "content": text})
+        self._set_status("Thinking...")
+        self.ask_model()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "settings_btn":
             self.action_open_settings()
+        elif event.button.id == "model_switch_btn":
+            self.action_pick_model()
         elif event.button.id == "preview_close":
-            pv = self.query_one("#file_preview", RichLog)
-            pv.clear()
+            self.query_one("#file_preview", RichLog).clear()
             self.query_one("#preview_label", Static).update("PREVIEW")
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "prompt":
-            text = event.value.strip()
-            event.input.value = ""
-            if not text:
-                return
-            if text.startswith("/"):
-                self._handle_command(text)
-                return
-            self._log_user(text)
-            self.messages.append({"role": "user", "content": text})
-            self._set_status("Thinking...")
-            self.ask_model()
+
 
     def on_directory_tree_file_selected(
         self, event: DirectoryTree.FileSelected
@@ -627,99 +434,74 @@ class GptTuiApp(App[None]):
         self._show_preview(resolved)
         self._set_status(f"Viewing: {resolved.name}")
 
-    # ── Commands ──────────────────────────────────────────────────────
+    # ── Slash commands ────────────────────────────────────────────────
     def _handle_command(self, text: str) -> None:
         if text == "/help":
-            help_text = (
+            self.query_one("#chat_log", RichLog).write(
                 "[bold #ff6b6b]Available Commands[/]\n"
                 "[#7a8a9e]/help[/]              Show this help\n"
+                "[#7a8a9e]/copy[/]              Copy last AI reply to clipboard\n"
+                "[#7a8a9e]/copy art[/]          Copy branding ASCII art\n"
                 "[#7a8a9e]/clear[/]             Clear chat history\n"
                 "[#7a8a9e]/model <name>[/]      Switch model\n"
                 "[#7a8a9e]/repo[/]              Show repo root\n"
                 "[#7a8a9e]/repo <path>[/]       Change repo root\n"
                 "[#7a8a9e]/files [path][/]      List files\n"
                 "[#7a8a9e]/read <file>[/]       Read file content\n"
+                "[#7a8a9e]/save <file>[/]       Save last code block\n"
                 "[#7a8a9e]/apikey set <key>[/]  Set API key\n"
                 "[#7a8a9e]/apikey status[/]     Check API key\n"
                 "[#7a8a9e]/apikey clear[/]      Remove API key"
             )
-            self.query_one("#chat_log", RichLog).write(help_text)
-            return
-
-        if text == "/clear":
+        elif text == "/clear":
             self.action_clear_chat()
-            return
-
-        if text.startswith("/model "):
-            next_model = text.removeprefix("/model ").strip()
-            if not next_model:
+        elif text == "/copy":
+            self._cmd_copy()
+        elif text == "/copy art":
+            self._cmd_copy_art()
+        elif text.startswith("/model "):
+            m = text.removeprefix("/model ").strip()
+            if not m:
                 self._log_system("Usage: /model <name>")
                 return
-            self.model = next_model
-            self.config.model = next_model
+            self.model = m
+            self.config.model = m
             self.config.save()
+            self.provider = self._provider_for_model(m)
             self._refresh_header()
-            self._log_system(f"Model switched to: [bold]{self.model}[/]")
-            return
-
-        if text == "/repo":
+            self._log_system(f"Model switched to: [bold]{m}[/]")
+        elif text == "/repo":
             self._log_system(f"Repo root: [bold]{self.files.repo_root}[/]")
-            return
-
-        if text.startswith("/repo "):
-            raw = text.removeprefix("/repo ").strip()
-            self._cmd_set_repo(raw)
-            return
-
-        if text == "/files":
+        elif text.startswith("/repo "):
+            self._cmd_set_repo(text.removeprefix("/repo ").strip())
+        elif text == "/files":
             self._cmd_files(str(self.files.repo_root))
-            return
-
-        if text.startswith("/files "):
-            raw = text.removeprefix("/files ").strip()
-            self._cmd_files(raw)
-            return
-
-        if text.startswith("/read "):
-            raw = text.removeprefix("/read ").strip()
-            self._cmd_read(raw)
-            return
-
-        if text.startswith("/save "):
-            # /save <path> — writes last code block to file
-            raw = text.removeprefix("/save ").strip()
-            self._cmd_save(raw)
-            return
-
-        if text == "/save":
+        elif text.startswith("/files "):
+            self._cmd_files(text.removeprefix("/files ").strip())
+        elif text.startswith("/read "):
+            self._cmd_read(text.removeprefix("/read ").strip())
+        elif text == "/save":
             self._log_system("Usage: /save <filename>  — saves last code block from chat")
-            return
-
-        if text == "/apikey status":
-            if self.provider.connected:
-                self._log_system("[green]●[/] API key is active.")
-            else:
-                self._log_system("[red]●[/] API key not configured.")
-            return
-
-        if text == "/apikey clear":
+        elif text.startswith("/save "):
+            self._cmd_save(text.removeprefix("/save ").strip())
+        elif text == "/apikey status":
+            msg = "[green]●[/] API key is active." if self.provider.connected else "[red]●[/] No API key."
+            self._log_system(msg)
+        elif text == "/apikey clear":
             self.provider.set_api_key("")
             self.config.api_key = ""
             self.config.save()
             self._refresh_header()
             self._log_system("API key cleared.")
-            return
-
-        if text.startswith("/apikey set "):
+        elif text.startswith("/apikey set "):
             raw_key = text.removeprefix("/apikey set ").strip()
             if not raw_key:
                 self._log_system("Usage: /apikey set <key>")
                 return
             self._set_status("Validating API key...")
             self.validate_and_save_api_key(raw_key)
-            return
-
-        self._log_system(f"Unknown command: [bold]{text}[/]. Type [bold]/help[/].")
+        else:
+            self._log_system(f"Unknown command: [bold]{text}[/]. Type [bold]/help[/].")
 
     def _cmd_set_repo(self, raw_path: str) -> None:
         path = Path(raw_path)
@@ -748,18 +530,17 @@ class GptTuiApp(App[None]):
             return
         files = self.files.list_files(root)
         if not files:
-            self._log_system(f"No files found under: {root}")
+            self._log_system(f"No files under: {root}")
             return
         self._log_system(f"[bold]{len(files)}[/] files under [bold]{root}[/]:")
-        for file_path in files:
-            self._log_system(f"  {file_path}")
+        for f in files:
+            self._log_system(f"  {f}")
 
     def _cmd_save(self, raw_name: str) -> None:
         """Save the last code block from the assistant to a file."""
         if not self._last_code_block:
-            self._log_system("[red]●[/] No code block from assistant yet. Ask it to generate code first.")
+            self._log_system("[red]●[/] No code block yet. Ask the AI for code first.")
             return
-        # resolve path
         path = Path(raw_name)
         if not path.is_absolute():
             path = self.files.repo_root / raw_name
@@ -772,44 +553,39 @@ class GptTuiApp(App[None]):
         except OSError as exc:
             self._log_system(f"[red]●[/] Save failed: {exc}")
 
-    def _write_file(self, rel_or_abs: str, content: str) -> None:
-        """Write content to a file path (called automatically from AI response)."""
-        path = Path(rel_or_abs)
-        if not path.is_absolute():
-            path = self.files.repo_root / rel_or_abs
+    def _cmd_copy(self) -> None:
+        """Copy the last assistant response to the Windows clipboard."""
+        # Find the last assistant message
+        last_asst = None
+        for m in reversed(self.messages):
+            if m.get("role") == "assistant" and m.get("content"):
+                last_asst = m["content"]
+                break
+        
+        if not last_asst:
+            self._log_system("[red]●[/] Nothing to copy yet.")
+            return
+
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
-            self.call_from_thread(
-                self._log_system, f"[green]●[/] File written: [bold]{path}[/]"
-            )
-            self.call_from_thread(
-                self.query_one("#file_tree", DirectoryTree).reload
-            )
-            self.call_from_thread(self._show_preview, path)
-        except OSError as exc:
-            self.call_from_thread(
-                self._log_system, f"[red]●[/] Write failed ({rel_or_abs}): {exc}"
-            )
+            # Use Windows built-in clip.exe
+            with os.popen('clip', 'w') as pipe:
+                pipe.write(last_asst)
+            self._log_system("[green]●[/] Last reply copied to clipboard!")
+        except Exception as exc:
+            self._log_system(f"[red]●[/] Copy failed: {exc}")
 
-    def _process_file_writes(self, reply: str) -> None:
-        """Parse WRITE_FILE blocks from AI reply and save them to disk."""
+    def _cmd_copy_art(self) -> None:
+        """Copy the GPT TUI ASCII art."""
+        from gpt_tui.ui.constants import WELCOME_ART
+        # Strip rich tags before copying
         import re
-        # Pattern: WRITE_FILE: <path>\n```[lang]\n<content>\n```
-        pattern = re.compile(
-            r"WRITE_FILE:\s*([^\n]+)\n```[^\n]*\n([\s\S]*?)```",
-            re.MULTILINE,
-        )
-        for match in pattern.finditer(reply):
-            file_path = match.group(1).strip()
-            content = match.group(2)
-            self._write_file(file_path, content)
-
-        # Also track the last plain code block for /save command
-        plain = re.compile(r"```[^\n]*\n([\s\S]*?)```", re.MULTILINE)
-        blocks = plain.findall(reply)
-        if blocks:
-            self._last_code_block = blocks[-1]
+        clean_art = re.sub(r'\[.*?\]', '', WELCOME_ART)
+        try:
+            with os.popen('clip', 'w') as pipe:
+                pipe.write(clean_art)
+            self._log_system("[green]●[/] ASCII art copied to clipboard!")
+        except Exception as exc:
+            self._log_system(f"[red]●[/] Copy failed: {exc}")
 
     def _show_preview(self, file_path: Path) -> None:
         """Show file content in the sidebar preview pane (never touches chat)."""
@@ -818,14 +594,12 @@ class GptTuiApp(App[None]):
         try:
             snippet, truncated = self.files.read_utf8(file_path)
         except UnicodeDecodeError:
-            pv.write(f"[red]Binary / non-UTF8 file:[/] {file_path.name}")
+            pv.write(f"[red]Binary / non-UTF8:[/] {file_path.name}")
             return
         except OSError as exc:
             pv.write(f"[red]Read error:[/] {exc}")
             return
-        self.query_one("#preview_label", Static).update(
-            f"[#5ec4ff]{file_path.name}[/]"
-        )
+        self.query_one("#preview_label", Static).update(f"[#5ec4ff]{file_path.name}[/]")
         pv.write(snippet)
         if truncated:
             pv.write("[dim #4a5568]... (truncated)[/]")
@@ -842,7 +616,7 @@ class GptTuiApp(App[None]):
         self._show_preview(file_path)
         self._log_system(f"Loaded into preview: [bold]{file_path.name}[/]")
 
-    # ── Internals ─────────────────────────────────────────────────────
+    # ── Internal helpers ──────────────────────────────────────────────
     def _initial_repo_root(self) -> Path:
         if self.config.repo_root:
             cfg = Path(self.config.repo_root)
@@ -859,21 +633,23 @@ class GptTuiApp(App[None]):
             return cwd
         return Path.home().resolve()
 
+    def _provider_for_model(self, model: str):
+        """Return the correct provider instance for the given model name."""
+        return self.gemini_provider if model.startswith("gemini") else self.groq_provider
+
     def _refresh_header(self) -> None:
-        conn = "Connected" if self.provider.connected else "No Key"
+        conn      = "Connected" if self.provider.connected else "No Key"
         conn_icon = "[green]●[/]" if self.provider.connected else "[red]●[/]"
-        self.query_one("#chip_conn", Static).update(f"{conn_icon} {conn}")
+        pname     = "Gemini" if self.model.startswith("gemini") else "Groq"
+        self.query_one("#chip_conn",  Static).update(f"{conn_icon} {conn}")
         self.query_one("#chip_model", Static).update(
-            f"[#5ec4ff]⬡[/] {self.model}"
+            f"[#5ec4ff]⬡[/] {self.model}  [dim #4a5568]({pname})[/]"
         )
-        repo_name = Path(str(self.files.repo_root)).name
-        self.query_one("#chip_repo", Static).update(
-            f"[#ffcb6b]▸[/] {repo_name}"
+        self.query_one("#chip_repo",  Static).update(
+            f"[#ffcb6b]▸[/] {Path(str(self.files.repo_root)).name}"
         )
-        self.query_one("#model_badge", Static).update(
-            f"[#5ec4ff]{self.model}[/]"
-        )
-        self.sub_title = f"{self.model} · {self.files.repo_root}"
+        self.query_one("#model_badge", Static).update(f"[#5ec4ff]{self.model}[/]")
+        self.sub_title = f"{pname} · {self.model} · {self.files.repo_root}"
 
     def _set_status(self, text: str) -> None:
         self.query_one("#status_line", Static).update(f"[#4a5568]{text}[/]")
@@ -882,140 +658,19 @@ class GptTuiApp(App[None]):
         return datetime.now().strftime("%H:%M:%S")
 
     def _log_user(self, message: str) -> None:
-        self.query_one("#chat_log", RichLog).write(
-            f"\n[bold #5ec4ff]{self._timestamp()}[/] [bold #5ec4ff]you[/]"
-        )
-        self.query_one("#chat_log", RichLog).write(f"  {message}")
+        log = self.query_one("#chat_log", RichLog)
+        log.write(f"\n[bold #5ec4ff]{self._timestamp()}[/] [bold #5ec4ff]you[/]")
+        log.write(f"  {message}")
 
     def _log_assistant(self, message: str) -> None:
-        self.query_one("#chat_log", RichLog).write(
-            f"\n[bold #7ad97a]{self._timestamp()}[/] [bold #7ad97a]assistant[/]"
-        )
-        self.query_one("#chat_log", RichLog).write(f"  {message}")
+        log = self.query_one("#chat_log", RichLog)
+        log.write(f"\n[bold #7ad97a]{self._timestamp()}[/] [bold #7ad97a]assistant[/]")
+        log.write(f"  {message}")
 
     def _log_system(self, message: str) -> None:
         self.query_one("#chat_log", RichLog).write(
             f"[#d2a8ff]{self._timestamp()}[/] [dim #d2a8ff]system[/]  {message}"
         )
-
-    # ── Tool execution ─────────────────────────────────────────────────
-    def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
-        """Execute a tool call and return result string for the model."""
-
-        def _resolve(p: str) -> Path:
-            path = Path(p)
-            return path if path.is_absolute() else self.files.repo_root / p
-
-        if name == "write_file":
-            path = _resolve(args.get("path", ""))
-            content = args.get("content", "")
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content, encoding="utf-8")
-                self.call_from_thread(
-                    self._log_system,
-                    f"[green]●[/] Written: [bold]{path.name}[/]",
-                )
-                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
-                self.call_from_thread(self._show_preview, path)
-                return f"OK: written {path}"
-            except OSError as exc:
-                return f"ERROR: {exc}"
-
-        elif name == "edit_file":
-            path = _resolve(args.get("path", ""))
-            old_str = args.get("old_str", "")
-            new_str = args.get("new_str", "")
-            if not path.exists():
-                return f"ERROR: file not found: {path}"
-            try:
-                original = path.read_text(encoding="utf-8")
-                if old_str not in original:
-                    return f"ERROR: string not found in {path.name}"
-                updated = original.replace(old_str, new_str, 1)
-                path.write_text(updated, encoding="utf-8")
-                self.call_from_thread(
-                    self._log_system,
-                    f"[green]●[/] Edited: [bold]{path.name}[/]",
-                )
-                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
-                self.call_from_thread(self._show_preview, path)
-                return f"OK: edited {path}"
-            except OSError as exc:
-                return f"ERROR: {exc}"
-
-        elif name == "read_file":
-            file_path, err = self.files.resolve_repo_path(args.get("path", ""))
-            if not file_path:
-                return f"ERROR: {err}"
-            try:
-                content, truncated = self.files.read_utf8(file_path)
-                self.call_from_thread(self._show_preview, file_path)
-                return content + ("\n...(truncated)" if truncated else "")
-            except UnicodeDecodeError:
-                return "ERROR: Binary/non-UTF8 file"
-            except OSError as exc:
-                return f"ERROR: {exc}"
-
-        elif name == "delete_file":
-            path = _resolve(args.get("path", ""))
-            if not path.exists():
-                return f"ERROR: file not found: {path}"
-            try:
-                path.unlink()
-                self.call_from_thread(
-                    self._log_system,
-                    f"[red]●[/] Deleted: [bold]{path.name}[/]",
-                )
-                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
-                # clear preview if it was showing the deleted file
-                self.call_from_thread(
-                    self.query_one("#preview_label", Static).update, "PREVIEW"
-                )
-                self.call_from_thread(self.query_one("#file_preview", RichLog).clear)
-                return f"OK: deleted {path}"
-            except OSError as exc:
-                return f"ERROR: {exc}"
-
-        elif name == "rename_file":
-            old = _resolve(args.get("old_path", ""))
-            new = _resolve(args.get("new_path", ""))
-            if not old.exists():
-                return f"ERROR: source not found: {old}"
-            try:
-                new.parent.mkdir(parents=True, exist_ok=True)
-                old.rename(new)
-                self.call_from_thread(
-                    self._log_system,
-                    f"[cyan]●[/] Renamed: [bold]{old.name}[/] → [bold]{new.name}[/]",
-                )
-                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
-                return f"OK: renamed to {new}"
-            except OSError as exc:
-                return f"ERROR: {exc}"
-
-        elif name == "create_directory":
-            path = _resolve(args.get("path", ""))
-            try:
-                path.mkdir(parents=True, exist_ok=True)
-                self.call_from_thread(
-                    self._log_system,
-                    f"[cyan]●[/] Created dir: [bold]{path.name}[/]",
-                )
-                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
-                return f"OK: directory created {path}"
-            except OSError as exc:
-                return f"ERROR: {exc}"
-
-        elif name == "list_files":
-            directory = args.get("directory", str(self.files.repo_root))
-            root, err = self.files.resolve_repo_path(directory)
-            if not root:
-                return f"ERROR: {err}"
-            files = self.files.list_files(root)
-            return "\n".join(str(f) for f in files) if files else "No files found."
-
-        return f"ERROR: unknown tool '{name}'"
 
     # ── Workers ───────────────────────────────────────────────────────
     @work(thread=True, exclusive=True)
@@ -1026,9 +681,7 @@ class GptTuiApp(App[None]):
             self.config.api_key = raw_key
             self.config.save()
             self.call_from_thread(self._refresh_header)
-            self.call_from_thread(
-                self._log_system, "[green]●[/] API key confirmed and saved."
-            )
+            self.call_from_thread(self._log_system, "[green]●[/] API key confirmed and saved.")
             self.call_from_thread(self._set_status, "API key confirmed.")
         else:
             self.call_from_thread(self._log_system, f"[red]●[/] {msg}")
@@ -1037,37 +690,63 @@ class GptTuiApp(App[None]):
     @work(thread=True, exclusive=True)
     def ask_model(self) -> None:
         """Agentic loop: model → tool calls → results → model → ... → final reply."""
-        if not self.provider.available:
-            self.call_from_thread(self._set_status, "groq package missing.")
-            return
         if not self.provider.connected:
             self.call_from_thread(self._set_status, "No API key. Press Ctrl+K.")
             return
 
+        # Auto-trim context if it's getting too long
+        self._maybe_trim_context()
+
         # Work on a local copy so partial tool calls don't corrupt self.messages
         working_msgs = list(self.messages)
 
-        max_rounds = 8
-        for round_num in range(max_rounds):
+        for round_num in range(MAX_TOOL_ROUNDS):
             self.call_from_thread(
                 self._set_status,
-                f"Thinking... (round {round_num + 1})"
-                if round_num > 0
-                else "Thinking...",
+                f"Thinking... (round {round_num + 1})" if round_num > 0 else "Thinking...",
             )
             try:
                 final_text, asst_dict, tool_calls = self.provider.chat_with_tools(
                     working_msgs, self.model, TOOLS
                 )
+            except RuntimeError as exc:
+                if "__TOOL_FAILED__" in str(exc):
+                    # Content too large for tool call — fall back to plain chat
+                    self.call_from_thread(
+                        self._set_status, "Content too large, falling back to plain chat..."
+                    )
+                    try:
+                        reply = self.provider.chat_completion(working_msgs, self.model)
+                        self.messages = working_msgs
+                        self.messages.append({"role": "assistant", "content": reply})
+                        self.call_from_thread(self._log_assistant, reply)
+                        self.call_from_thread(
+                            self._log_system,
+                            "[yellow]●[/] Content too large for tool call. "
+                            "Use [bold]/save <filename>[/] to write the code above.",
+                        )
+                        self.call_from_thread(self._set_status, "Done (plain mode).")
+                    except Exception as exc2:  # noqa: BLE001
+                        self.call_from_thread(
+                            self._log_system, f"[red]●[/] Fallback failed: {exc2}"
+                        )
+                        self.call_from_thread(self._set_status, "Request failed.")
+                    return
+
+                self.call_from_thread(self._log_system, f"[red]●[/] Request failed: {exc}")
+                self.call_from_thread(self._set_status, "Request failed.")
+                return
             except Exception as exc:  # noqa: BLE001
-                self.call_from_thread(
-                    self._log_system, f"[red]●[/] Request failed: {exc}"
-                )
+                self.call_from_thread(self._log_system, f"[red]●[/] Request failed: {exc}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
 
             if final_text is not None:
-                # Model is done — commit to real message history
+                # Model is done — track code blocks for /save, commit to history
+                import re
+                blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", final_text, re.MULTILINE)
+                if blocks:
+                    self._last_code_block = blocks[-1]
                 self.messages = working_msgs
                 self.messages.append({"role": "assistant", "content": final_text})
                 self.call_from_thread(self._log_assistant, final_text)
@@ -1078,29 +757,24 @@ class GptTuiApp(App[None]):
             working_msgs.append(asst_dict)
             tool_names = [tc.function.name for tc in tool_calls]
             self.call_from_thread(
-                self._set_status,
-                f"Using tools: {', '.join(tool_names)}...",
+                self._set_status, f"Using tools: {', '.join(tool_names)}..."
             )
-
             for tc in tool_calls:
                 try:
-                    args = json.loads(tc.function.arguments)
+                    args = json.loads(tc.function.arguments) or {}
                 except json.JSONDecodeError:
                     args = {}
                 result = self._execute_tool(tc.function.name, args)
-                working_msgs.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": tc.function.name,
-                        "content": result,
-                    }
-                )
+                working_msgs.append({
+                    "role":         "tool",
+                    "tool_call_id": tc.id,
+                    "name":         tc.function.name,
+                    "content":      result,
+                })
 
-        # Exceeded max rounds — tell user
+        # Exceeded max rounds
         self.call_from_thread(
             self._log_system,
             "[yellow]●[/] Reached max tool-call rounds. Try rephrasing.",
         )
         self.call_from_thread(self._set_status, "Done (max rounds).")
-

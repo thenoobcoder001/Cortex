@@ -14,8 +14,8 @@ build/
 venv/
 env/
 
-# PyInstaller
-*.spec
+# PyInstaller — keep the spec file but ignore build output
+# *.spec  ← intentionally tracked (has custom build config)
 *.manifest
 
 # Distribution / installer output
