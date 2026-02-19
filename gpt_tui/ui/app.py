@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,113 @@ from textual.widgets import (
 from gpt_tui.config import AppConfig
 from gpt_tui.providers.groq_provider import GroqProvider
 from gpt_tui.services.file_service import RepoFileService
+
+# ─── Tool schemas for Groq native tool calling ───────────────────────
+TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create or overwrite a file on disk with the given content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative or absolute file path."},
+                    "content": {"type": "string", "description": "Full file content to write."},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Edit a file by replacing an exact string with new content. Use this for targeted changes without rewriting the whole file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative or absolute file path."},
+                    "old_str": {"type": "string", "description": "The exact string to find and replace."},
+                    "new_str": {"type": "string", "description": "The replacement string."},
+                },
+                "required": ["path", "old_str", "new_str"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read and return the content of a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative or absolute file path."},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_file",
+            "description": "Permanently delete a file from disk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative or absolute file path to delete."},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rename_file",
+            "description": "Rename or move a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_path": {"type": "string", "description": "Current file path."},
+                    "new_path": {"type": "string", "description": "New file path."},
+                },
+                "required": ["old_path", "new_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_directory",
+            "description": "Create a directory (and any missing parents).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory path to create."},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "List files in a directory within the repo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {"type": "string", "description": "Directory path (optional, defaults to repo root)."},
+                },
+                "required": [],
+            },
+        },
+    },
+]
+
 
 # ─── Branding ────────────────────────────────────────────────────────
 APP_NAME = "GPT TUI"
@@ -421,21 +529,14 @@ class GptTuiApp(App[None]):
                 "role": "system",
                 "content": (
                     "You are a coding assistant running inside a Windows terminal app. "
-                    "You have FULL ability to create and edit files on disk. "
-                    "When the user asks you to save, create, or write a file, "
-                    "you MUST output the file content using this exact format:\n\n"
-                    "WRITE_FILE: <filename_or_absolute_path>\n"
-                    "```\n"
-                    "<file content here>\n"
-                    "```\n\n"
-                    "The app will automatically detect this format and write the file to disk. "
-                    "If no path is given, use the repo root. "
-                    "After the WRITE_FILE block you can add a brief explanation. "
-                    "Keep responses concise. Never say you cannot save files."
+                    "You have full access to the file system via tools. "
+                    "Use write_file to create or edit files, read_file to read them, "
+                    "and list_files to explore the project. "
+                    "Always use tools when the user asks to save, create, edit, or read files. "
+                    "Keep explanations concise."
                 ),
             }
         ]
-        self._last_code_block: str = ""  # tracks last code block from assistant
 
         self._refresh_header()
 
@@ -797,6 +898,125 @@ class GptTuiApp(App[None]):
             f"[#d2a8ff]{self._timestamp()}[/] [dim #d2a8ff]system[/]  {message}"
         )
 
+    # ── Tool execution ─────────────────────────────────────────────────
+    def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
+        """Execute a tool call and return result string for the model."""
+
+        def _resolve(p: str) -> Path:
+            path = Path(p)
+            return path if path.is_absolute() else self.files.repo_root / p
+
+        if name == "write_file":
+            path = _resolve(args.get("path", ""))
+            content = args.get("content", "")
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+                self.call_from_thread(
+                    self._log_system,
+                    f"[green]●[/] Written: [bold]{path.name}[/]",
+                )
+                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
+                self.call_from_thread(self._show_preview, path)
+                return f"OK: written {path}"
+            except OSError as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "edit_file":
+            path = _resolve(args.get("path", ""))
+            old_str = args.get("old_str", "")
+            new_str = args.get("new_str", "")
+            if not path.exists():
+                return f"ERROR: file not found: {path}"
+            try:
+                original = path.read_text(encoding="utf-8")
+                if old_str not in original:
+                    return f"ERROR: string not found in {path.name}"
+                updated = original.replace(old_str, new_str, 1)
+                path.write_text(updated, encoding="utf-8")
+                self.call_from_thread(
+                    self._log_system,
+                    f"[green]●[/] Edited: [bold]{path.name}[/]",
+                )
+                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
+                self.call_from_thread(self._show_preview, path)
+                return f"OK: edited {path}"
+            except OSError as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "read_file":
+            file_path, err = self.files.resolve_repo_path(args.get("path", ""))
+            if not file_path:
+                return f"ERROR: {err}"
+            try:
+                content, truncated = self.files.read_utf8(file_path)
+                self.call_from_thread(self._show_preview, file_path)
+                return content + ("\n...(truncated)" if truncated else "")
+            except UnicodeDecodeError:
+                return "ERROR: Binary/non-UTF8 file"
+            except OSError as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "delete_file":
+            path = _resolve(args.get("path", ""))
+            if not path.exists():
+                return f"ERROR: file not found: {path}"
+            try:
+                path.unlink()
+                self.call_from_thread(
+                    self._log_system,
+                    f"[red]●[/] Deleted: [bold]{path.name}[/]",
+                )
+                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
+                # clear preview if it was showing the deleted file
+                self.call_from_thread(
+                    self.query_one("#preview_label", Static).update, "PREVIEW"
+                )
+                self.call_from_thread(self.query_one("#file_preview", RichLog).clear)
+                return f"OK: deleted {path}"
+            except OSError as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "rename_file":
+            old = _resolve(args.get("old_path", ""))
+            new = _resolve(args.get("new_path", ""))
+            if not old.exists():
+                return f"ERROR: source not found: {old}"
+            try:
+                new.parent.mkdir(parents=True, exist_ok=True)
+                old.rename(new)
+                self.call_from_thread(
+                    self._log_system,
+                    f"[cyan]●[/] Renamed: [bold]{old.name}[/] → [bold]{new.name}[/]",
+                )
+                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
+                return f"OK: renamed to {new}"
+            except OSError as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "create_directory":
+            path = _resolve(args.get("path", ""))
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+                self.call_from_thread(
+                    self._log_system,
+                    f"[cyan]●[/] Created dir: [bold]{path.name}[/]",
+                )
+                self.call_from_thread(self.query_one("#file_tree", DirectoryTree).reload)
+                return f"OK: directory created {path}"
+            except OSError as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "list_files":
+            directory = args.get("directory", str(self.files.repo_root))
+            root, err = self.files.resolve_repo_path(directory)
+            if not root:
+                return f"ERROR: {err}"
+            files = self.files.list_files(root)
+            return "\n".join(str(f) for f in files) if files else "No files found."
+
+        return f"ERROR: unknown tool '{name}'"
+
     # ── Workers ───────────────────────────────────────────────────────
     @work(thread=True, exclusive=True)
     def validate_and_save_api_key(self, raw_key: str) -> None:
@@ -816,26 +1036,71 @@ class GptTuiApp(App[None]):
 
     @work(thread=True, exclusive=True)
     def ask_model(self) -> None:
+        """Agentic loop: model → tool calls → results → model → ... → final reply."""
         if not self.provider.available:
             self.call_from_thread(self._set_status, "groq package missing.")
             return
         if not self.provider.connected:
-            self.call_from_thread(
-                self._set_status, "No API key. Press Ctrl+K."
-            )
-            return
-        try:
-            reply = self.provider.chat_completion(self.messages, self.model)
-        except Exception as exc:  # noqa: BLE001
-            self.call_from_thread(
-                self._log_system, f"[red]●[/] Request failed: {exc}"
-            )
-            self.call_from_thread(self._set_status, "Request failed.")
+            self.call_from_thread(self._set_status, "No API key. Press Ctrl+K.")
             return
 
-        self.messages.append({"role": "assistant", "content": reply})
-        self.call_from_thread(self._log_assistant, reply)
-        # Auto-process any WRITE_FILE blocks in the response
-        self._process_file_writes(reply)
-        self.call_from_thread(self._set_status, "Done.")
+        # Work on a local copy so partial tool calls don't corrupt self.messages
+        working_msgs = list(self.messages)
+
+        max_rounds = 8
+        for round_num in range(max_rounds):
+            self.call_from_thread(
+                self._set_status,
+                f"Thinking... (round {round_num + 1})"
+                if round_num > 0
+                else "Thinking...",
+            )
+            try:
+                final_text, asst_dict, tool_calls = self.provider.chat_with_tools(
+                    working_msgs, self.model, TOOLS
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.call_from_thread(
+                    self._log_system, f"[red]●[/] Request failed: {exc}"
+                )
+                self.call_from_thread(self._set_status, "Request failed.")
+                return
+
+            if final_text is not None:
+                # Model is done — commit to real message history
+                self.messages = working_msgs
+                self.messages.append({"role": "assistant", "content": final_text})
+                self.call_from_thread(self._log_assistant, final_text)
+                self.call_from_thread(self._set_status, "Done.")
+                return
+
+            # Model wants to call tools
+            working_msgs.append(asst_dict)
+            tool_names = [tc.function.name for tc in tool_calls]
+            self.call_from_thread(
+                self._set_status,
+                f"Using tools: {', '.join(tool_names)}...",
+            )
+
+            for tc in tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+                result = self._execute_tool(tc.function.name, args)
+                working_msgs.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": tc.function.name,
+                        "content": result,
+                    }
+                )
+
+        # Exceeded max rounds — tell user
+        self.call_from_thread(
+            self._log_system,
+            "[yellow]●[/] Reached max tool-call rounds. Try rephrasing.",
+        )
+        self.call_from_thread(self._set_status, "Done (max rounds).")
 
