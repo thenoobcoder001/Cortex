@@ -22,7 +22,7 @@ WELCOME_ART = r"""[bold #ff6b6b]
 WELCOME_MSG = (
     f"[dim #7a8a9e]v{VERSION}[/]  ·  "
     "[dim #7a8a9e]Windows-first coding assistant[/]  ·  "
-    "[dim #7a8a9e]Gemini + Groq[/]\n"
+    "[dim #7a8a9e]Gemini + Groq + Codex[/]\n"
     "[dim #536374]─────────────────────────────────────────────────────[/]\n"
     f"[dim #7a8a9e]Shift + Mouse to select text[/]  ·  "
     "[dim #7a8a9e]Ctrl+G[/] [dim]copy last reply[/]\n"
@@ -45,6 +45,9 @@ GROQ_MODELS: list[tuple[str, str]] = [
     ("llama-3.1-8b-instant",           "Llama 3.1 8B           [free · fastest]"),
     ("deepseek-r1-distill-llama-70b",  "DeepSeek R1 70B        [free · reasoning]"),
     ("mixtral-8x7b-32768",             "Mixtral 8x7B           [free · long ctx]"),
+]
+CODEX_MODELS: list[tuple[str, str]] = [
+    ("codex:gpt-5", "Codex GPT-5           [terminal agent]"),
 ]
 
 DEFAULT_MODEL = "gemini-2.0-flash"

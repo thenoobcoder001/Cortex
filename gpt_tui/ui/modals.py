@@ -1,5 +1,5 @@
 """
-modals.py — Textual modal dialogs: ModelPickerModal, ApiKeyModal.
+modals.py - Textual modal dialogs: ModelPickerModal, ApiKeyModal.
 """
 from __future__ import annotations
 
@@ -9,12 +9,11 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from gpt_tui.ui.constants import GEMINI_MODELS, GROQ_MODELS
+from gpt_tui.ui.constants import CODEX_MODELS, GEMINI_MODELS, GROQ_MODELS
 
 
-# ─── Model Picker Modal ───────────────────────────────────────────────
 class ModelPickerModal(ModalScreen[str | None]):
-    """Modal for switching between Gemini / Groq models."""
+    """Modal for switching between Gemini / Groq / Codex models."""
 
     CSS = """
     ModelPickerModal { align: center middle; }
@@ -70,24 +69,35 @@ class ModelPickerModal(ModalScreen[str | None]):
         self.current_model = current_model
 
     def compose(self) -> ComposeResult:
-        # Build a flat ordered list so we can look up by index
-        self._model_list = [m for m, _ in GEMINI_MODELS] + [m for m, _ in GROQ_MODELS]
+        self._model_list = (
+            [m for m, _ in GEMINI_MODELS]
+            + [m for m, _ in GROQ_MODELS]
+            + [m for m, _ in CODEX_MODELS]
+        )
 
         with Vertical(id="mp_overlay"):
-            yield Static("▣  SELECT MODEL", id="mp_header")
-            yield Static("─" * 56, id="mp_divider")
+            yield Static("SELECT MODEL", id="mp_header")
+            yield Static("-" * 56, id="mp_divider")
 
-            yield Static("  ▶ GEMINI  (Google)", classes="mp_section")
+            yield Static("  GEMINI (Google)", classes="mp_section")
             for i, (model_id, label) in enumerate(GEMINI_MODELS):
                 btn = Button(f"  {label}", id=f"mp_{i}", classes="mp_model_btn")
                 if model_id == self.current_model:
                     btn.add_class("-active")
                 yield btn
 
-            yield Static("  ▶ GROQ  (Meta / Mistral)", classes="mp_section")
+            yield Static("  GROQ (Meta/Mistral)", classes="mp_section")
             offset = len(GEMINI_MODELS)
             for i, (model_id, label) in enumerate(GROQ_MODELS):
                 btn = Button(f"  {label}", id=f"mp_{offset + i}", classes="mp_model_btn")
+                if model_id == self.current_model:
+                    btn.add_class("-active")
+                yield btn
+
+            yield Static("  CODEX (Terminal)", classes="mp_section")
+            offset2 = len(GEMINI_MODELS) + len(GROQ_MODELS)
+            for i, (model_id, label) in enumerate(CODEX_MODELS):
+                btn = Button(f"  {label}", id=f"mp_{offset2 + i}", classes="mp_model_btn")
                 if model_id == self.current_model:
                     btn.add_class("-active")
                 yield btn
@@ -104,7 +114,6 @@ class ModelPickerModal(ModalScreen[str | None]):
             self.dismiss(self._model_list[idx])
 
 
-# ─── API Key Modal ────────────────────────────────────────────────────
 class ApiKeyModal(ModalScreen[str | None]):
     """Modal popup for API key configuration."""
 
@@ -185,13 +194,13 @@ class ApiKeyModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal_overlay"):
-            yield Static("⚙  SETTINGS & API CONFIG", id="modal_header")
-            yield Static("─" * 64, id="modal_divider")
+            yield Static("SETTINGS & API CONFIG", id="modal_header")
+            yield Static("-" * 64, id="modal_divider")
             yield Label("Provider", classes="modal_label")
-            yield Static("  Groq  ·  llama-3.3-70b-versatile", id="provider_info")
+            yield Static("  Groq / Gemini", id="provider_info")
             yield Label("API Key", classes="modal_label")
-            yield Static("  Get your key at console.groq.com", classes="modal_hint")
-            yield Input(placeholder="  gsk_...", id="api_input", password=True)
+            yield Static("  Enter provider key (not used for Codex CLI)", classes="modal_hint")
+            yield Input(placeholder="  gsk_... / AIza...", id="api_input", password=True)
             with Horizontal(id="modal_buttons"):
                 yield Button("Cancel", id="cancel_btn")
                 yield Button("Save & Validate", id="save_btn")
@@ -210,3 +219,4 @@ class ApiKeyModal(ModalScreen[str | None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "api_input":
             self.dismiss(event.value.strip())
+

@@ -52,6 +52,7 @@ from textual.widgets import (
 )
 
 from gpt_tui.config import AppConfig
+from gpt_tui.providers.codex_provider import CodexProvider
 from gpt_tui.providers.gemini_provider import GeminiProvider
 from gpt_tui.providers.groq_provider import GroqProvider
 from gpt_tui.services.file_service import RepoFileService
@@ -309,6 +310,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
         self.groq_provider   = GroqProvider(api_key=groq_key)
         self.gemini_provider = GeminiProvider(api_key=gemini_key)
+        self.codex_provider  = CodexProvider(repo_root=repo_root)
         self.model    = self.config.model or DEFAULT_MODEL
         self.provider = self._provider_for_model(self.model)
 
@@ -337,12 +339,18 @@ class GptTuiApp(ToolsMixin, App[None]):
 
         ts = self._timestamp()
         if not self.provider.connected:
-            log.write(
-                f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
-                "No API key. Press [bold #ff6b6b]Ctrl+K[/] for settings."
-            )
+            if self.model.startswith("codex:"):
+                log.write(
+                    f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
+                    "Codex CLI not found. Install codex CLI or pick Gemini/Groq."
+                )
+            else:
+                log.write(
+                    f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
+                    "No API key. Press [bold #ff6b6b]Ctrl+K[/] for settings."
+                )
         else:
-            pname = "Gemini" if self.model.startswith("gemini") else "Groq"
+            pname = self._provider_name_for_model(self.model)
             log.write(
                 f"[bold #7ad97a]{ts}[/] [dim #7ad97a]system[/]  "
                 f"{pname} connected. Ready to code!"
@@ -374,7 +382,7 @@ class GptTuiApp(ToolsMixin, App[None]):
                 self.config.save()
                 self.provider = self._provider_for_model(model)
                 self._refresh_header()
-                pname = "Gemini" if model.startswith("gemini") else "Groq"
+                pname = self._provider_name_for_model(model)
                 self._log_system(
                     f"Switched to [bold #5ec4ff]{model}[/] ({pname})"
                 )
@@ -410,6 +418,7 @@ class GptTuiApp(ToolsMixin, App[None]):
             return
         self._log_user(text)
         self.messages.append({"role": "user", "content": text})
+
         self._set_status("Thinking...")
         self.ask_model()
 
@@ -512,6 +521,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._log_system(message)
         if not ok:
             return
+        self.codex_provider.set_repo_root(self.files.repo_root)
         self.config.repo_root = str(self.files.repo_root)
         self.config.save()
         tree = self.query_one("#file_tree", DirectoryTree)
@@ -635,12 +645,23 @@ class GptTuiApp(ToolsMixin, App[None]):
 
     def _provider_for_model(self, model: str):
         """Return the correct provider instance for the given model name."""
-        return self.gemini_provider if model.startswith("gemini") else self.groq_provider
+        if model.startswith("gemini"):
+            return self.gemini_provider
+        if model.startswith("codex:"):
+            return self.codex_provider
+        return self.groq_provider
+
+    def _provider_name_for_model(self, model: str) -> str:
+        if model.startswith("gemini"):
+            return "Gemini"
+        if model.startswith("codex:"):
+            return "Codex"
+        return "Groq"
 
     def _refresh_header(self) -> None:
         conn      = "Connected" if self.provider.connected else "No Key"
         conn_icon = "[green]●[/]" if self.provider.connected else "[red]●[/]"
-        pname     = "Gemini" if self.model.startswith("gemini") else "Groq"
+        pname     = self._provider_name_for_model(self.model)
         self.query_one("#chip_conn",  Static).update(f"{conn_icon} {conn}")
         self.query_one("#chip_model", Static).update(
             f"[#5ec4ff]⬡[/] {self.model}  [dim #4a5568]({pname})[/]"
@@ -672,6 +693,16 @@ class GptTuiApp(ToolsMixin, App[None]):
             f"[#d2a8ff]{self._timestamp()}[/] [dim #d2a8ff]system[/]  {message}"
         )
 
+    def _log_codex_event(self, kind: str, message: str) -> None:
+        if kind == "reasoning":
+            self._log_system(f"[dim]codex[/]: {message}")
+            return
+        if kind == "error":
+            self._log_system(f"[red]●[/] codex: {message}")
+            return
+        if kind == "status":
+            self._set_status(f"Codex: {message}")
+
     # ── Workers ───────────────────────────────────────────────────────
     @work(thread=True, exclusive=True)
     def validate_and_save_api_key(self, raw_key: str) -> None:
@@ -691,7 +722,37 @@ class GptTuiApp(ToolsMixin, App[None]):
     def ask_model(self) -> None:
         """Agentic loop: model → tool calls → results → model → ... → final reply."""
         if not self.provider.connected:
-            self.call_from_thread(self._set_status, "No API key. Press Ctrl+K.")
+            if self.model.startswith("codex:"):
+                self.call_from_thread(self._set_status, "Codex CLI not found in PATH.")
+            else:
+                self.call_from_thread(self._set_status, "No API key. Press Ctrl+K.")
+            return
+
+        if self.model.startswith("codex:"):
+            self._maybe_trim_context()
+            working_msgs = list(self.messages)
+            self.call_from_thread(self._set_status, "Running via Codex CLI...")
+            try:
+                final_text = self.codex_provider.chat_completion_events(
+                    working_msgs,
+                    self.model,
+                    on_event=lambda kind, msg: self.call_from_thread(
+                        self._log_codex_event, kind, msg
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {exc}")
+                self.call_from_thread(self._set_status, "Request failed.")
+                return
+
+            import re
+            blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", final_text, re.MULTILINE)
+            if blocks:
+                self._last_code_block = blocks[-1]
+            self.messages = working_msgs
+            self.messages.append({"role": "assistant", "content": final_text})
+            self.call_from_thread(self._log_assistant, final_text)
+            self.call_from_thread(self._set_status, "Done.")
             return
 
         # Auto-trim context if it's getting too long
@@ -701,10 +762,12 @@ class GptTuiApp(ToolsMixin, App[None]):
         working_msgs = list(self.messages)
 
         for round_num in range(MAX_TOOL_ROUNDS):
-            self.call_from_thread(
-                self._set_status,
-                f"Thinking... (round {round_num + 1})" if round_num > 0 else "Thinking...",
+            status_text = (
+                f"Thinking... (round {round_num + 1})"
+                if round_num > 0
+                else "Thinking..."
             )
+            self.call_from_thread(self._set_status, status_text)
             try:
                 final_text, asst_dict, tool_calls = self.provider.chat_with_tools(
                     working_msgs, self.model, TOOLS
