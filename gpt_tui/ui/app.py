@@ -1,10 +1,10 @@
-"""
-app.py — GptTuiApp: UI layout, lifecycle, event handlers, agentic worker loop.
+﻿"""
+app.py â€” GptTuiApp: UI layout, lifecycle, event handlers, agentic worker loop.
 
 Responsibilities:
   - Compose the Textual UI (layout, CSS, bindings)
   - Handle user input, keyboard shortcuts, slash commands
-  - Run the agentic "ask_model" loop (model → tools → model → reply)
+  - Run the agentic "ask_model" loop (model â†’ tools â†’ model â†’ reply)
   - Delegate tool execution to ToolsMixin
   - Delegate branding/constants to constants.py
   - Delegate modals to modals.py
@@ -16,10 +16,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from rich.markup import escape
 
 
 def _load_dotenv() -> None:
-    """Minimal .env loader — no extra package needed."""
+    """Minimal .env loader â€” no extra package needed."""
     env_file = Path(__file__).parents[2] / ".env"
     if not env_file.exists():
         return
@@ -90,7 +91,7 @@ class ChatInput(TextArea):
             self.app.action_submit_prompt()
 
 
-# ─── Main App ────────────────────────────────────────────────────────
+# â”€â”€â”€ Main App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class GptTuiApp(ToolsMixin, App[None]):
     CSS = """
     Screen {
@@ -108,16 +109,16 @@ class GptTuiApp(ToolsMixin, App[None]):
         background: #10131a;
     }
 
-    /* ── Main body ── */
+    /* â”€â”€ Main body â”€â”€ */
     #body { height: 1fr; }
 
-    /* ── Chat panel (left / main) ── */
+    /* â”€â”€ Chat panel (left / main) â”€â”€ */
     #chat_panel {
         width: 1fr;
         background: #0d0f14;
     }
 
-    /* ── Status bar at top of chat ── */
+    /* â”€â”€ Status bar at top of chat â”€â”€ */
     #status_bar {
         height: auto;
         background: #10131a;
@@ -131,14 +132,14 @@ class GptTuiApp(ToolsMixin, App[None]):
         text-style: bold;
     }
 
-    /* ── Chat log ── */
+    /* â”€â”€ Chat log â”€â”€ */
     #chat_log {
         height: 1fr;
         background: #0d0f14;
         padding: 1 2;
     }
 
-    /* ── Bottom input area ── */
+    /* â”€â”€ Bottom input area â”€â”€ */
     #input_area {
         height: auto;
         background: #10131a;
@@ -176,11 +177,11 @@ class GptTuiApp(ToolsMixin, App[None]):
         text-align: right;
     }
 
-    /* ── Sidebar (right) ── */
+    /* â”€â”€ Sidebar (right) â”€â”€ */
     #sidebar {
-        width: 38;
-        min-width: 30;
-        max-width: 50;
+        width: 48;
+        min-width: 38;
+        max-width: 62;
         background: #10131a;
         border-left: solid #1c2030;
     }
@@ -210,7 +211,7 @@ class GptTuiApp(ToolsMixin, App[None]):
 
     /* file tree */
     #file_tree {
-        height: 40%;
+        height: 34%;
         background: transparent;
         padding: 0 1;
         border-bottom: solid #1c2030;
@@ -249,8 +250,28 @@ class GptTuiApp(ToolsMixin, App[None]):
     #preview_close:hover { color: #ff6b6b; }
 
     #file_preview {
-        height: 1fr;
+        height: 26%;
         background: #0b0e12;
+        padding: 0 1;
+    }
+
+    #console_header {
+        height: auto;
+        background: #13161e;
+        padding: 0 1;
+        border-top: solid #1c2030;
+        border-bottom: solid #1c2030;
+    }
+
+    #console_label {
+        color: #7ad97a;
+        text-style: bold;
+        width: 1fr;
+    }
+
+    #codex_console {
+        height: 1fr;
+        background: #090c10;
         padding: 0 1;
     }
     """
@@ -268,7 +289,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         Binding("ctrl+enter", "submit_prompt", "Send", show=False),
     ]
 
-    # ── Layout ────────────────────────────────────────────────────────
+    # â”€â”€ Layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="body"):
@@ -288,16 +309,19 @@ class GptTuiApp(ToolsMixin, App[None]):
             with Vertical(id="sidebar"):
                 with Horizontal(id="sidebar_header"):
                     yield Static("FILES", id="panel_title")
-                    yield Button("▣", id="model_switch_btn", classes="sidebar_icon_btn")
-                    yield Button("⚙", id="settings_btn",    classes="sidebar_icon_btn")
+                    yield Button("â–£", id="model_switch_btn", classes="sidebar_icon_btn")
+                    yield Button("âš™", id="settings_btn",    classes="sidebar_icon_btn")
                 yield DirectoryTree(str(Path.cwd()), id="file_tree")
                 with Horizontal(id="preview_header"):
                     yield Static("PREVIEW", id="preview_label")
-                    yield Button("✕", id="preview_close")
+                    yield Button("âœ•", id="preview_close")
                 yield RichLog(id="file_preview", wrap=True, highlight=True, markup=True)
+                with Horizontal(id="console_header"):
+                    yield Static("CONSOLE", id="console_label")
+                yield RichLog(id="codex_console", wrap=True, highlight=False, markup=True)
         yield Footer()
 
-    # ── Lifecycle ─────────────────────────────────────────────────────
+    # â”€â”€ Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def on_mount(self) -> None:
         self.title = APP_NAME
         self.config = AppConfig.load()
@@ -364,9 +388,12 @@ class GptTuiApp(ToolsMixin, App[None]):
         tree = self.query_one("#file_tree", DirectoryTree)
         tree.path = self.files.repo_root
         tree.reload()
+        self._set_preview_visible(False)
+        console = self.query_one("#codex_console", RichLog)
+        console.write("[dim]Codex live output will appear here.[/]")
         self.query_one("#prompt", ChatInput).focus()
 
-    # ── Actions ───────────────────────────────────────────────────────
+    # â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def action_open_settings(self) -> None:
         def handle_key(key: str | None) -> None:
             if key:
@@ -405,7 +432,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         """Shortcut for ctrl+g."""
         self._cmd_copy()
 
-    # ── Event handlers ────────────────────────────────────────────────
+    # â”€â”€ Event handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def action_submit_prompt(self) -> None:
         """Handle prompt submission."""
         inp = self.query_one("#prompt", ChatInput)
@@ -430,6 +457,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         elif event.button.id == "preview_close":
             self.query_one("#file_preview", RichLog).clear()
             self.query_one("#preview_label", Static).update("PREVIEW")
+            self._set_preview_visible(False)
 
 
 
@@ -443,7 +471,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._show_preview(resolved)
         self._set_status(f"Viewing: {resolved.name}")
 
-    # ── Slash commands ────────────────────────────────────────────────
+    # â”€â”€ Slash commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_command(self, text: str) -> None:
         if text == "/help":
             self.query_one("#chat_log", RichLog).write(
@@ -490,11 +518,11 @@ class GptTuiApp(ToolsMixin, App[None]):
         elif text.startswith("/read "):
             self._cmd_read(text.removeprefix("/read ").strip())
         elif text == "/save":
-            self._log_system("Usage: /save <filename>  — saves last code block from chat")
+            self._log_system("Usage: /save <filename>  â€” saves last code block from chat")
         elif text.startswith("/save "):
             self._cmd_save(text.removeprefix("/save ").strip())
         elif text == "/apikey status":
-            msg = "[green]●[/] API key is active." if self.provider.connected else "[red]●[/] No API key."
+            msg = "[green]â—[/] API key is active." if self.provider.connected else "[red]â—[/] No API key."
             self._log_system(msg)
         elif text == "/apikey clear":
             self.provider.set_api_key("")
@@ -549,7 +577,7 @@ class GptTuiApp(ToolsMixin, App[None]):
     def _cmd_save(self, raw_name: str) -> None:
         """Save the last code block from the assistant to a file."""
         if not self._last_code_block:
-            self._log_system("[red]●[/] No code block yet. Ask the AI for code first.")
+            self._log_system("[red]â—[/] No code block yet. Ask the AI for code first.")
             return
         path = Path(raw_name)
         if not path.is_absolute():
@@ -557,11 +585,11 @@ class GptTuiApp(ToolsMixin, App[None]):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(self._last_code_block, encoding="utf-8")
-            self._log_system(f"[green]●[/] Saved: [bold]{path}[/]")
+            self._log_system(f"[green]â—[/] Saved: [bold]{path}[/]")
             self.query_one("#file_tree", DirectoryTree).reload()
             self._show_preview(path)
         except OSError as exc:
-            self._log_system(f"[red]●[/] Save failed: {exc}")
+            self._log_system(f"[red]â—[/] Save failed: {exc}")
 
     def _cmd_copy(self) -> None:
         """Copy the last assistant response to the Windows clipboard."""
@@ -573,16 +601,16 @@ class GptTuiApp(ToolsMixin, App[None]):
                 break
         
         if not last_asst:
-            self._log_system("[red]●[/] Nothing to copy yet.")
+            self._log_system("[red]â—[/] Nothing to copy yet.")
             return
 
         try:
             # Use Windows built-in clip.exe
             with os.popen('clip', 'w') as pipe:
                 pipe.write(last_asst)
-            self._log_system("[green]●[/] Last reply copied to clipboard!")
+            self._log_system("[green]â—[/] Last reply copied to clipboard!")
         except Exception as exc:
-            self._log_system(f"[red]●[/] Copy failed: {exc}")
+            self._log_system(f"[red]â—[/] Copy failed: {exc}")
 
     def _cmd_copy_art(self) -> None:
         """Copy the GPT TUI ASCII art."""
@@ -593,12 +621,13 @@ class GptTuiApp(ToolsMixin, App[None]):
         try:
             with os.popen('clip', 'w') as pipe:
                 pipe.write(clean_art)
-            self._log_system("[green]●[/] ASCII art copied to clipboard!")
+            self._log_system("[green]â—[/] ASCII art copied to clipboard!")
         except Exception as exc:
-            self._log_system(f"[red]●[/] Copy failed: {exc}")
+            self._log_system(f"[red]â—[/] Copy failed: {exc}")
 
     def _show_preview(self, file_path: Path) -> None:
         """Show file content in the sidebar preview pane (never touches chat)."""
+        self._set_preview_visible(True)
         pv = self.query_one("#file_preview", RichLog)
         pv.clear()
         try:
@@ -614,8 +643,12 @@ class GptTuiApp(ToolsMixin, App[None]):
         if truncated:
             pv.write("[dim #4a5568]... (truncated)[/]")
 
+    def _set_preview_visible(self, visible: bool) -> None:
+        self.query_one("#preview_header", Horizontal).display = visible
+        self.query_one("#file_preview", RichLog).display = visible
+
     def _cmd_read(self, raw_path: str) -> None:
-        """Explicit /read command — also shows in preview pane."""
+        """Explicit /read command â€” also shows in preview pane."""
         file_path, err = self.files.resolve_repo_path(raw_path)
         if not file_path:
             self._log_system(err)
@@ -626,7 +659,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._show_preview(file_path)
         self._log_system(f"Loaded into preview: [bold]{file_path.name}[/]")
 
-    # ── Internal helpers ──────────────────────────────────────────────
+    # â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _initial_repo_root(self) -> Path:
         if self.config.repo_root:
             cfg = Path(self.config.repo_root)
@@ -660,17 +693,17 @@ class GptTuiApp(ToolsMixin, App[None]):
 
     def _refresh_header(self) -> None:
         conn      = "Connected" if self.provider.connected else "No Key"
-        conn_icon = "[green]●[/]" if self.provider.connected else "[red]●[/]"
+        conn_icon = "[green]â—[/]" if self.provider.connected else "[red]â—[/]"
         pname     = self._provider_name_for_model(self.model)
         self.query_one("#chip_conn",  Static).update(f"{conn_icon} {conn}")
         self.query_one("#chip_model", Static).update(
-            f"[#5ec4ff]⬡[/] {self.model}  [dim #4a5568]({pname})[/]"
+            f"[#5ec4ff]â¬¡[/] {self.model}  [dim #4a5568]({pname})[/]"
         )
         self.query_one("#chip_repo",  Static).update(
-            f"[#ffcb6b]▸[/] {Path(str(self.files.repo_root)).name}"
+            f"[#ffcb6b]â–¸[/] {Path(str(self.files.repo_root)).name}"
         )
         self.query_one("#model_badge", Static).update(f"[#5ec4ff]{self.model}[/]")
-        self.sub_title = f"{pname} · {self.model} · {self.files.repo_root}"
+        self.sub_title = f"{pname} Â· {self.model} Â· {self.files.repo_root}"
 
     def _set_status(self, text: str) -> None:
         self.query_one("#status_line", Static).update(f"[#4a5568]{text}[/]")
@@ -693,17 +726,17 @@ class GptTuiApp(ToolsMixin, App[None]):
             f"[#d2a8ff]{self._timestamp()}[/] [dim #d2a8ff]system[/]  {message}"
         )
 
-    def _log_codex_event(self, kind: str, message: str) -> None:
-        if kind == "reasoning":
-            self._log_system(f"[dim]codex[/]: {message}")
+    def _log_codex_stream_line(self, line: str) -> None:
+        log = self.query_one("#codex_console", RichLog)
+        if not line.strip():
+            log.write("")
             return
-        if kind == "error":
-            self._log_system(f"[red]●[/] codex: {message}")
-            return
-        if kind == "status":
-            self._set_status(f"Codex: {message}")
+        log.write(f"[dim]{escape(line)}[/]")
 
-    # ── Workers ───────────────────────────────────────────────────────
+    def _clear_codex_console(self) -> None:
+        self.query_one("#codex_console", RichLog).clear()
+
+    # Workers
     @work(thread=True, exclusive=True)
     def validate_and_save_api_key(self, raw_key: str) -> None:
         ok, msg = self.provider.validate_api_key(raw_key)
@@ -712,15 +745,15 @@ class GptTuiApp(ToolsMixin, App[None]):
             self.config.api_key = raw_key
             self.config.save()
             self.call_from_thread(self._refresh_header)
-            self.call_from_thread(self._log_system, "[green]●[/] API key confirmed and saved.")
+            self.call_from_thread(self._log_system, "[green]â—[/] API key confirmed and saved.")
             self.call_from_thread(self._set_status, "API key confirmed.")
         else:
-            self.call_from_thread(self._log_system, f"[red]●[/] {msg}")
+            self.call_from_thread(self._log_system, f"[red]â—[/] {msg}")
             self.call_from_thread(self._set_status, "API key validation failed.")
 
     @work(thread=True, exclusive=True)
     def ask_model(self) -> None:
-        """Agentic loop: model → tool calls → results → model → ... → final reply."""
+        """Agentic loop: model â†’ tool calls â†’ results â†’ model â†’ ... â†’ final reply."""
         if not self.provider.connected:
             if self.model.startswith("codex:"):
                 self.call_from_thread(self._set_status, "Codex CLI not found in PATH.")
@@ -732,16 +765,21 @@ class GptTuiApp(ToolsMixin, App[None]):
             self._maybe_trim_context()
             working_msgs = list(self.messages)
             self.call_from_thread(self._set_status, "Running via Codex CLI...")
+            self.call_from_thread(self._clear_codex_console)
+            self.call_from_thread(
+                self._log_system,
+                "[#5ec4ff]Codex live session started[/] (in-app stream).",
+            )
             try:
-                final_text = self.codex_provider.chat_completion_events(
+                final_text = self.codex_provider.chat_completion_stream_raw(
                     working_msgs,
                     self.model,
-                    on_event=lambda kind, msg: self.call_from_thread(
-                        self._log_codex_event, kind, msg
+                    on_output=lambda line: self.call_from_thread(
+                        self._log_codex_stream_line, line
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
-                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {exc}")
+                self.call_from_thread(self._log_system, f"[red]![/] Request failed: {exc}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
 
@@ -774,7 +812,7 @@ class GptTuiApp(ToolsMixin, App[None]):
                 )
             except RuntimeError as exc:
                 if "__TOOL_FAILED__" in str(exc):
-                    # Content too large for tool call — fall back to plain chat
+                    # Content too large for tool call â€” fall back to plain chat
                     self.call_from_thread(
                         self._set_status, "Content too large, falling back to plain chat..."
                     )
@@ -785,27 +823,27 @@ class GptTuiApp(ToolsMixin, App[None]):
                         self.call_from_thread(self._log_assistant, reply)
                         self.call_from_thread(
                             self._log_system,
-                            "[yellow]●[/] Content too large for tool call. "
+                            "[yellow]â—[/] Content too large for tool call. "
                             "Use [bold]/save <filename>[/] to write the code above.",
                         )
                         self.call_from_thread(self._set_status, "Done (plain mode).")
                     except Exception as exc2:  # noqa: BLE001
                         self.call_from_thread(
-                            self._log_system, f"[red]●[/] Fallback failed: {exc2}"
+                            self._log_system, f"[red]â—[/] Fallback failed: {exc2}"
                         )
                         self.call_from_thread(self._set_status, "Request failed.")
                     return
 
-                self.call_from_thread(self._log_system, f"[red]●[/] Request failed: {exc}")
+                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {exc}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
             except Exception as exc:  # noqa: BLE001
-                self.call_from_thread(self._log_system, f"[red]●[/] Request failed: {exc}")
+                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {exc}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
 
             if final_text is not None:
-                # Model is done — track code blocks for /save, commit to history
+                # Model is done â€” track code blocks for /save, commit to history
                 import re
                 blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", final_text, re.MULTILINE)
                 if blocks:
@@ -838,6 +876,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         # Exceeded max rounds
         self.call_from_thread(
             self._log_system,
-            "[yellow]●[/] Reached max tool-call rounds. Try rephrasing.",
+            "[yellow]â—[/] Reached max tool-call rounds. Try rephrasing.",
         )
         self.call_from_thread(self._set_status, "Done (max rounds).")
+
