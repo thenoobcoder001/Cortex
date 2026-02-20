@@ -37,26 +37,58 @@ class CodexProvider:
     def _build_prompt(self, messages: list[dict[str, Any]]) -> str:
         if not messages:
             return ""
-        system = ""
-        if messages[0].get("role") == "system":
-            system = str(messages[0].get("content", ""))
+        # Keep Codex input minimal: latest user message + short prior context.
+        tail = [m for m in messages[-6:] if str(m.get("role", "")) in {"user", "assistant"}]
+        latest_user = ""
+        for msg in reversed(tail):
+            if msg.get("role") == "user":
+                latest_user = str(msg.get("content", "")).strip()
+                break
 
-        tail = messages[-8:]
-        lines: list[str] = []
-        if system:
-            lines.append("SYSTEM INSTRUCTIONS:")
-            lines.append(system)
-            lines.append("")
-        lines.append("CONVERSATION:")
-        for msg in tail:
-            role = str(msg.get("role", "user")).upper()
-            content = str(msg.get("content", ""))
-            if not content:
+        if not latest_user:
+            latest_user = str(messages[-1].get("content", "")).strip()
+
+        context_lines: list[str] = []
+        for msg in tail[:-1]:
+            role = str(msg.get("role", "")).strip()
+            content = str(msg.get("content", "")).strip()
+            if not role or not content:
                 continue
-            lines.append(f"{role}: {content}")
-        lines.append("")
-        lines.append("Respond to the latest user request.")
-        return "\n".join(lines)
+            context_lines.append(f"{role}: {content}")
+
+        if context_lines:
+            return (
+                "Conversation context:\n"
+                + "\n".join(context_lines)
+                + "\n\nLatest request:\n"
+                + latest_user
+            )
+        return latest_user
+
+    def _should_stream_line(self, line: str) -> bool:
+        text = line.strip()
+        if not text:
+            return True
+        hidden_prefixes = (
+            "OpenAI Codex",
+            "workdir:",
+            "model:",
+            "provider:",
+            "approval:",
+            "sandbox:",
+            "reasoning effort:",
+            "reasoning summaries:",
+            "session id:",
+            "mcp startup:",
+            "tokens used",
+        )
+        if text.startswith(hidden_prefixes):
+            return False
+        if text in {"user"}:
+            return False
+        if text == "--------":
+            return False
+        return True
 
     def _resolve_codex_executable(self) -> str | None:
         return shutil.which("codex.cmd") or shutil.which("codex")
@@ -66,23 +98,78 @@ class CodexProvider:
             return model.split(":", 1)[1]
         return model
 
-    def run_interactive(self, prompt: str, model: str) -> int:
-        """Launch interactive codex session in the current terminal."""
+    def _extract_assistant_from_raw_output(self, output: str) -> str:
+        text = output.strip()
+        if not text:
+            return "(No response from codex.)"
+
+        marker = "\ncodex\n"
+        start = text.rfind(marker)
+        if start != -1:
+            body = text[start + len(marker):]
+            end = body.find("\ntokens used")
+            if end != -1:
+                body = body[:end]
+            body = body.strip()
+            if body:
+                return body
+
+        return text
+
+    def chat_completion_stream_raw(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        on_output: Callable[[str], None] | None = None,
+    ) -> str:
+        """Run codex exec and stream terminal-like output as lines."""
         codex_exec = self._resolve_codex_executable()
         if not codex_exec:
             raise RuntimeError("codex CLI not found in PATH")
 
+        prompt = self._build_prompt(messages)
         cmd = [
             codex_exec,
+            "exec",
+            "-",
             "-C",
             str(self.repo_root),
+            "--skip-git-repo-check",
             "--model",
             self._cli_model_name(model),
-            "--no-alt-screen",
-            prompt,
+            "--color",
+            "never",
         ]
-        result = subprocess.run(cmd, cwd=str(self.repo_root), check=False)
-        return int(result.returncode)
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(self.repo_root),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if proc.stdin:
+            proc.stdin.write(prompt.encode("utf-8"))
+            proc.stdin.close()
+
+        chunks: list[str] = []
+        if proc.stdout:
+            while True:
+                raw = proc.stdout.readline()
+                if not raw:
+                    break
+                line = raw.decode("utf-8", errors="replace")
+                chunks.append(line)
+                if on_output and self._should_stream_line(line):
+                    on_output(line.rstrip("\r\n"))
+
+        return_code = proc.wait(timeout=600)
+        full_output = "".join(chunks)
+        if return_code != 0:
+            detail = full_output.strip() or f"exit code {return_code}"
+            raise RuntimeError(f"codex exec failed: {detail}")
+
+        return self._extract_assistant_from_raw_output(full_output)
 
     def chat_completion_events(
         self,
