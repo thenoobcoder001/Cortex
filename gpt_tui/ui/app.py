@@ -41,12 +41,13 @@ from textual import work, on
 from textual.events import Key
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll, ScrollableContainer
 from textual.widgets import (
     Button,
     DirectoryTree,
     Footer,
     Header,
+    Label,
     LoadingIndicator,
     RichLog,
     Static,
@@ -91,6 +92,20 @@ class ChatInput(TextArea):
             event.stop()
             event.prevent_default()
             self.app.action_submit_prompt()
+
+
+class ChatMessage(Vertical):
+    """A dedicated widget for a single chat message."""
+
+    def __init__(self, role: str, content: str, timestamp: str, classes: str) -> None:
+        super().__init__(classes=f"msg_container {classes}")
+        self.role = role
+        self.content = content
+        self.timestamp = timestamp
+
+    def compose(self) -> ComposeResult:
+        yield Label(f"{self.timestamp} {self.role}", classes="msg_header")
+        yield Static(self.content, classes="msg_body")
 
 
 # â”€â”€â”€ Main App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -147,6 +162,27 @@ class GptTuiApp(ToolsMixin, App[None]):
         height: 1fr;
         background: #0d0f14;
         padding: 1 2;
+    }
+
+    .msg_container {
+        height: auto;
+        padding: 1 0;
+        margin-bottom: 1;
+        border-top: solid #1c2030;
+    }
+
+    .msg_header {
+        text-style: bold;
+        padding-bottom: 0;
+    }
+
+    .msg_user .msg_header { color: #5ec4ff; }
+    .msg_assistant .msg_header { color: #7ad97a; }
+    .msg_system .msg_header { color: #d2a8ff; }
+
+    .msg_body {
+        padding: 0 0 0 2;
+        color: #c9d1d9;
     }
 
     #stream_box {
@@ -291,10 +327,16 @@ class GptTuiApp(ToolsMixin, App[None]):
         width: 1fr;
     }
 
-    #codex_console {
+    #codex_console_scroller {
         height: 1fr;
         background: #090c10;
         padding: 0 1;
+    }
+
+    #codex_console {
+        height: auto;
+        width: 1fr;
+        color: #4a5568;
     }
     """
 
@@ -322,7 +364,7 @@ class GptTuiApp(ToolsMixin, App[None]):
                     yield Static("", id="chip_model", classes="chip")
                     yield Static("", id="chip_repo",  classes="chip")
                     yield LoadingIndicator(id="loading_indicator")
-                yield RichLog(id="chat_log", wrap=True, highlight=True, markup=True)
+                yield VerticalScroll(id="chat_log", can_focus=True)
                 yield Static("", id="stream_box", classes="stream_area")
                 with Vertical(id="input_area"):
                     yield ChatInput(id="prompt")
@@ -342,7 +384,8 @@ class GptTuiApp(ToolsMixin, App[None]):
                 yield RichLog(id="file_preview", wrap=True, highlight=True, markup=True)
                 with Horizontal(id="console_header"):
                     yield Static("CONSOLE", id="console_label")
-                yield RichLog(id="codex_console", wrap=True, highlight=False, markup=True)
+                with VerticalScroll(id="codex_console_scroller"):
+                    yield Static("[dim]CLI live output will appear here.[/]", id="codex_console")
         yield Footer()
 
     # â”€â”€ Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -359,6 +402,14 @@ class GptTuiApp(ToolsMixin, App[None]):
         self.groq_provider   = GroqProvider(api_key=groq_key)
         self.gemini_provider = GeminiProvider(api_key=gemini_key)
         self.gemini_cli_provider = GeminiCliProvider(repo_root=repo_root)
+        self.gemini_cli_provider.session_id = self.config.gemini_session_id
+        
+        def save_session_id(sid: str) -> None:
+            self.config.gemini_session_id = sid
+            self.config.save()
+            
+        self.gemini_cli_provider.on_session_init = save_session_id
+        
         self.codex_provider  = CodexProvider(repo_root=repo_root)
         self.model    = self.config.model or DEFAULT_MODEL
         self.provider = self._provider_for_model(self.model)
@@ -381,47 +432,29 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._refresh_header()
 
         # Welcome banner
-        log = self.query_one("#chat_log", RichLog)
-        log.can_focus = True
-        log.write(WELCOME_ART)
-        log.write(WELCOME_MSG)
-        log.write("")
+        log = self.query_one("#chat_log", VerticalScroll)
+        log.mount(Static(WELCOME_ART, classes="welcome_art"))
+        self._log_system(WELCOME_MSG)
 
         ts = self._timestamp()
         if not self.provider.connected:
             if self.model.startswith("codex:"):
-                log.write(
-                    f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
-                    "Codex CLI not found. Install codex CLI or pick Gemini/Groq."
-                )
+                self._log_system("Codex CLI not found. Install codex CLI or pick Gemini/Groq.")
             elif self.model.startswith("gemini-cli:"):
-                log.write(
-                    f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
-                    "Gemini CLI not found. Install Gemini CLI or pick Gemini/Groq."
-                )
+                self._log_system("Gemini CLI not found. Install Gemini CLI or pick Gemini/Groq.")
             else:
-                log.write(
-                    f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
-                    "No API key. Press [bold #ff6b6b]Ctrl+K[/] for settings."
-                )
+                self._log_system("No API key. Press [bold #ff6b6b]Ctrl+K[/] for settings.")
         else:
             pname = self._provider_name_for_model(self.model)
-            log.write(
-                f"[bold #7ad97a]{ts}[/] [dim #7ad97a]system[/]  "
-                f"{pname} connected. Ready to code!"
-            )
+            self._log_system(f"{pname} connected. Ready to code!")
 
-        log.write(
-            f"[bold #5ec4ff]{ts}[/] [dim #5ec4ff]system[/]  "
-            f"Workspace: [bold]{self.files.repo_root}[/]"
-        )
+        self._log_system(f"Workspace: [bold]{self.files.repo_root}[/]")
 
         tree = self.query_one("#file_tree", DirectoryTree)
         tree.path = self.files.repo_root
         tree.reload()
         self._set_preview_visible(False)
-        console = self.query_one("#codex_console", RichLog)
-        console.write("[dim]Codex live output will appear here.[/]")
+        
         self.query_one("#prompt", ChatInput).focus()
 
     # â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -455,7 +488,8 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._set_status("File tree refreshed.")
 
     def action_clear_chat(self) -> None:
-        self.query_one("#chat_log", RichLog).clear()
+        log = self.query_one("#chat_log", VerticalScroll)
+        log.query("*").remove()
         self.messages = [self.messages[0]]
         self._log_system("Chat cleared.")
 
@@ -748,32 +782,34 @@ class GptTuiApp(ToolsMixin, App[None]):
         return datetime.now().strftime("%H:%M:%S")
 
     def _log_user(self, message: str) -> None:
-        log = self.query_one("#chat_log", RichLog)
-        log.write(f"\n[bold #5ec4ff]{self._timestamp()}[/] [bold #5ec4ff]you[/]")
-        log.write(f"  {message}")
+        self._mount_message("you", message, "msg_user")
 
     def _log_assistant(self, message: str) -> None:
-        log = self.query_one("#chat_log", RichLog)
-        log.write(f"\n[bold #7ad97a]{self._timestamp()}[/] [bold #7ad97a]assistant[/]")
-        log.write(f"  {message}")
+        self._mount_message("assistant", message, "msg_assistant")
 
     def _log_system(self, message: str) -> None:
-        self.query_one("#chat_log", RichLog).write(
-            f"[#d2a8ff]{self._timestamp()}[/] [dim #d2a8ff]system[/]  {message}"
-        )
+        self._mount_message("system", message, "msg_system")
+
+    def _mount_message(self, role: str, content: str, classes: str) -> None:
+        log = self.query_one("#chat_log", VerticalScroll)
+        msg = ChatMessage(role, content, self._timestamp(), classes)
+        log.mount(msg)
+        log.scroll_end()
 
     def _log_codex_stream_line(self, line: str) -> None:
-        log = self.query_one("#codex_console", RichLog)
-        if not line.strip():
-            log.write("")
-            return
-        log.write(f"[dim]{line}[/]")
+        self._handle_stream_chunk(line + "\n")
 
     def _handle_stream_chunk(self, chunk: str) -> None:
+        # Update the live stream box
         self._update_stream(chunk)
-        # For sidebar, we still use RichLog for now, but without escape to allow the tool call markup
-        log = self.query_one("#codex_console", RichLog)
-        log.write(f"[dim]{chunk}[/]")
+
+        # Also update the sidebar console
+        console = self.query_one("#codex_console", Static)
+        # For a Static widget, we just append the text. 
+        # Note: Static doesn't have a simple .write(), we update its content.
+        current = str(console.renderable)
+        console.update(current + chunk)
+        self.query_one("#codex_console_scroller", VerticalScroll).scroll_end()
 
     def _start_stream(self) -> None:
         self.query_one("#loading_indicator", LoadingIndicator).display = True
@@ -796,7 +832,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         sb.update("")
 
     def _clear_codex_console(self) -> None:
-        self.query_one("#codex_console", RichLog).clear()
+        self.query_one("#codex_console", Static).update("")
 
     # Workers
     @work(thread=True, exclusive=True)

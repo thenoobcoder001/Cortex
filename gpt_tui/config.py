@@ -22,6 +22,7 @@ class AppConfig:
     api_key: str = ""
     model: str = "gemini-2.0-flash"
     repo_root: str = ""
+    gemini_session_id: str = ""
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -35,6 +36,7 @@ class AppConfig:
             api_key=str(data.get("api_key", "")),
             model=str(data.get("model", "gemini-2.0-flash")),
             repo_root=str(data.get("repo_root", "")),
+            gemini_session_id=str(data.get("gemini_session_id", "")),
         )
 
     def save(self) -> None:
@@ -43,6 +45,7 @@ class AppConfig:
             "api_key": self.api_key,
             "model": self.model,
             "repo_root": self.repo_root,
+            "gemini_session_id": self.gemini_session_id,
         }
         CONFIG_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
