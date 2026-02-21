@@ -14,6 +14,8 @@ class GeminiCliProvider:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
         self._has_session = False
+        self.session_id: str = ""
+        self.on_session_init: Callable[[str], None] | None = None
 
     @property
     def available(self) -> bool:
@@ -59,49 +61,13 @@ class GeminiCliProvider:
             if msg.get("role") == "user":
                 latest_user = str(msg.get("content", "")).strip()
                 break
-        
+
         if not latest_user and messages:
             latest_user = str(messages[-1].get("content", "")).strip()
 
-        # If we have a session, we only send the latest user message.
-        # The CLI's --resume latest handles the history.
-        if self._has_session:
-            return latest_user
-
-        # First message in session: provide context and system instructions
-        system_text = (
-            "You are a senior software engineering partner. "
-            "If the user just says 'hi' or 'hello', just say hi back briefly. "
-            "Do NOT analyze the workspace or list files unless specifically asked. "
-            "Be extremely concise."
-        )
-        for m in messages:
-            if m.get("role") == "system":
-                system_text = str(m.get("content", "")).strip()
-                break
-
-        # Get last 5 messages for initial context if this is a "new" session to the CLI
-        # but we have existing messages in TUI (e.g. after model switch)
-        history = [m for m in messages if m.get("role") != "system"]
-        tail = history[-5:]
-        
-        context_lines: list[str] = []
-        for msg in tail:
-            role = str(msg.get("role", "")).strip().upper()
-            content = str(msg.get("content", "")).strip()
-            if role and content:
-                context_lines.append(f"{role.upper()}: {content}")
-
-        if context_lines:
-            return (
-                f"{system_text}\n\n"
-                "Conversation history:\n"
-                + "\n".join(context_lines)
-                + "\n\nUser's latest request:\n"
-                + latest_user
-            )
-        
-        return f"{system_text}\n\n{latest_user}"
+        # Always rely on CLI-side conversation memory via `--resume latest`.
+        # This avoids creating a fresh context prompt and keeps one continuous chat.
+        return latest_user
 
     def chat_completion_stream_raw(
         self,
@@ -134,9 +100,12 @@ class GeminiCliProvider:
             "stream-json",
             "--approval-mode",
             "yolo",
-            "--resume",
-            "latest",
         ]
+
+        if self.session_id:
+            cmd.extend(["--resume", self.session_id])
+        elif self._has_session:
+            cmd.extend(["--resume", "latest"])
 
         cli_model = self._cli_model_name(model)
         if cli_model and cli_model != "auto":
@@ -155,6 +124,7 @@ class GeminiCliProvider:
             trace("proc.stdin closed")
 
         assistant_chunks: list[str] = []
+        assistant_text = ""
         raw_tail: list[str] = []
         
         # Recognized noise patterns from Gemini CLI that aren't part of the model's message
@@ -215,12 +185,32 @@ class GeminiCliProvider:
 
                 etype = evt.get("type")
                 trace(f"Parsed JSON type: {etype}")
+                
+                if etype == "init":
+                    sid = evt.get("session_id")
+                    if sid and sid != self.session_id:
+                        self.session_id = sid
+                        if self.on_session_init:
+                            self.on_session_init(sid)
+
                 if etype == "message" and evt.get("role") == "assistant":
                     content = str(evt.get("content", ""))
-                    if content:
-                        assistant_chunks.append(content)
+                    if not content:
+                        continue
+
+                    # Gemini CLI may emit either true deltas or cumulative snapshots.
+                    # Normalize both into incremental chunks for live UI updates.
+                    if content.startswith(assistant_text):
+                        delta = content[len(assistant_text):]
+                        assistant_text = content
+                    else:
+                        delta = content
+                        assistant_text += content
+
+                    if delta:
+                        assistant_chunks.append(delta)
                         if on_output:
-                            on_output(escape(content))
+                            on_output(escape(delta))
                 elif etype == "tool_use":
                     name = str(evt.get("tool_name", "unknown"))
                     params = json.dumps(evt.get("parameters", {}))
