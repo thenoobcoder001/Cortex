@@ -47,6 +47,7 @@ from textual.widgets import (
     DirectoryTree,
     Footer,
     Header,
+    LoadingIndicator,
     RichLog,
     Static,
     TextArea,
@@ -54,6 +55,7 @@ from textual.widgets import (
 
 from gpt_tui.config import AppConfig
 from gpt_tui.providers.codex_provider import CodexProvider
+from gpt_tui.providers.gemini_cli_provider import GeminiCliProvider
 from gpt_tui.providers.gemini_provider import GeminiProvider
 from gpt_tui.providers.groq_provider import GroqProvider
 from gpt_tui.services.file_service import RepoFileService
@@ -83,7 +85,7 @@ class ChatInput(TextArea):
 
     def on_key(self, event: Key) -> None:
         """Force Enter to submit; Shift+Enter keeps newline behavior."""
-        is_enter = event.key == "enter"
+        is_enter = event.key in ("enter", "return")
         is_shift = bool(getattr(event, "shift", False))
         if is_enter and not is_shift:
             event.stop()
@@ -126,6 +128,14 @@ class GptTuiApp(ToolsMixin, App[None]):
         border-bottom: solid #1c2030;
     }
 
+    #loading_indicator {
+        display: none;
+        width: 10;
+        height: 1;
+        margin-left: 2;
+        color: #ff6b6b;
+    }
+
     .chip {
         margin-right: 2;
         padding: 0 1;
@@ -137,6 +147,18 @@ class GptTuiApp(ToolsMixin, App[None]):
         height: 1fr;
         background: #0d0f14;
         padding: 1 2;
+    }
+
+    #stream_box {
+        display: none;
+        height: auto;
+        min-height: 1;
+        max-height: 20;
+        background: #13161e;
+        color: #7ad97a;
+        padding: 1 2;
+        border-top: dashed #2a3442;
+        overflow-y: scroll;
     }
 
     /* â”€â”€ Bottom input area â”€â”€ */
@@ -299,7 +321,9 @@ class GptTuiApp(ToolsMixin, App[None]):
                     yield Static("", id="chip_conn",  classes="chip")
                     yield Static("", id="chip_model", classes="chip")
                     yield Static("", id="chip_repo",  classes="chip")
+                    yield LoadingIndicator(id="loading_indicator")
                 yield RichLog(id="chat_log", wrap=True, highlight=True, markup=True)
+                yield Static("", id="stream_box", classes="stream_area")
                 with Vertical(id="input_area"):
                     yield ChatInput(id="prompt")
                     with Horizontal(id="input_footer"):
@@ -334,6 +358,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
         self.groq_provider   = GroqProvider(api_key=groq_key)
         self.gemini_provider = GeminiProvider(api_key=gemini_key)
+        self.gemini_cli_provider = GeminiCliProvider(repo_root=repo_root)
         self.codex_provider  = CodexProvider(repo_root=repo_root)
         self.model    = self.config.model or DEFAULT_MODEL
         self.provider = self._provider_for_model(self.model)
@@ -357,6 +382,7 @@ class GptTuiApp(ToolsMixin, App[None]):
 
         # Welcome banner
         log = self.query_one("#chat_log", RichLog)
+        log.can_focus = True
         log.write(WELCOME_ART)
         log.write(WELCOME_MSG)
         log.write("")
@@ -367,6 +393,11 @@ class GptTuiApp(ToolsMixin, App[None]):
                 log.write(
                     f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
                     "Codex CLI not found. Install codex CLI or pick Gemini/Groq."
+                )
+            elif self.model.startswith("gemini-cli:"):
+                log.write(
+                    f"[bold #ffcb6b]{ts}[/] [dim #ffcb6b]system[/]  "
+                    "Gemini CLI not found. Install Gemini CLI or pick Gemini/Groq."
                 )
             else:
                 log.write(
@@ -550,6 +581,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         if not ok:
             return
         self.codex_provider.set_repo_root(self.files.repo_root)
+        self.gemini_cli_provider.set_repo_root(self.files.repo_root)
         self.config.repo_root = str(self.files.repo_root)
         self.config.save()
         tree = self.query_one("#file_tree", DirectoryTree)
@@ -679,6 +711,8 @@ class GptTuiApp(ToolsMixin, App[None]):
     def _provider_for_model(self, model: str):
         """Return the correct provider instance for the given model name."""
         if model.startswith("gemini"):
+            if model.startswith("gemini-cli:"):
+                return self.gemini_cli_provider
             return self.gemini_provider
         if model.startswith("codex:"):
             return self.codex_provider
@@ -686,6 +720,8 @@ class GptTuiApp(ToolsMixin, App[None]):
 
     def _provider_name_for_model(self, model: str) -> str:
         if model.startswith("gemini"):
+            if model.startswith("gemini-cli:"):
+                return "Gemini CLI"
             return "Gemini"
         if model.startswith("codex:"):
             return "Codex"
@@ -731,7 +767,33 @@ class GptTuiApp(ToolsMixin, App[None]):
         if not line.strip():
             log.write("")
             return
-        log.write(f"[dim]{escape(line)}[/]")
+        log.write(f"[dim]{line}[/]")
+
+    def _handle_stream_chunk(self, chunk: str) -> None:
+        self._update_stream(chunk)
+        # For sidebar, we still use RichLog for now, but without escape to allow the tool call markup
+        log = self.query_one("#codex_console", RichLog)
+        log.write(f"[dim]{chunk}[/]")
+
+    def _start_stream(self) -> None:
+        self.query_one("#loading_indicator", LoadingIndicator).display = True
+        sb = self.query_one("#stream_box", Static)
+        sb.display = True
+        sb.update("[bold #7ad97a]assistant[/] [dim](streaming...)[/]")
+        self._stream_buffer = ""
+
+    def _update_stream(self, chunk: str) -> None:
+        self._stream_buffer += chunk
+        sb = self.query_one("#stream_box", Static)
+        # Use markup to escape the chunk if needed, but the chunk itself might contain rich tags from provider
+        sb.update(f"[bold #7ad97a]assistant[/] [dim](streaming...)[/]\n  {self._stream_buffer}")
+        sb.scroll_end()
+
+    def _finish_stream(self) -> None:
+        self.query_one("#loading_indicator", LoadingIndicator).display = False
+        sb = self.query_one("#stream_box", Static)
+        sb.display = False
+        sb.update("")
 
     def _clear_codex_console(self) -> None:
         self.query_one("#codex_console", RichLog).clear()
@@ -757,32 +819,39 @@ class GptTuiApp(ToolsMixin, App[None]):
         if not self.provider.connected:
             if self.model.startswith("codex:"):
                 self.call_from_thread(self._set_status, "Codex CLI not found in PATH.")
+            elif self.model.startswith("gemini-cli:"):
+                self.call_from_thread(self._set_status, "Gemini CLI not found in PATH.")
             else:
                 self.call_from_thread(self._set_status, "No API key. Press Ctrl+K.")
             return
 
-        if self.model.startswith("codex:"):
+        if self.model.startswith("codex:") or self.model.startswith("gemini-cli:"):
             self._maybe_trim_context()
             working_msgs = list(self.messages)
-            self.call_from_thread(self._set_status, "Running via Codex CLI...")
+            cli_name = "Codex CLI" if self.model.startswith("codex:") else "Gemini CLI"
+            self.call_from_thread(self._set_status, f"Running via {cli_name}...")
             self.call_from_thread(self._clear_codex_console)
-            self.call_from_thread(
-                self._log_system,
-                "[#5ec4ff]Codex live session started[/] (in-app stream).",
-            )
+            self.call_from_thread(self._start_stream)
             try:
-                final_text = self.codex_provider.chat_completion_stream_raw(
+                cli_provider = (
+                    self.codex_provider if self.model.startswith("codex:")
+                    else self.gemini_cli_provider
+                )
+                final_text = cli_provider.chat_completion_stream_raw(
                     working_msgs,
                     self.model,
-                    on_output=lambda line: self.call_from_thread(
-                        self._log_codex_stream_line, line
+                    on_output=lambda chunk: self.call_from_thread(
+                        self._handle_stream_chunk, chunk
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
+                self.call_from_thread(self._finish_stream)
+                self.call_from_thread(self.query_one("#loading_indicator", LoadingIndicator).update, display=False)
                 self.call_from_thread(self._log_system, f"[red]![/] Request failed: {exc}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
 
+            self.call_from_thread(self._finish_stream)
             import re
             blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", final_text, re.MULTILINE)
             if blocks:

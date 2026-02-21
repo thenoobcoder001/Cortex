@@ -1,60 +1,66 @@
-"""
-constants.py — All static data: branding, model lists, tool schemas, limits.
-No Textual imports here — this file must be importable anywhere.
+﻿"""
+constants.py â€” All static data: branding, model lists, tool schemas, limits.
+No Textual imports here â€” this file must be importable anywhere.
 """
 from __future__ import annotations
 
 from typing import Any
 
-# ─── Branding ────────────────────────────────────────────────────────
+# â”€â”€â”€ Branding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 APP_NAME = "GPT TUI"
 VERSION = "0.2.0"
 
 WELCOME_ART = r"""[bold #ff6b6b]
-   ██████╗ ██████╗ ████████╗  ████████╗██╗   ██╗██╗
-  ██╔════╝ ██╔══██╗╚══██╔══╝  ╚══██╔══╝██║   ██║██║
-  ██║  ███╗██████╔╝   ██║        ██║   ██║   ██║██║
-  ██║   ██║██╔═══╝    ██║        ██║   ██║   ██║██║
-  ╚██████╔╝██║        ██║        ██║   ╚██████╔╝██║
-   ╚═════╝ ╚═╝        ╚═╝        ╚═╝    ╚═════╝ ╚═╝[/]
+   â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•— â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•— â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•—  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•—â–ˆâ–ˆâ•—   â–ˆâ–ˆâ•—â–ˆâ–ˆâ•—
+  â–ˆâ–ˆâ•”â•â•â•â•â• â–ˆâ–ˆâ•”â•â•â–ˆâ–ˆâ•—â•šâ•â•â–ˆâ–ˆâ•”â•â•â•  â•šâ•â•â–ˆâ–ˆâ•”â•â•â•â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘
+  â–ˆâ–ˆâ•‘  â–ˆâ–ˆâ–ˆâ•—â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•”â•   â–ˆâ–ˆâ•‘        â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘
+  â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•”â•â•â•â•    â–ˆâ–ˆâ•‘        â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘   â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘
+  â•šâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•”â•â–ˆâ–ˆâ•‘        â–ˆâ–ˆâ•‘        â–ˆâ–ˆâ•‘   â•šâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•”â•â–ˆâ–ˆâ•‘
+   â•šâ•â•â•â•â•â• â•šâ•â•        â•šâ•â•        â•šâ•â•    â•šâ•â•â•â•â•â• â•šâ•â•[/]
 """
 
 WELCOME_MSG = (
-    f"[dim #7a8a9e]v{VERSION}[/]  ·  "
-    "[dim #7a8a9e]Windows-first coding assistant[/]  ·  "
+    f"[dim #7a8a9e]v{VERSION}[/]  Â·  "
+    "[dim #7a8a9e]Windows-first coding assistant[/]  Â·  "
     "[dim #7a8a9e]Gemini + Groq + Codex[/]\n"
-    "[dim #536374]─────────────────────────────────────────────────────[/]\n"
-    f"[dim #7a8a9e]Shift + Mouse to select text[/]  ·  "
+    "[dim #536374]â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€[/]\n"
+    f"[dim #7a8a9e]Shift + Mouse to select text[/]  Â·  "
     "[dim #7a8a9e]Ctrl+G[/] [dim]copy last reply[/]\n"
-    "[dim #536374]─────────────────────────────────────────────────────[/]\n"
-    "[#7a8a9e]Ctrl+K[/] [dim]API keys[/]  │  "
-    "[#7a8a9e]Ctrl+T[/] [dim]switch model[/]  │  "
-    "[#7a8a9e]/help[/] [dim]commands[/]  │  "
+    "[dim #536374]â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€[/]\n"
+    "[#7a8a9e]Ctrl+K[/] [dim]API keys[/]  â”‚  "
+    "[#7a8a9e]Ctrl+T[/] [dim]switch model[/]  â”‚  "
+    "[#7a8a9e]/help[/] [dim]commands[/]  â”‚  "
     "[#7a8a9e]Ctrl+L[/] [dim]clear[/]"
 )
 
-# ─── Model registry ──────────────────────────────────────────────────
+# â”€â”€â”€ Model registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 GEMINI_MODELS: list[tuple[str, str]] = [
-    ("gemini-2.0-flash",              "Gemini 2.0 Flash       [free · fast]"),
-    ("gemini-1.5-flash",              "Gemini 1.5 Flash       [free · fast]"),
-    ("gemini-1.5-pro",                "Gemini 1.5 Pro         [free · smart · 50 req/day]"),
-    ("gemini-2.0-flash-thinking-exp", "Gemini 2.0 Thinking    [free · reasoning]"),
+    ("gemini-2.0-flash",              "Gemini 2.0 Flash       [free Â· fast]"),
+    ("gemini-1.5-flash",              "Gemini 1.5 Flash       [free Â· fast]"),
+    ("gemini-1.5-pro",                "Gemini 1.5 Pro         [free Â· smart Â· 50 req/day]"),
+    ("gemini-2.0-flash-thinking-exp", "Gemini 2.0 Thinking    [free Â· reasoning]"),
 ]
+GEMINI_CLI_MODELS: list[tuple[str, str]] = [
+    ("gemini-cli:auto",             "Gemini CLI Auto       [terminal agent]"),
+    ("gemini-cli:gemini-2.0-flash", "Gemini CLI 2.0 Flash  [stable]"),
+    ("gemini-cli:gemini-1.5-flash", "Gemini CLI 1.5 Flash  [stable]"),
+]
+
 GROQ_MODELS: list[tuple[str, str]] = [
-    ("llama-3.3-70b-versatile",        "Llama 3.3 70B          [free · fast]"),
-    ("llama-3.1-8b-instant",           "Llama 3.1 8B           [free · fastest]"),
-    ("deepseek-r1-distill-llama-70b",  "DeepSeek R1 70B        [free · reasoning]"),
-    ("mixtral-8x7b-32768",             "Mixtral 8x7B           [free · long ctx]"),
+    ("llama-3.3-70b-versatile",        "Llama 3.3 70B          [free Â· fast]"),
+    ("llama-3.1-8b-instant",           "Llama 3.1 8B           [free Â· fastest]"),
+    ("deepseek-r1-distill-llama-70b",  "DeepSeek R1 70B        [free Â· reasoning]"),
+    ("mixtral-8x7b-32768",             "Mixtral 8x7B           [free Â· long ctx]"),
 ]
 CODEX_MODELS: list[tuple[str, str]] = [
     ("codex:gpt-5", "Codex GPT-5           [terminal agent]"),
 ]
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-cli:gemini-2.0-flash"
 
-# ─── Context window ──────────────────────────────────────────────────
+# â”€â”€â”€ Context window â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Auto-summarization fires when total message chars exceed this.
-# ~80K chars ≈ 20K tokens — safely below all supported models.
+# ~80K chars â‰ˆ 20K tokens â€” safely below all supported models.
 CONTEXT_CHAR_LIMIT = 80_000
 
 # How many recent messages to keep intact when summarizing
@@ -63,7 +69,7 @@ KEEP_RECENT_MESSAGES = 6
 # Maximum turns of model <-> tool interaction before stopping
 MAX_TOOL_ROUNDS = 8
 
-# ─── Tool schemas (OpenAI function-calling format) ───────────────────
+# â”€â”€â”€ Tool schemas (OpenAI function-calling format) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
