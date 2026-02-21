@@ -9,7 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from gpt_tui.ui.constants import CODEX_MODELS, GEMINI_MODELS, GROQ_MODELS
+from gpt_tui.ui.constants import CODEX_MODELS, GEMINI_CLI_MODELS, GEMINI_MODELS, GROQ_MODELS
 
 
 class ModelPickerModal(ModalScreen[str | None]):
@@ -71,6 +71,7 @@ class ModelPickerModal(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         self._model_list = (
             [m for m, _ in GEMINI_MODELS]
+            + [m for m, _ in GEMINI_CLI_MODELS]
             + [m for m, _ in GROQ_MODELS]
             + [m for m, _ in CODEX_MODELS]
         )
@@ -86,8 +87,16 @@ class ModelPickerModal(ModalScreen[str | None]):
                     btn.add_class("-active")
                 yield btn
 
-            yield Static("  GROQ (Meta/Mistral)", classes="mp_section")
+            yield Static("  GEMINI CLI (Terminal)", classes="mp_section")
             offset = len(GEMINI_MODELS)
+            for i, (model_id, label) in enumerate(GEMINI_CLI_MODELS):
+                btn = Button(f"  {label}", id=f"mp_{offset + i}", classes="mp_model_btn")
+                if model_id == self.current_model:
+                    btn.add_class("-active")
+                yield btn
+
+            yield Static("  GROQ (Meta/Mistral)", classes="mp_section")
+            offset = len(GEMINI_MODELS) + len(GEMINI_CLI_MODELS)
             for i, (model_id, label) in enumerate(GROQ_MODELS):
                 btn = Button(f"  {label}", id=f"mp_{offset + i}", classes="mp_model_btn")
                 if model_id == self.current_model:
@@ -95,7 +104,7 @@ class ModelPickerModal(ModalScreen[str | None]):
                 yield btn
 
             yield Static("  CODEX (Terminal)", classes="mp_section")
-            offset2 = len(GEMINI_MODELS) + len(GROQ_MODELS)
+            offset2 = len(GEMINI_MODELS) + len(GEMINI_CLI_MODELS) + len(GROQ_MODELS)
             for i, (model_id, label) in enumerate(CODEX_MODELS):
                 btn = Button(f"  {label}", id=f"mp_{offset2 + i}", classes="mp_model_btn")
                 if model_id == self.current_model:
@@ -219,4 +228,3 @@ class ApiKeyModal(ModalScreen[str | None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "api_input":
             self.dismiss(event.value.strip())
-

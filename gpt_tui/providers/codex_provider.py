@@ -13,6 +13,7 @@ class CodexProvider:
 
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
+        self._has_session = False
 
     @property
     def available(self) -> bool:
@@ -24,7 +25,10 @@ class CodexProvider:
         return self.available
 
     def set_repo_root(self, repo_root: Path) -> None:
-        self.repo_root = repo_root.resolve()
+        new_root = repo_root.resolve()
+        if new_root != self.repo_root:
+            self._has_session = False
+        self.repo_root = new_root
 
     def set_api_key(self, api_key: str) -> None:
         # No-op for codex CLI provider.
@@ -128,18 +132,30 @@ class CodexProvider:
             raise RuntimeError("codex CLI not found in PATH")
 
         prompt = self._build_prompt(messages)
-        cmd = [
-            codex_exec,
-            "exec",
-            "-",
-            "-C",
-            str(self.repo_root),
-            "--skip-git-repo-check",
-            "--model",
-            self._cli_model_name(model),
-            "--color",
-            "never",
-        ]
+        if self._has_session:
+            cmd = [
+                codex_exec,
+                "exec",
+                "resume",
+                "--last",
+                "--model",
+                self._cli_model_name(model),
+                "--skip-git-repo-check",
+                "-",
+            ]
+        else:
+            cmd = [
+                codex_exec,
+                "exec",
+                "-",
+                "-C",
+                str(self.repo_root),
+                "--skip-git-repo-check",
+                "--model",
+                self._cli_model_name(model),
+                "--color",
+                "never",
+            ]
 
         proc = subprocess.Popen(
             cmd,
@@ -169,6 +185,7 @@ class CodexProvider:
             detail = full_output.strip() or f"exit code {return_code}"
             raise RuntimeError(f"codex exec failed: {detail}")
 
+        self._has_session = True
         return self._extract_assistant_from_raw_output(full_output)
 
     def chat_completion_events(
