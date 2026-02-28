@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import queue
+import re
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
+
 from rich.markup import escape
 
 
@@ -15,6 +20,7 @@ class GeminiCliProvider:
         self.repo_root = repo_root.resolve()
         self._has_session = False
         self.session_id: str = ""
+        self.session_mode: str = "resume_latest"  # fresh | resume_latest | resume_id
         self.on_session_init: Callable[[str], None] | None = None
 
     @property
@@ -23,7 +29,6 @@ class GeminiCliProvider:
 
     @property
     def connected(self) -> bool:
-        # Gemini CLI auth is handled by the CLI itself.
         return self.available
 
     def set_repo_root(self, repo_root: Path) -> None:
@@ -40,34 +45,337 @@ class GeminiCliProvider:
         return False, "Gemini CLI models do not use API key here. Use `gemini` login flow."
 
     def _resolve_gemini_executable(self) -> str | None:
-        return (
-            shutil.which("gemini.cmd")
-            or shutil.which("gemini.ps1")
-            or shutil.which("gemini")
-        )
+        return shutil.which("gemini.cmd") or shutil.which("gemini.ps1") or shutil.which("gemini")
 
     def _cli_model_name(self, model: str) -> str:
         if model.startswith("gemini-cli:"):
-            return model.split(":", 1)[1]
+            raw = model.split(":", 1)[1]
+            # Back-compat for older saved configs.
+            if raw == "auto":
+                return "auto-gemini-2.5"
+            return raw
         return model
+
+    def _is_25_pin_requested(self, model: str) -> bool:
+        if not model.startswith("gemini-cli:"):
+            return False
+        raw = model.split(":", 1)[1].lower()
+        # Only force 2.5 pin behavior when user explicitly requested 2.5.
+        return raw in {"auto", "auto-gemini-2.5"}
 
     def _build_prompt(self, messages: list[dict[str, Any]]) -> str:
         if not messages:
             return ""
-
-        # Find the actual latest user request
         latest_user = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 latest_user = str(msg.get("content", "")).strip()
                 break
-
         if not latest_user and messages:
             latest_user = str(messages[-1].get("content", "")).strip()
-
-        # Always rely on CLI-side conversation memory via `--resume latest`.
-        # This avoids creating a fresh context prompt and keeps one continuous chat.
         return latest_user
+
+    def _friendly_error(self, detail: str) -> str:
+        low = detail.lower()
+        if "resource_exhausted" in low or "rate" in low or "no capacity available" in low:
+            return "Gemini capacity/rate limit reached. Please retry in a moment."
+        if "tool/planning loop" in low or "non-interactive tool loop" in low:
+            return "Gemini CLI got stuck in a non-interactive tool/planning loop. Please retry or start a fresh chat."
+        if "exhausted your capacity" in low or "terminalquotaerror" in low:
+            m = re.search(r"reset after ([^\.]+)", detail, flags=re.IGNORECASE)
+            if m:
+                return f"Gemini quota exhausted. Quota resets after {m.group(1).strip()}."
+            return "Gemini quota exhausted. Please retry after reset or switch provider/model."
+        if "access is denied" in low or "attachconsole failed" in low:
+            return "Gemini CLI could not attach to console in this session. Try relaunching terminal and running `gemini` once."
+        if "auth" in low or "login" in low:
+            return "Gemini CLI authentication issue. Run `gemini` in terminal and complete login."
+        if "timeout" in low:
+            return "Gemini CLI timed out waiting for output. Please retry."
+        if (
+            "loaded cached credentials" in low
+            or "loading extension:" in low
+            or "supports tool updates" in low
+            or "listening for changes" in low
+            or "error executing tool" in low
+            or "tool \"" in low
+        ):
+            return "Gemini CLI returned extension/tool chatter instead of a structured response. Retry once or start a fresh session."
+        return detail
+
+    def _is_transient_error(self, detail: str) -> bool:
+        low = detail.lower()
+        transient_patterns = (
+            "resource_exhausted",
+            "rate",
+            "no capacity available",
+            "retrying with backoff",
+            "temporarily unavailable",
+            "non-interactive tool loop",
+        )
+        return any(p in low for p in transient_patterns)
+
+    def _is_capacity_error(self, detail: str) -> bool:
+        low = detail.lower()
+        return (
+            "resource_exhausted" in low
+            or "model_capacity_exhausted" in low
+            or "no capacity available" in low
+            or "rate limit exceeded" in low
+            or "ratelimitexceeded" in low
+            or "exhausted your capacity" in low
+            or "terminalquotaerror" in low
+        )
+
+    def _extract_non_json_error(self, line: str) -> str | None:
+        """Capture meaningful transport/runtime failures from non-JSON stderr chatter."""
+        low = line.lower().strip()
+        if not low:
+            return None
+
+        # Ignore common startup chatter and model planning chatter.
+        noise_prefixes = (
+            "loaded cached credentials",
+            "yolo mode is enabled",
+            "loading extension:",
+            "server '",
+            "listening for changes",
+            "i will ",
+            "i'll ",
+        )
+        if low.startswith(noise_prefixes):
+            return None
+        if "supports tool updates" in low:
+            return None
+
+        error_hints = (
+            "error when talking to gemini api",
+            "retryablequotaerror",
+            "terminalquotaerror",
+            "failed with status",
+            "attempt ",
+            "access is denied",
+            "attachconsole failed",
+            "timeout",
+            "timed out",
+            "resource_exhausted",
+            "no capacity available",
+            "exhausted your capacity",
+            "status: 429",
+            "status 429",
+            "authentication",
+            "not authenticated",
+            "an unexpected critical error occurred",
+            "error executing tool",
+            "tool \"",
+        )
+        if any(h in low for h in error_hints):
+            return line
+        return None
+
+    def _is_planning_chatter(self, text: str) -> bool:
+        """Detect first-person planning/debug chatter that should not be shown as assistant output."""
+        low = text.lower().strip()
+        if not low:
+            return False
+        first_person = ("i will ", "i'll ", "i am ", "i'm ", "i have ", "i've ")
+        if not any(p in low for p in first_person):
+            return False
+        signals = (
+            "begin by",
+            "start by",
+            "search",
+            "read ",
+            "examine",
+            "inspect",
+            "check ",
+            "look for",
+            "review",
+            "implement",
+            "create",
+            "update",
+            "use ",
+            "run ",
+            "test ",
+            "investigate",
+            "explore",
+            "roadblock",
+            "stuck",
+            "toolset",
+            "tools",
+            "run_shell_command",
+            "write_file",
+            "replace",
+            "cli_help",
+            "codebase_investigator",
+            "missing from my tool",
+            "unable to modify files",
+            "not found",
+            "to understand",
+            "to see how",
+            "determine if",
+            "event handlers",
+            "sessionmodal",
+        )
+        return any(s in low for s in signals)
+
+    def _is_structured_fragment(self, line: str) -> bool:
+        """Filter raw backend/log fragments that are not assistant prose."""
+        raw = line.strip()
+        low = raw.lower()
+        if not low:
+            return True
+        if low in {"{", "}", "[", "]", "],", "},", "')", "'}", "' ]"}:
+            return True
+        if low.startswith(("responsetype:", "signal:", "paramsserializer:", "validatestatus:", "errorredactor:")):
+            return True
+        if low.startswith((
+            "'alt-svc':",
+            "'content-length':",
+            "'server-timing':",
+            "'x-",
+            "'content-type':",
+            "'x-frame-options':",
+            "'x-content-type-options':",
+            "'x-xss-protection':",
+        )):
+            return True
+        if low.startswith((
+            "\"domain\":",
+            "\"metadata\":",
+            "\"model\":",
+            "\"message\":",
+            "\"details\":",
+            "\"errors\":",
+            "\"error\":",
+            "\"code\":",
+            "'        \"message\":",
+            "'        \"domain\":",
+            "'        \"metadata\":",
+        )):
+            return True
+        if "abortsignal" in low or "gaxios" in low:
+            return True
+        if "\\n' +" in low or low.endswith("' +"):
+            return True
+        # Generic quoted key/value log-style fragments.
+        if re.match(r"^[\"']?[a-z0-9_@.\-]+[\"']?\s*:\s*.+$", low) and any(
+            k in low for k in ("domain", "metadata", "model", "message", "status", "headers", "responseurl", "error")
+        ):
+            return True
+        return False
+
+    def _is_non_json_assistant_text(self, line: str) -> bool:
+        """Kept for compatibility; non-JSON assistant text is intentionally disabled."""
+        _ = line
+        return False
+
+    def _is_backend_trace_line(self, line: str) -> bool:
+        low = line.lower().strip()
+        if not low:
+            return True
+        trace_prefixes = (
+            "attempt ",
+            "gaxioserror",
+            "at ",
+            "config:",
+            "response:",
+            "headers:",
+            "status:",
+            "statustext:",
+            "request:",
+            "responseurl:",
+            "data:",
+            "method:",
+            "params:",
+            "authorization:",
+            "'content-type':",
+            "'user-agent':",
+            "'x-goog-api-client':",
+            "[symbol(",
+            "url:",
+            "server:",
+            "date:",
+            "vary:",
+            "\"error\":",
+            "\"code\":",
+            "\"message\":",
+            "\"errors\":",
+            "\"details\":",
+            "'  \"error\":",
+            "'    \"code\":",
+            "'    \"message\":",
+            "'    \"errors\":",
+            "'    \"details\":",
+            "'      {",
+            "'      \"",
+            "],",
+            "},",
+        )
+        if low.startswith(trace_prefixes):
+            return True
+        trace_substrings = (
+            "cloudcode-pa.googleapis.com",
+            "streamgeneratecontent",
+            "google.rpc.errorinfo",
+            "model_capacity_exhausted",
+            "resource_exhausted",
+            "retrying with backoff",
+            "node_modules",
+            "process.processTicksAndRejections".lower(),
+            "oauth2client.requestasync".lower(),
+            "ratelimitexceeded",
+            "gaxios",
+            "<<redacted",
+        )
+        return any(s in low for s in trace_substrings)
+
+    def _build_cmd(
+        self,
+        gemini_exec: str,
+        prompt: str,
+        model: str,
+        session_mode: str | None = None,
+        session_id: str | None = None,
+    ) -> list[str]:
+        cmd = [
+            gemini_exec,
+            "--prompt",
+            prompt,
+            "--output-format",
+            "stream-json",
+            "--approval-mode",
+            "yolo",
+            "--accept-raw-output-risk",
+            # Hard-disable extensions in TUI mode for predictable coding chat behavior.
+            "--extensions",
+            "none",
+        ]
+
+        use_mode = session_mode or self.session_mode
+        use_session_id = self.session_id if session_id is None else session_id
+
+        if use_mode == "fresh":
+            pass
+        elif use_mode == "resume_id" and use_session_id:
+            cmd.extend(["--resume", use_session_id])
+        else:
+            cmd.extend(["--resume", "latest"])
+
+        cli_model = self._cli_model_name(model)
+        if cli_model:
+            cmd.extend(["--model", cli_model])
+        return cmd
+
+    def _read_stdout_thread(self, pipe: Any, out_q: queue.Queue[bytes | None]) -> None:
+        try:
+            while True:
+                raw = pipe.readline()
+                if not raw:
+                    break
+                out_q.put(raw)
+        finally:
+            out_q.put(None)
 
     def chat_completion_stream_raw(
         self,
@@ -79,85 +387,86 @@ class GeminiCliProvider:
             try:
                 log_path = self.repo_root / "trace.log"
                 with open(log_path, "a", encoding="utf-8") as f:
-                    import time
                     f.write(f"[{time.time()}] {msg}\n")
-            except:
+            except Exception:
                 pass
-                
-        trace("Entered chat_completion_stream_raw")
+
         gemini_exec = self._resolve_gemini_executable()
         if not gemini_exec:
-            trace("gemini CLI not found in PATH")
             raise RuntimeError("gemini CLI not found in PATH")
 
         prompt = self._build_prompt(messages)
-        trace(f"Prompt built: len={len(prompt)}")
-        cmd = [
-            gemini_exec,
-            "--prompt",
-            prompt,
-            "--output-format",
-            "stream-json",
-            "--approval-mode",
-            "yolo",
-        ]
+        last_detail = ""
+        model_for_attempt = model
+        switched_to_25 = False
+        session_mode_for_attempt = self.session_mode
+        session_id_for_attempt = self.session_id
+        for attempt in range(3):
+            cmd = self._build_cmd(
+                gemini_exec,
+                prompt,
+                model_for_attempt,
+                session_mode=session_mode_for_attempt,
+                session_id=session_id_for_attempt,
+            )
+            trace(f"Spawning subprocess (attempt {attempt + 1}): {cmd}")
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(self.repo_root),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            if proc.stdin:
+                proc.stdin.close()
 
-        if self.session_id:
-            cmd.extend(["--resume", self.session_id])
-        elif self._has_session:
-            cmd.extend(["--resume", "latest"])
+            assistant_chunks: list[str] = []
+            assistant_text = ""
+            force_fresh_due_model_mismatch = False
+            force_fresh_due_tool_loop = False
+            non_json_tool_loop_hits = 0
 
-        cli_model = self._cli_model_name(model)
-        if cli_model and cli_model != "auto":
-            cmd.extend(["--model", cli_model])
+            out_q: queue.Queue[bytes | None] = queue.Queue()
+            reader = None
+            if proc.stdout:
+                reader = threading.Thread(
+                    target=self._read_stdout_thread,
+                    args=(proc.stdout, out_q),
+                    daemon=True,
+                )
+                reader.start()
 
-        trace(f"Spawning subprocess: {cmd}")
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.repo_root),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        if proc.stdin:
-            proc.stdin.close()
-            trace("proc.stdin closed")
-
-        assistant_chunks: list[str] = []
-        assistant_text = ""
-        raw_tail: list[str] = []
-        
-        # Recognized noise patterns from Gemini CLI that aren't part of the model's message
-        noise_patterns = [
-            "Loaded cached credentials",
-            "YOLO mode is enabled",
-            "automatically approved",
-            "To run in non-interactive mode",
-            "use the --prompt",
-            "Attempt 1 failed",
-            "Retrying with backoff",
-            "GaxiosError",
-        ]
-
-        if proc.stdout:
-            trace("Begin reading stdout")
-            while True:
-                raw = proc.stdout.readline()
-                if not raw:
-                    trace("stdout EOF")
+            started = time.monotonic()
+            # Track useful activity only (assistant output / structured events / errors),
+            # so planner chatter doesn't keep the request alive forever.
+            last_activity = time.monotonic()
+            stream_done = False
+            while not stream_done:
+                now = time.monotonic()
+                if now - started > 240:
+                    last_detail = "timeout: total stream time exceeded"
                     break
-                line = raw.decode("utf-8", errors="replace").strip()
+                if now - last_activity > 70:
+                    last_detail = "timeout: no stream output for 70s"
+                    break
+
+                try:
+                    item = out_q.get(timeout=0.5)
+                except queue.Empty:
+                    if proc.poll() is not None and (reader is None or not reader.is_alive()) and out_q.empty():
+                        break
+                    continue
+
+                if item is None:
+                    stream_done = True
+                    break
+
+                line = item.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
-                
-                raw_tail.append(line)
-                if len(raw_tail) > 30:
-                    raw_tail = raw_tail[-30:]
 
-                # Try to find JSON in the line (it might be prefixed with noise)
                 json_start = line.find("{")
                 json_end = line.rfind("}")
-                
                 evt = None
                 if json_start != -1 and json_end != -1 and json_end > json_start:
                     json_str = line[json_start : json_end + 1]
@@ -167,92 +476,188 @@ class GeminiCliProvider:
                         evt = None
 
                 if evt is None:
-                    trace(f"Non-JSON line: {line[:100]}")
-                    if not any(p in line for p in noise_patterns):
-                        assistant_chunks.append(line + "\n")
-                        if on_output:
-                            on_output(escape(line + "\n"))
+                    trace(f"Non-JSON line: {line}")
+                    if self._is_capacity_error(line):
+                        last_detail = line
+                        last_activity = time.monotonic()
+                    low_line = line.lower()
+                    if (
+                        self._is_planning_chatter(line)
+                        or "error executing tool" in low_line
+                        or "tool execution denied by policy" in low_line
+                        or "tool \"run_shell_command\" not found" in low_line
+                        or "tool \"write_file\" not found" in low_line
+                        or "tool \"replace\" not found" in low_line
+                    ):
+                        non_json_tool_loop_hits += 1
+                    if non_json_tool_loop_hits >= 6:
+                        if session_mode_for_attempt != "fresh":
+                            force_fresh_due_tool_loop = True
+                            last_detail = "resumed session entered non-interactive tool loop"
+                            trace("Detected non-interactive tool loop from resumed session; retrying with fresh session.")
+                            stream_done = True
+                            try:
+                                proc.terminate()
+                            except Exception:
+                                pass
+                            continue
+                        # Already fresh and still looping: fail fast instead of spinning forever.
+                        last_detail = "fresh session entered non-interactive tool/planning loop"
+                        trace("Detected non-interactive tool loop in fresh session; aborting attempt.")
+                        stream_done = True
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        continue
+                    extracted = self._extract_non_json_error(line)
+                    if extracted:
+                        generic_critical = "an unexpected critical error occurred:[object object]"
+                        low_extracted = extracted.lower()
+                        if generic_critical in low_extracted:
+                            if not last_detail:
+                                last_detail = extracted
+                        else:
+                            last_detail = extracted
+                        last_activity = time.monotonic()
+                    # In stream-json mode, non-JSON lines are backend chatter/traces.
+                    # Keep them out of user-visible assistant output.
                     continue
 
-                # Check for CLI backend errors in JSON format
                 if "error" in evt and isinstance(evt["error"], dict):
-                    err_msg = evt["error"].get("message", "Unknown CLI error")
-                    trace(f"CLI Backend Error: {err_msg}")
-                    error_report = f"\n[bold #ff6b6b]![/] [bold]Gemini CLI Backend Error:[/] {escape(err_msg)}\n"
-                    if on_output:
-                        on_output(error_report)
+                    last_detail = str(evt["error"].get("message", "Unknown CLI error"))
+                    trace(f"CLI Error: {last_detail}")
+                    last_activity = time.monotonic()
                     continue
 
                 etype = evt.get("type")
-                trace(f"Parsed JSON type: {etype}")
-                
                 if etype == "init":
-                    sid = evt.get("session_id")
+                    last_activity = time.monotonic()
+                    init_model = str(evt.get("model", "")).strip().lower()
+                    if (
+                        self._is_25_pin_requested(model_for_attempt)
+                        and "gemini-3" in init_model
+                        and session_mode_for_attempt != "fresh"
+                    ):
+                        last_detail = f"resumed session kept model {init_model}"
+                        force_fresh_due_model_mismatch = True
+                        trace(
+                            "Resume/model mismatch detected: requested 2.5 pin "
+                            f"but got {init_model}. Retrying once with fresh session."
+                        )
+                        stream_done = True
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        continue
+                    sid = str(evt.get("session_id", "")).strip()
                     if sid and sid != self.session_id:
                         self.session_id = sid
+                        self.session_mode = "resume_id"
                         if self.on_session_init:
                             self.on_session_init(sid)
 
                 if etype == "message" and evt.get("role") == "assistant":
                     content = str(evt.get("content", ""))
+                    is_delta = bool(evt.get("delta", False))
                     if not content:
                         continue
-
-                    # Gemini CLI may emit either true deltas or cumulative snapshots.
-                    # Normalize both into incremental chunks for live UI updates.
-                    if content.startswith(assistant_text):
-                        delta = content[len(assistant_text):]
-                        assistant_text = content
-                    else:
+                    if self._is_planning_chatter(content):
+                        # Suppress extension-side planning/debug chatter unrelated to user-visible output.
+                        continue
+                    last_activity = time.monotonic()
+                    if is_delta:
                         delta = content
                         assistant_text += content
-
+                    else:
+                        if content.startswith(assistant_text):
+                            delta = content[len(assistant_text):]
+                            assistant_text = content
+                        else:
+                            delta = content
+                            assistant_text += content
                     if delta:
                         assistant_chunks.append(delta)
                         if on_output:
                             on_output(escape(delta))
-                elif etype == "tool_use":
-                    name = str(evt.get("tool_name", "unknown"))
-                    params = json.dumps(evt.get("parameters", {}))
-                    msg = f"\n[bold #ffcb6b]â–¸ Using tool:[/] [bold]{escape(name)}[/]([dim]{escape(params)}[/])\n"
-                    if on_output:
-                        on_output(msg)
-                elif etype == "tool_result":
-                    status = str(evt.get("status", "unknown"))
-                    msg = f"[bold #7ad97a]âœ“ Tool result:[/] [dim]{escape(status)}[/]\n"
-                    if on_output:
-                        on_output(msg)
+                elif etype in {"tool_use", "tool_result"}:
+                    # Keep tool chatter silent in chat stream.
+                    continue
                 elif etype == "result":
-                    trace("Result type parsed, breaking loop")
+                    last_activity = time.monotonic()
+                    stream_done = True
                     break
 
-        trace(f"Loop finished, checking proc.poll() = {proc.poll()}")
-        
-        # Give it a tiny window to exit gracefully if it sent "result"
-        if proc.poll() is None:
-            try:
-                proc.wait(timeout=0.1)
-            except subprocess.TimeoutExpired:
-                trace("Graceful wait timed out, terminating...")
+            if last_detail.startswith("timeout"):
                 try:
                     proc.terminate()
-                except:
+                except Exception:
                     pass
 
-        code = proc.wait(timeout=5)
-        trace(f"Proc exited with code {code}, chunks len {len(assistant_chunks)}")
-        
-        # If it failed but we got some content, we might still want to return it.
-        # But if we got nothing and exit code is non-zero, it's a real error.
-        if code != 0 and not assistant_chunks:
-            detail = "\n".join(raw_tail).strip() or f"exit code {code}"
-            trace(f"Raising RuntimeError: {detail}")
-            raise RuntimeError(f"gemini CLI failed: {detail}")
+            if proc.poll() is None:
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
 
-        self._has_session = True
-        final = "".join(assistant_chunks).strip()
-        trace(f"Returning final string len {len(final)}")
-        return final or "(No response from Gemini CLI.)"
+            try:
+                code = proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                code = 124
+                last_detail = last_detail or "timeout: process did not exit"
+
+            if assistant_chunks:
+                self._has_session = True
+                final = "".join(assistant_chunks).strip()
+                return final or "(No response from Gemini CLI.)"
+            if code == 0:
+                last_detail = last_detail or "no assistant output returned in stream-json mode"
+
+            detail = last_detail.strip() if last_detail else f"exit code {code}"
+            last_detail = detail
+            if force_fresh_due_tool_loop and session_mode_for_attempt != "fresh":
+                session_mode_for_attempt = "fresh"
+                session_id_for_attempt = ""
+                if on_output:
+                    on_output("\n[bold #ffcb6b]![/] Resumed chat was stuck in a tool loop; starting a fresh Gemini session.\n")
+                continue
+            if "timeout" in detail.lower() and session_mode_for_attempt != "fresh":
+                session_mode_for_attempt = "fresh"
+                session_id_for_attempt = ""
+                if on_output:
+                    on_output("\n[bold #ffcb6b]![/] Request timed out; retrying with a fresh Gemini session.\n")
+                continue
+            if force_fresh_due_model_mismatch and session_mode_for_attempt != "fresh":
+                session_mode_for_attempt = "fresh"
+                session_id_for_attempt = ""
+                if on_output:
+                    on_output(
+                        "\n[bold #ffcb6b]![/] Resumed chat was on Gemini 3; starting a fresh Gemini 2.5 session.\n"
+                    )
+                continue
+            # If Gemini 3 auto capacity is exhausted, automatically fall back to Gemini 2.5 auto.
+            if (
+                not switched_to_25
+                and self._is_capacity_error(detail)
+                and model_for_attempt in {"gemini-cli:auto", "gemini-cli:auto-gemini-3"}
+            ):
+                switched_to_25 = True
+                model_for_attempt = "gemini-cli:auto-gemini-2.5"
+                if on_output:
+                    on_output("\n[bold #ffcb6b]![/] Gemini 3 capacity full, switching to Gemini 2.5 auto.\n")
+                continue
+            if attempt < 2 and self._is_transient_error(detail):
+                if on_output:
+                    on_output(f"\n[bold #ffcb6b]![/] Gemini temporary error, retrying ({attempt + 1}/2)...\n")
+                time.sleep(0.8 * (2**attempt))
+                continue
+            break
+
+        raise RuntimeError(f"gemini CLI failed: {self._friendly_error(last_detail)}")
 
     def chat_completion(self, messages: list[dict[str, Any]], model: str) -> str:
         return self.chat_completion_stream_raw(messages, model, on_output=None)
