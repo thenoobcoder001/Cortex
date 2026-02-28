@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 from rich.markup import escape
@@ -63,6 +64,7 @@ from gpt_tui.services.file_service import RepoFileService
 
 from gpt_tui.ui.constants import (
     APP_NAME,
+    CODEX_MODELS,
     CONTEXT_CHAR_LIMIT,
     DEFAULT_MODEL,
     MAX_TOOL_ROUNDS,
@@ -72,6 +74,14 @@ from gpt_tui.ui.constants import (
 )
 from gpt_tui.ui.modals import ApiKeyModal, ModelPickerModal
 from gpt_tui.ui.tool_executor import ToolsMixin
+
+
+PRESET_PROMPTS: dict[str, str] = {
+    "code": "Focus on implementation quality and concise code changes.",
+    "debug": "Prioritize root-cause analysis, reproduction, and minimal-risk fixes.",
+    "refactor": "Prioritize maintainability, readability, and behavior-preserving changes.",
+    "explain": "Prioritize clear explanation, tradeoffs, and short examples.",
+}
 
 
 class ChatInput(TextArea):
@@ -94,7 +104,7 @@ class ChatInput(TextArea):
             self.app.action_submit_prompt()
 
 
-class ChatMessage(Vertical):
+class ChatMessage(Horizontal):
     """A dedicated widget for a single chat message."""
 
     def __init__(self, role: str, content: str, timestamp: str, classes: str) -> None:
@@ -104,8 +114,23 @@ class ChatMessage(Vertical):
         self.timestamp = timestamp
 
     def compose(self) -> ComposeResult:
-        yield Label(f"{self.timestamp} {self.role}", classes="msg_header")
-        yield Static(self.content, classes="msg_body")
+        with Vertical(classes="msg_content_col"):
+            yield Label(f"{self.timestamp} {self.role}", classes="msg_header")
+            yield Static(self.content, classes="msg_body")
+        # Add a copy button that only shows up when relevant
+        yield Button("Copy", id="msg_copy_btn", classes="msg_copy_btn", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.has_class("msg_copy_btn"):
+            self.app._copy_to_clipboard(self.content)
+            self.app._set_status(f"Copied {self.role}'s message.")
+            event.button.label = "Copied"
+            def _reset() -> None:
+                try:
+                    event.button.label = "Copy"
+                except Exception:
+                    pass
+            self.set_timer(1.0, _reset)
 
 
 # â”€â”€â”€ Main App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -169,6 +194,12 @@ class GptTuiApp(ToolsMixin, App[None]):
         padding: 1 0;
         margin-bottom: 1;
         border-top: solid #1c2030;
+        layout: horizontal; /* Allow positioning button on right */
+    }
+
+    .msg_content_col {
+        width: 1fr;
+        height: auto;
     }
 
     .msg_header {
@@ -183,6 +214,23 @@ class GptTuiApp(ToolsMixin, App[None]):
     .msg_body {
         padding: 0 0 0 2;
         color: #c9d1d9;
+    }
+
+    .msg_copy_btn {
+        min-width: 8;
+        height: 1;
+        background: transparent;
+        color: #4a5568;
+        border: none;
+        margin-top: 0;
+        padding: 0 1;
+        text-style: dim;
+    }
+
+    .msg_copy_btn:hover {
+        color: #7ad97a;
+        background: #1c2030;
+        text-style: bold;
     }
 
     #stream_box {
@@ -235,6 +283,15 @@ class GptTuiApp(ToolsMixin, App[None]):
         text-align: right;
     }
 
+    #middle_panel {
+        display: none;
+        width: 58;
+        min-width: 40;
+        max-width: 76;
+        background: #0f131a;
+        border-left: solid #1c2030;
+    }
+
     /* â”€â”€ Sidebar (right) â”€â”€ */
     #sidebar {
         width: 48;
@@ -250,6 +307,12 @@ class GptTuiApp(ToolsMixin, App[None]):
         padding: 0 1;
         border-bottom: solid #1c2030;
     }
+    #model_quickbar {
+        height: auto;
+        background: #10131a;
+        padding: 0 1;
+        border-bottom: solid #1c2030;
+    }
 
     #panel_title {
         color: #ff6b6b;
@@ -258,7 +321,7 @@ class GptTuiApp(ToolsMixin, App[None]):
     }
 
     .sidebar_icon_btn {
-        min-width: 4;
+        min-width: 7;
         background: transparent;
         color: #4a5568;
         border: none;
@@ -266,6 +329,14 @@ class GptTuiApp(ToolsMixin, App[None]):
     }
 
     .sidebar_icon_btn:hover { color: #ff6b6b; }
+    .model_opt_btn {
+        min-width: 8;
+        background: transparent;
+        color: #8a97a6;
+        border: none;
+        padding: 0 1;
+    }
+    .model_opt_btn:hover { color: #5ec4ff; }
 
     /* file tree */
     #file_tree {
@@ -308,7 +379,7 @@ class GptTuiApp(ToolsMixin, App[None]):
     #preview_close:hover { color: #ff6b6b; }
 
     #file_preview {
-        height: 26%;
+        height: 1fr;
         background: #0b0e12;
         padding: 0 1;
     }
@@ -350,6 +421,8 @@ class GptTuiApp(ToolsMixin, App[None]):
         Binding("ctrl+k", "open_settings",  "Settings"),
         Binding("ctrl+t", "pick_model",     "Model"),
         Binding("ctrl+g", "copy_last",      "Copy"),
+        Binding("ctrl+shift+c", "copy_console", "Copy Console"),
+        Binding("ctrl+shift+s", "copy_stream", "Copy Stream"),
         Binding("ctrl+enter", "submit_prompt", "Send", show=False),
     ]
 
@@ -363,6 +436,7 @@ class GptTuiApp(ToolsMixin, App[None]):
                     yield Static("", id="chip_conn",  classes="chip")
                     yield Static("", id="chip_model", classes="chip")
                     yield Static("", id="chip_repo",  classes="chip")
+                    yield Static("", id="chip_mode", classes="chip")
                     yield LoadingIndicator(id="loading_indicator")
                 yield VerticalScroll(id="chat_log", can_focus=True)
                 yield Static("", id="stream_box", classes="stream_area")
@@ -371,19 +445,31 @@ class GptTuiApp(ToolsMixin, App[None]):
                     with Horizontal(id="input_footer"):
                         yield Static("Ready.", id="status_line")
                         yield Static("",       id="model_badge")
+            # Middle preview panel
+            with Vertical(id="middle_panel"):
+                with Horizontal(id="preview_header"):
+                    yield Static("PREVIEW", id="preview_label")
+                    yield Button("✕", id="preview_close")
+                yield RichLog(id="file_preview", wrap=True, highlight=True, markup=True)
             # Sidebar
             with Vertical(id="sidebar"):
                 with Horizontal(id="sidebar_header"):
                     yield Static("FILES", id="panel_title")
-                    yield Button("â–£", id="model_switch_btn", classes="sidebar_icon_btn")
-                    yield Button("âš™", id="settings_btn",    classes="sidebar_icon_btn")
+                    yield Button("RES", id="resume_btn", classes="sidebar_icon_btn")
+                    yield Button("NEW", id="new_chat_btn", classes="sidebar_icon_btn")
+                    yield Button("STR", id="copy_stream_btn", classes="sidebar_icon_btn")
+                    yield Button("CON", id="copy_console_btn", classes="sidebar_icon_btn")
+                    yield Button("MOD", id="model_switch_btn", classes="sidebar_icon_btn")
+                    yield Button("SET", id="settings_btn",    classes="sidebar_icon_btn")
+                with Horizontal(id="model_quickbar"):
+                    yield Button("GCLI", id="model_q_gcli", classes="model_opt_btn")
+                    yield Button("GEM", id="model_q_gem", classes="model_opt_btn")
+                    yield Button("GROQ", id="model_q_groq", classes="model_opt_btn")
+                    yield Button("CODEX", id="model_q_codex", classes="model_opt_btn")
                 yield DirectoryTree(str(Path.cwd()), id="file_tree")
-                with Horizontal(id="preview_header"):
-                    yield Static("PREVIEW", id="preview_label")
-                    yield Button("âœ•", id="preview_close")
-                yield RichLog(id="file_preview", wrap=True, highlight=True, markup=True)
                 with Horizontal(id="console_header"):
                     yield Static("CONSOLE", id="console_label")
+                    yield Button("Copy", id="console_copy_btn", classes="sidebar_icon_btn")
                 with VerticalScroll(id="codex_console_scroller"):
                     yield Static("[dim]CLI live output will appear here.[/]", id="codex_console")
         yield Footer()
@@ -395,6 +481,18 @@ class GptTuiApp(ToolsMixin, App[None]):
         repo_root = self._initial_repo_root()
         self.files = RepoFileService(repo_root=repo_root)
         self._last_code_block: str = ""
+        self._last_stream_text: str = ""
+        self._last_console_text: str = ""
+        self._active_streaming_message: ChatMessage | None = None
+        self._thinking_timer = None
+        self._thinking_dots_count = 0
+        self.prompt_preset = (self.config.prompt_preset or "code").strip().lower()
+        if self.prompt_preset not in PRESET_PROMPTS:
+            self.prompt_preset = "code"
+        self.tool_read_only = (self.config.tool_safety_mode == "read")
+        self._last_turn_seconds: float = 0.0
+        self._last_turn_chars: int = 0
+        self._last_turn_tools: int = 0
 
         # Providers
         groq_key   = self.config.api_key.strip() or os.getenv("GROQ_API_KEY", "").strip()
@@ -403,10 +501,12 @@ class GptTuiApp(ToolsMixin, App[None]):
         self.gemini_provider = GeminiProvider(api_key=gemini_key)
         self.gemini_cli_provider = GeminiCliProvider(repo_root=repo_root)
         self.gemini_cli_provider.session_id = self.config.gemini_session_id
+        self.gemini_cli_provider.session_mode = "resume_id" if self.config.gemini_session_id else "fresh"
         
         def save_session_id(sid: str) -> None:
             self.config.gemini_session_id = sid
             self.config.save()
+            self.gemini_cli_provider.session_mode = "resume_id"
             
         self.gemini_cli_provider.on_session_init = save_session_id
         
@@ -454,6 +554,7 @@ class GptTuiApp(ToolsMixin, App[None]):
         tree.path = self.files.repo_root
         tree.reload()
         self._set_preview_visible(False)
+        self._maybe_run_setup_check()
         
         self.query_one("#prompt", ChatInput).focus()
 
@@ -491,11 +592,59 @@ class GptTuiApp(ToolsMixin, App[None]):
         log = self.query_one("#chat_log", VerticalScroll)
         log.query("*").remove()
         self.messages = [self.messages[0]]
+        self._last_stream_text = ""
+        self._last_console_text = ""
+        self.query_one("#codex_console", Static).update("")
         self._log_system("Chat cleared.")
 
     def action_copy_last(self) -> None:
         """Shortcut for ctrl+g."""
         self._cmd_copy()
+    
+    def action_copy_console(self) -> None:
+        self._cmd_copy_console()
+
+    def action_copy_stream(self) -> None:
+        self._cmd_copy_stream()
+
+    def _flash_button_label(self, button: Button, temp: str, original: str) -> None:
+        button.label = temp
+        def _reset() -> None:
+            try:
+                button.label = original
+            except Exception:
+                pass
+        self.set_timer(1.0, _reset)
+
+    def _switch_model_quick(self, model: str) -> None:
+        self.model = model
+        self.config.model = model
+        self.config.save()
+        self.provider = self._provider_for_model(model)
+        self._refresh_header()
+        pname = self._provider_name_for_model(model)
+        self._set_status(f"Model switched to {model}")
+        self._log_system(f"Switched to [bold #5ec4ff]{model}[/] ({pname})")
+
+    def _cycle_codex_model(self) -> None:
+        codex_ids = [m for m, _ in CODEX_MODELS]
+        if not codex_ids:
+            return
+        current = self.model if self.model.startswith("codex:") else codex_ids[0]
+        try:
+            idx = codex_ids.index(current)
+            nxt = codex_ids[(idx + 1) % len(codex_ids)]
+        except ValueError:
+            nxt = codex_ids[0]
+        self._switch_model_quick(nxt)
+
+    def _copy_to_clipboard(self, text: str) -> None:
+        """Copy text to the Windows clipboard."""
+        try:
+            import subprocess
+            subprocess.run(['clip'], input=text.encode('utf-16'), check=True)
+        except Exception as exc:
+            self._log_system(f"[red]![/] Copy failed: {exc}")
 
     # â”€â”€ Event handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def action_submit_prompt(self) -> None:
@@ -519,6 +668,31 @@ class GptTuiApp(ToolsMixin, App[None]):
             self.action_open_settings()
         elif event.button.id == "model_switch_btn":
             self.action_pick_model()
+        elif event.button.id == "resume_btn":
+            self._cmd_resume_latest()
+        elif event.button.id == "new_chat_btn":
+            self._cmd_new_chat()
+        elif event.button.id == "copy_stream_btn":
+            self._cmd_copy_stream()
+            self._flash_button_label(event.button, "Copied", "STR")
+        elif event.button.id == "copy_console_btn":
+            self._cmd_copy_console()
+            self._flash_button_label(event.button, "Copied", "CON")
+        elif event.button.id == "console_copy_btn":
+            self._cmd_copy_console()
+            self._flash_button_label(event.button, "Copied", "Copy")
+        elif event.button.id == "model_q_gcli":
+            self._switch_model_quick("gemini-cli:auto-gemini-2.5")
+            self._flash_button_label(event.button, "Active", "GCLI")
+        elif event.button.id == "model_q_gem":
+            self._switch_model_quick("gemini-2.0-flash")
+            self._flash_button_label(event.button, "Active", "GEM")
+        elif event.button.id == "model_q_groq":
+            self._switch_model_quick("llama-3.3-70b-versatile")
+            self._flash_button_label(event.button, "Active", "GROQ")
+        elif event.button.id == "model_q_codex":
+            self._cycle_codex_model()
+            self._flash_button_label(event.button, "Active", "CODEX")
         elif event.button.id == "preview_close":
             self.query_one("#file_preview", RichLog).clear()
             self.query_one("#preview_label", Static).update("PREVIEW")
@@ -539,12 +713,25 @@ class GptTuiApp(ToolsMixin, App[None]):
     # â”€â”€ Slash commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _handle_command(self, text: str) -> None:
         if text == "/help":
-            self.query_one("#chat_log", RichLog).write(
+            self._log_system(
                 "[bold #ff6b6b]Available Commands[/]\n"
                 "[#7a8a9e]/help[/]              Show this help\n"
                 "[#7a8a9e]/copy[/]              Copy last AI reply to clipboard\n"
+                "[#7a8a9e]/copy console[/]      Copy sidebar console text\n"
+                "[#7a8a9e]/copy stream[/]       Copy current/last streamed output\n"
                 "[#7a8a9e]/copy art[/]          Copy branding ASCII art\n"
+                "[#7a8a9e]/newchat[/]           Start fresh chat session\n"
+                "[#7a8a9e]/resume latest[/]     Resume latest CLI session\n"
+                "[#7a8a9e]/resume <id>[/]       Resume specific Gemini session id\n"
+                "[#7a8a9e]/preset <mode>[/]     Set prompt mode: code/debug/refactor/explain\n"
+                "[#7a8a9e]/safety <mode>[/]     Tool safety: read/write\n"
+                "[#7a8a9e]/export md <file>[/]  Export chat to Markdown\n"
+                "[#7a8a9e]/export txt <file>[/] Export chat to plain text\n"
+                "[#7a8a9e]/setup check[/]       Re-run environment setup checks\n"
                 "[#7a8a9e]/clear[/]             Clear chat history\n"
+                "[#7a8a9e]/models[/]            Show quick model options\n"
+                "[#7a8a9e]/codex models[/]      List codex model options\n"
+                "[#7a8a9e]/codex model <name>[/] Switch codex model\n"
                 "[#7a8a9e]/model <name>[/]      Switch model\n"
                 "[#7a8a9e]/repo[/]              Show repo root\n"
                 "[#7a8a9e]/repo <path>[/]       Change repo root\n"
@@ -559,8 +746,60 @@ class GptTuiApp(ToolsMixin, App[None]):
             self.action_clear_chat()
         elif text == "/copy":
             self._cmd_copy()
+        elif text == "/copy console":
+            self._cmd_copy_console()
+        elif text == "/copy stream":
+            self._cmd_copy_stream()
         elif text == "/copy art":
             self._cmd_copy_art()
+        elif text == "/models":
+            codex_lines = "\n".join(f"- {m}" for m, _ in CODEX_MODELS)
+            self._log_system(
+                "Quick model options:\n"
+                "- gemini-cli:auto-gemini-2.5\n"
+                "- gemini-cli:auto-gemini-3\n"
+                "- gemini-cli:gemini-3-flash-preview\n"
+                "- gemini-2.0-flash\n"
+                "- gemini-1.5-flash\n"
+                "- llama-3.3-70b-versatile\n"
+                f"{codex_lines}\n"
+                "Use /model <name>, /codex model <name>, or sidebar quick buttons (GCLI/GEM/GROQ/CODEX)."
+            )
+        elif text == "/codex models":
+            self._log_system(
+                "Available codex models:\n"
+                + "\n".join(f"- {m}" for m, _ in CODEX_MODELS)
+            )
+        elif text.startswith("/codex model "):
+            raw = text.removeprefix("/codex model ").strip()
+            if not raw:
+                self._log_system("Usage: /codex model <name>")
+                return
+            model = raw if raw.startswith("codex:") else f"codex:{raw}"
+            self._switch_model_quick(model)
+        elif text == "/newchat":
+            self._cmd_new_chat()
+        elif text == "/resume latest":
+            self._cmd_resume_latest()
+        elif text.startswith("/resume "):
+            sid = text.removeprefix("/resume ").strip()
+            if not sid:
+                self._log_system("Usage: /resume <session_id>")
+                return
+            self._cmd_resume_session_id(sid)
+        elif text.startswith("/preset "):
+            mode = text.removeprefix("/preset ").strip().lower()
+            self._cmd_set_preset(mode)
+        elif text.startswith("/safety "):
+            mode = text.removeprefix("/safety ").strip().lower()
+            self._cmd_set_safety_mode(mode)
+        elif text.startswith("/export md "):
+            self._cmd_export_chat("md", text.removeprefix("/export md ").strip())
+        elif text.startswith("/export txt "):
+            self._cmd_export_chat("txt", text.removeprefix("/export txt ").strip())
+        elif text == "/setup check":
+            self.config.setup_checked = False
+            self._maybe_run_setup_check()
         elif text.startswith("/model "):
             m = text.removeprefix("/model ").strip()
             if not m:
@@ -670,13 +909,8 @@ class GptTuiApp(ToolsMixin, App[None]):
             self._log_system("[red]â—[/] Nothing to copy yet.")
             return
 
-        try:
-            # Use Windows built-in clip.exe
-            with os.popen('clip', 'w') as pipe:
-                pipe.write(last_asst)
-            self._log_system("[green]â—[/] Last reply copied to clipboard!")
-        except Exception as exc:
-            self._log_system(f"[red]â—[/] Copy failed: {exc}")
+        self._copy_to_clipboard(last_asst)
+        self._log_system("[green]â—[/] Last reply copied to clipboard!")
 
     def _cmd_copy_art(self) -> None:
         """Copy the GPT TUI ASCII art."""
@@ -684,12 +918,112 @@ class GptTuiApp(ToolsMixin, App[None]):
         # Strip rich tags before copying
         import re
         clean_art = re.sub(r'\[.*?\]', '', WELCOME_ART)
+        self._copy_to_clipboard(clean_art)
+        self._log_system("[green]â—[/] ASCII art copied to clipboard!")
+
+    def _cmd_copy_console(self) -> None:
+        """Copy sidebar console content to clipboard."""
+        console = self.query_one("#codex_console", Static)
+        text = str(console.renderable).strip()
+        if not text:
+            text = self._last_console_text.strip()
+        if not text:
+            self._log_system("[red]â—[/] Console is empty.")
+            return
+        self._copy_to_clipboard(text)
+        self._log_system("[green]â—[/] Console copied to clipboard!")
+
+    def _cmd_copy_stream(self) -> None:
+        """Copy current stream (or the most recent finished stream) to clipboard."""
+        text = self._stream_buffer.strip() if hasattr(self, "_stream_buffer") else ""
+        if not text:
+            text = self._last_stream_text.strip()
+        if not text:
+            self._log_system("[red]â—[/] No stream output to copy yet.")
+            return
+        self._copy_to_clipboard(text)
+        self._log_system("[green]â—[/] Stream output copied to clipboard!")
+
+    def _cmd_new_chat(self) -> None:
+        self.action_clear_chat()
+        self.gemini_cli_provider.session_mode = "fresh"
+        self.gemini_cli_provider.session_id = ""
+        self.config.gemini_session_id = ""
+        self.config.save()
+        self._log_system("Started a fresh chat session (no resume).")
+        self._refresh_header()
+
+    def _cmd_resume_latest(self) -> None:
+        self.gemini_cli_provider.session_mode = "resume_latest"
+        self.gemini_cli_provider.session_id = ""
+        self.config.gemini_session_id = ""
+        self.config.save()
+        self._log_system("Gemini CLI set to resume latest session.")
+        self._refresh_header()
+
+    def _cmd_resume_session_id(self, session_id: str) -> None:
+        self.gemini_cli_provider.session_id = session_id
+        self.gemini_cli_provider.session_mode = "resume_id"
+        self.config.gemini_session_id = session_id
+        self.config.save()
+        self._log_system(f"Gemini CLI will resume session: [bold]{session_id}[/]")
+        self._refresh_header()
+
+    def _cmd_set_preset(self, mode: str) -> None:
+        if mode not in PRESET_PROMPTS:
+            self._log_system("Usage: /preset <code|debug|refactor|explain>")
+            return
+        self.prompt_preset = mode
+        self.config.prompt_preset = mode
+        self.config.save()
+        self._log_system(f"Prompt preset set to: [bold]{mode}[/]")
+        self._refresh_header()
+
+    def _cmd_set_safety_mode(self, mode: str) -> None:
+        if mode not in {"read", "write"}:
+            self._log_system("Usage: /safety <read|write>")
+            return
+        self.tool_read_only = (mode == "read")
+        self.config.tool_safety_mode = mode
+        self.config.save()
+        self._log_system(f"Tool safety mode: [bold]{mode}[/]")
+        self._refresh_header()
+
+    def _cmd_export_chat(self, fmt: str, raw_name: str) -> None:
+        if fmt not in {"md", "txt"}:
+            self._log_system("ERROR: unsupported export format")
+            return
+        if not raw_name:
+            self._log_system(f"Usage: /export {fmt} <filename>")
+            return
+        path = Path(raw_name)
+        if not path.is_absolute():
+            path = self.files.repo_root / raw_name
         try:
-            with os.popen('clip', 'w') as pipe:
-                pipe.write(clean_art)
-            self._log_system("[green]â—[/] ASCII art copied to clipboard!")
-        except Exception as exc:
-            self._log_system(f"[red]â—[/] Copy failed: {exc}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            lines: list[str] = []
+            if fmt == "md":
+                lines.append(f"# GPT TUI Export - {self._timestamp()}")
+                lines.append(f"- Model: `{self.model}`")
+                lines.append(f"- Provider: `{self._provider_name_for_model(self.model)}`")
+                lines.append("")
+            for msg in self.messages:
+                role = str(msg.get("role", "unknown")).upper()
+                content = str(msg.get("content", ""))
+                if fmt == "md":
+                    lines.append(f"## {role}")
+                    lines.append("")
+                    lines.append(content)
+                    lines.append("")
+                else:
+                    lines.append(f"[{role}]")
+                    lines.append(content)
+                    lines.append("")
+            path.write_text("\n".join(lines), encoding="utf-8")
+            self._log_system(f"[green]â—[/] Exported chat to [bold]{path}[/]")
+            self.query_one("#file_tree", DirectoryTree).reload()
+        except OSError as exc:
+            self._log_system(f"[red]â—[/] Export failed: {exc}")
 
     def _show_preview(self, file_path: Path) -> None:
         """Show file content in the sidebar preview pane (never touches chat)."""
@@ -710,6 +1044,7 @@ class GptTuiApp(ToolsMixin, App[None]):
             pv.write("[dim #4a5568]... (truncated)[/]")
 
     def _set_preview_visible(self, visible: bool) -> None:
+        self.query_one("#middle_panel", Vertical).display = visible
         self.query_one("#preview_header", Horizontal).display = visible
         self.query_one("#file_preview", RichLog).display = visible
 
@@ -761,6 +1096,58 @@ class GptTuiApp(ToolsMixin, App[None]):
             return "Codex"
         return "Groq"
 
+    def _maybe_run_setup_check(self) -> None:
+        if self.config.setup_checked:
+            return
+        checks: list[str] = []
+        gemini_ok = self.gemini_cli_provider.available
+        codex_ok = self.codex_provider.available
+        checks.append(f"Gemini CLI: {'OK' if gemini_ok else 'Missing'}")
+        checks.append(f"Codex CLI: {'OK' if codex_ok else 'Missing'}")
+        checks.append(f"GROQ key: {'OK' if bool(self.groq_provider.api_key) else 'Missing'}")
+        checks.append(f"GEMINI key: {'OK' if bool(os.getenv('GEMINI_API_KEY', '').strip()) else 'Missing'}")
+        self._log_system("[bold #ffcb6b]First-run setup check[/]\n" + "\n".join(f"- {c}" for c in checks))
+        if not gemini_ok:
+            self._log_system("Install Gemini CLI and run `gemini` once to login.")
+        if not codex_ok:
+            self._log_system("Install Codex CLI and run `codex login`.")
+        self.config.setup_checked = True
+        self.config.save()
+
+    def _apply_prompt_preset(self, text: str) -> str:
+        preset = PRESET_PROMPTS.get(self.prompt_preset, "")
+        if not preset:
+            return text
+        return f"[Mode: {self.prompt_preset}] {preset}\n\n{text}"
+
+    def _messages_with_preset(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not messages:
+            return messages
+        copied = list(messages)
+        for i in range(len(copied) - 1, -1, -1):
+            if copied[i].get("role") == "user":
+                m = dict(copied[i])
+                m["content"] = self._apply_prompt_preset(str(m.get("content", "")))
+                copied[i] = m
+                break
+        return copied
+
+    def _record_turn_stats(self, elapsed_s: float, final_text: str, tool_count: int = 0) -> None:
+        self._last_turn_seconds = elapsed_s
+        self._last_turn_chars = len(final_text or "")
+        self._last_turn_tools = tool_count
+
+    def _friendly_request_error(self, exc: Exception) -> str:
+        text = str(exc)
+        low = text.lower()
+        if "resource_exhausted" in low or "429" in low or "rate" in low:
+            return "Provider rate/capacity limit reached. Please retry shortly."
+        if "access is denied" in low or "attachconsole failed" in low:
+            return "Terminal attach failed for CLI provider. Re-open terminal and retry."
+        if "not found in path" in low:
+            return text
+        return text
+
     def _refresh_header(self) -> None:
         conn      = "Connected" if self.provider.connected else "No Key"
         conn_icon = "[green]â—[/]" if self.provider.connected else "[red]â—[/]"
@@ -771,6 +1158,19 @@ class GptTuiApp(ToolsMixin, App[None]):
         )
         self.query_one("#chip_repo",  Static).update(
             f"[#ffcb6b]â–¸[/] {Path(str(self.files.repo_root)).name}"
+        )
+        safety = "read-only" if self.tool_read_only else "write-enabled"
+        sid = ""
+        if self.model.startswith("gemini-cli:"):
+            if self.gemini_cli_provider.session_mode == "fresh":
+                sid = "fresh"
+            elif self.gemini_cli_provider.session_mode == "resume_id" and self.gemini_cli_provider.session_id:
+                sid = f"id:{self.gemini_cli_provider.session_id[:8]}"
+            else:
+                sid = "latest"
+        stats = f"{self._last_turn_seconds:.1f}s/{self._last_turn_chars}c/{self._last_turn_tools}t"
+        self.query_one("#chip_mode", Static).update(
+            f"[#7ad97a]mode[/] {self.prompt_preset}  [dim]{safety}  {sid}  {stats}[/]"
         )
         self.query_one("#model_badge", Static).update(f"[#5ec4ff]{self.model}[/]")
         self.sub_title = f"{pname} Â· {self.model} Â· {self.files.repo_root}"
@@ -785,51 +1185,89 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._mount_message("you", message, "msg_user")
 
     def _log_assistant(self, message: str) -> None:
-        self._mount_message("assistant", message, "msg_assistant")
+        if self._active_streaming_message:
+            self._active_streaming_message.query_one(".msg_body", Static).update(message)
+            self._active_streaming_message.content = message
+            self._active_streaming_message = None
+        else:
+            self._mount_message("assistant", message, "msg_assistant")
 
     def _log_system(self, message: str) -> None:
         self._mount_message("system", message, "msg_system")
 
-    def _mount_message(self, role: str, content: str, classes: str) -> None:
+    def _mount_message(self, role: str, content: str, classes: str) -> ChatMessage:
         log = self.query_one("#chat_log", VerticalScroll)
         msg = ChatMessage(role, content, self._timestamp(), classes)
         log.mount(msg)
         log.scroll_end()
+        return msg
 
     def _log_codex_stream_line(self, line: str) -> None:
         self._handle_stream_chunk(line + "\n")
 
     def _handle_stream_chunk(self, chunk: str) -> None:
-        # Update the live stream box
+        # Update the live stream
         self._update_stream(chunk)
 
         # Also update the sidebar console
         console = self.query_one("#codex_console", Static)
-        # For a Static widget, we just append the text. 
-        # Note: Static doesn't have a simple .write(), we update its content.
         current = str(console.renderable)
-        console.update(current + chunk)
+        next_text = current + chunk
+        console.update(next_text)
+        self._last_console_text = next_text
         self.query_one("#codex_console_scroller", VerticalScroll).scroll_end()
+
+    def _update_thinking_dots(self) -> None:
+        """Cycle through ., .., ... while waiting for model."""
+        if self._active_streaming_message and not self._stream_buffer:
+            self._thinking_dots_count = (self._thinking_dots_count % 3) + 1
+            dots = "." * self._thinking_dots_count
+            try:
+                body = self._active_streaming_message.query_one(".msg_body", Static)
+                body.update(f"[dim]Thinking{dots}[/]")
+            except:
+                pass
 
     def _start_stream(self) -> None:
         self.query_one("#loading_indicator", LoadingIndicator).display = True
-        sb = self.query_one("#stream_box", Static)
-        sb.display = True
-        sb.update("[bold #7ad97a]assistant[/] [dim](streaming...)[/]")
         self._stream_buffer = ""
+        self._thinking_dots_count = 0
+        # Mount the placeholder message widget in the chat log
+        self._active_streaming_message = self._mount_message("assistant", "[dim]Thinking...[/]", "msg_assistant")
+        
+        if self._thinking_timer:
+            self._thinking_timer.stop()
+        self._thinking_timer = self.set_interval(0.5, self._update_thinking_dots)
 
     def _update_stream(self, chunk: str) -> None:
+        if not self._stream_buffer and self._thinking_timer:
+            # First real chunk arrived!
+            self._thinking_timer.stop()
+            self._thinking_timer = None
+
         self._stream_buffer += chunk
-        sb = self.query_one("#stream_box", Static)
-        # Use markup to escape the chunk if needed, but the chunk itself might contain rich tags from provider
-        sb.update(f"[bold #7ad97a]assistant[/] [dim](streaming...)[/]\n  {self._stream_buffer}")
-        sb.scroll_end()
+        if self._active_streaming_message:
+            body = self._active_streaming_message.query_one(".msg_body", Static)
+            body.update(self._stream_buffer)
+            self._active_streaming_message.content = self._stream_buffer
+            self.query_one("#chat_log", VerticalScroll).scroll_end()
 
     def _finish_stream(self) -> None:
         self.query_one("#loading_indicator", LoadingIndicator).display = False
-        sb = self.query_one("#stream_box", Static)
-        sb.display = False
-        sb.update("")
+        if self._thinking_timer:
+            self._thinking_timer.stop()
+            self._thinking_timer = None
+        if self._stream_buffer.strip():
+            self._last_stream_text = self._stream_buffer
+        elif self._active_streaming_message:
+            # Avoid leaving a stale "Thinking..." placeholder on failed/empty runs.
+            try:
+                body = self._active_streaming_message.query_one(".msg_body", Static)
+                body.update("[dim]No response.[/]")
+            except Exception:
+                pass
+            self._active_streaming_message.content = "No response."
+            self._active_streaming_message = None
 
     def _clear_codex_console(self) -> None:
         self.query_one("#codex_console", Static).update("")
@@ -863,11 +1301,17 @@ class GptTuiApp(ToolsMixin, App[None]):
 
         if self.model.startswith("codex:") or self.model.startswith("gemini-cli:"):
             self._maybe_trim_context()
-            working_msgs = list(self.messages)
+            # Gemini CLI gets raw user text; the "[Mode: ...]" preset prefix tends to
+            # trigger agentic/tool-planning behavior in piped non-interactive mode.
+            if self.model.startswith("gemini-cli:"):
+                working_msgs = list(self.messages)
+            else:
+                working_msgs = self._messages_with_preset(list(self.messages))
             cli_name = "Codex CLI" if self.model.startswith("codex:") else "Gemini CLI"
             self.call_from_thread(self._set_status, f"Running via {cli_name}...")
             self.call_from_thread(self._clear_codex_console)
             self.call_from_thread(self._start_stream)
+            started = time.monotonic()
             try:
                 cli_provider = (
                     self.codex_provider if self.model.startswith("codex:")
@@ -882,12 +1326,13 @@ class GptTuiApp(ToolsMixin, App[None]):
                 )
             except Exception as exc:  # noqa: BLE001
                 self.call_from_thread(self._finish_stream)
-                self.call_from_thread(self.query_one("#loading_indicator", LoadingIndicator).update, display=False)
-                self.call_from_thread(self._log_system, f"[red]![/] Request failed: {exc}")
+                self.call_from_thread(self._log_system, f"[red]![/] Request failed: {self._friendly_request_error(exc)}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
 
             self.call_from_thread(self._finish_stream)
+            elapsed = time.monotonic() - started
+            self._record_turn_stats(elapsed, final_text, 0)
             import re
             blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", final_text, re.MULTILINE)
             if blocks:
@@ -895,6 +1340,7 @@ class GptTuiApp(ToolsMixin, App[None]):
             self.messages = working_msgs
             self.messages.append({"role": "assistant", "content": final_text})
             self.call_from_thread(self._log_assistant, final_text)
+            self.call_from_thread(self._refresh_header)
             self.call_from_thread(self._set_status, "Done.")
             return
 
@@ -902,7 +1348,9 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._maybe_trim_context()
 
         # Work on a local copy so partial tool calls don't corrupt self.messages
-        working_msgs = list(self.messages)
+        working_msgs = self._messages_with_preset(list(self.messages))
+        started = time.monotonic()
+        used_tools = 0
 
         for round_num in range(MAX_TOOL_ROUNDS):
             status_text = (
@@ -911,16 +1359,25 @@ class GptTuiApp(ToolsMixin, App[None]):
                 else "Thinking..."
             )
             self.call_from_thread(self._set_status, status_text)
+            
+            # Show "Thinking..." in the chat log for the first round
+            if round_num == 0:
+                self.call_from_thread(self._start_stream)
+            
             try:
                 final_text, asst_dict, tool_calls = self.provider.chat_with_tools(
                     working_msgs, self.model, TOOLS
                 )
             except RuntimeError as exc:
+                self.call_from_thread(self._finish_stream)
                 if "__TOOL_FAILED__" in str(exc):
                     # Content too large for tool call â€” fall back to plain chat
+                    self.call_from_thread(self._finish_stream)
                     self.call_from_thread(
                         self._set_status, "Content too large, falling back to plain chat..."
                     )
+                    # Start a new "thinking" indicator for the plain chat fallback
+                    self.call_from_thread(self._start_stream)
                     try:
                         reply = self.provider.chat_completion(working_msgs, self.model)
                         self.messages = working_msgs
@@ -939,15 +1396,17 @@ class GptTuiApp(ToolsMixin, App[None]):
                         self.call_from_thread(self._set_status, "Request failed.")
                     return
 
-                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {exc}")
+                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {self._friendly_request_error(exc)}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
             except Exception as exc:  # noqa: BLE001
-                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {exc}")
+                self.call_from_thread(self._finish_stream)
+                self.call_from_thread(self._log_system, f"[red]â—[/] Request failed: {self._friendly_request_error(exc)}")
                 self.call_from_thread(self._set_status, "Request failed.")
                 return
 
             if final_text is not None:
+                self.call_from_thread(self._finish_stream)
                 # Model is done â€” track code blocks for /save, commit to history
                 import re
                 blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", final_text, re.MULTILINE)
@@ -955,17 +1414,23 @@ class GptTuiApp(ToolsMixin, App[None]):
                     self._last_code_block = blocks[-1]
                 self.messages = working_msgs
                 self.messages.append({"role": "assistant", "content": final_text})
+                elapsed = time.monotonic() - started
+                self._record_turn_stats(elapsed, final_text, used_tools)
                 self.call_from_thread(self._log_assistant, final_text)
+                self.call_from_thread(self._refresh_header)
                 self.call_from_thread(self._set_status, "Done.")
                 return
 
             # Model wants to call tools
-            working_msgs.append(asst_dict)
+            # Note: We keep _active_streaming_message alive through tool rounds
+            # so it can show progress if desired, but for now we'll just keep it 
+            # as "Thinking (round X)..."
             tool_names = [tc.function.name for tc in tool_calls]
             self.call_from_thread(
                 self._set_status, f"Using tools: {', '.join(tool_names)}..."
             )
             for tc in tool_calls:
+                used_tools += 1
                 try:
                     args = json.loads(tc.function.arguments) or {}
                 except json.JSONDecodeError:
@@ -979,6 +1444,7 @@ class GptTuiApp(ToolsMixin, App[None]):
                 })
 
         # Exceeded max rounds
+        self.call_from_thread(self._finish_stream)
         self.call_from_thread(
             self._log_system,
             "[yellow]â—[/] Reached max tool-call rounds. Try rephrasing.",
