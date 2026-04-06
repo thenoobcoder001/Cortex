@@ -114,8 +114,49 @@ The installer creates:
 - Optional desktop shortcut
 - Installed app under `Program Files\gpt-tui`
 
+## Electron + React desktop shell
+
+This repo now also contains a desktop conversion scaffold in `desktop_app/`:
+
+- Python backend API in `gpt_tui/desktop_api`
+- React renderer in `desktop_app/web`
+- Electron shell in `desktop_app/electron`
+- PyInstaller backend entry in `desktop_backend.py`
+
+Development flow:
+
+```powershell
+cd E:\codex\gpt-tui
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+cd .\desktop_app
+npm install
+npm run dev
+```
+
+Packaged desktop build flow:
+
+```powershell
+cd E:\codex\gpt-tui\desktop_app
+npm install
+npm run build
+```
+
+That build does three things:
+- builds the React frontend
+- builds the Python backend executable (`gpt-tui-backend.exe`)
+- packages the Electron app as a Windows installer with `electron-builder`
+
 ## Next phase
 
 - Add provider abstraction (`Ollama`, `OpenAI`, others)
 - Add file tools (`list/read`) and patch apply flow
 - Add shell command tool with confirmation
+
+## Known issues
+
+- Gemini CLI and Codex CLI depend on local terminal/auth state; backend capacity and auth errors can be intermittent.
+- In-terminal mouse selection depends on your terminal emulator and alternate-screen behavior; use in-app copy commands as fallback.
+- Live provider tests can be flaky when network/provider limits are hit; use `scripts/smoke_test.ps1` for baseline validation.
