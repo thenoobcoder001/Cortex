@@ -24,6 +24,10 @@ installer/
 *.exe
 *.msi
 *.iss
+desktop_app/node_modules/
+desktop_app/dist-backend/
+desktop_app/build-backend/
+desktop_app/web/dist/
 
 # IDE / Editor
 .vscode/
