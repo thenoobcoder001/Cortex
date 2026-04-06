@@ -1,0 +1,51 @@
+{
+  "name": "gpt-tui-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.js",
+  "description": "Electron + React shell for gpt-tui",
+  "author": "CHIRAG",
+  "scripts": {
+    "dev:web": "vite --config web/vite.config.js",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron electron/main.js",
+    "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
+    "build:web": "vite build --config web/vite.config.js",
+    "build:backend": "pyinstaller ..\\gpt-tui-backend.spec --distpath dist-backend --workpath build-backend --noconfirm",
+    "build": "npm run build:web && npm run build:backend && electron-builder",
+    "start": "electron electron/main.js"
+  },
+  "build": {
+    "appId": "com.chirag.gpttui.desktop",
+    "productName": "GPT TUI Desktop",
+    "files": [
+      "electron/**/*",
+      "web/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-backend",
+        "to": "backend"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    }
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.0",
+    "concurrently": "^9.1.2",
+    "cross-env": "^10.0.0",
+    "electron": "^36.3.1",
+    "electron-builder": "^26.0.12",
+    "vite": "^8.0.0",
+    "wait-on": "^8.0.3"
+  }
+}
