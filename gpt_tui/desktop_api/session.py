@@ -49,12 +49,22 @@ class DesktopSessionService:
         )
         self.gemini_provider = GeminiProvider(os.getenv("GEMINI_API_KEY", "").strip())
         self.gemini_cli_provider = GeminiCliProvider(self.repo_root)
+        self.gemini_cli_provider.session_id = self.config.gemini_session_id.strip()
+        self.gemini_cli_provider.session_mode = (
+            "resume_id" if self.gemini_cli_provider.session_id else "fresh"
+        )
+        self.gemini_cli_provider.on_session_init = self._save_gemini_session_id
         self.codex_provider = CodexProvider(self.repo_root)
+        self.codex_provider.session_id = self.config.codex_session_id.strip()
+        self.codex_provider.session_mode = "resume_id" if self.codex_provider.session_id else "fresh"
+        self.codex_provider.on_session_init = self._save_codex_session_id
         self.model = self.config.model or DEFAULT_MODEL
         self.prompt_preset = self.config.prompt_preset or "code"
         self.tool_read_only = self.config.tool_safety_mode == "read"
         self.messages: list[dict[str, Any]] = []
         self.active_chat_id = ""
+        self.active_chat_model = ""
+        self.running_chat_ids: set[str] = set()
         self.tool_executor = ToolExecutor(
             repo_root=self.repo_root,
             resolve_repo_path=self.files.resolve_repo_path,
@@ -63,6 +73,79 @@ class DesktopSessionService:
         )
         self.tool_executor.read_only = self.tool_read_only
         self._restore_active_chat()
+
+    def _provider_state_from_payload(self, payload: dict[str, Any] | None) -> dict[str, str]:
+        if not isinstance(payload, dict):
+            return {}
+        raw = payload.get("provider_state")
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key, value in raw.items():
+            if value:
+                out[str(key)] = str(value)
+        return out
+
+    def _make_request_providers(
+        self,
+        repo_root: Path,
+        provider_state: dict[str, str],
+    ) -> tuple[GroqProvider, GeminiProvider, GeminiCliProvider, CodexProvider, ToolExecutor]:
+        groq_provider = GroqProvider(
+            api_key=(self.config.api_key or os.getenv("GROQ_API_KEY", "")).strip(),
+        )
+        gemini_provider = GeminiProvider(os.getenv("GEMINI_API_KEY", "").strip())
+        gemini_cli_provider = GeminiCliProvider(repo_root)
+        gemini_session_id = provider_state.get("gemini_cli_session_id", "").strip()
+        gemini_cli_provider.session_id = gemini_session_id
+        gemini_cli_provider.session_mode = "resume_id" if gemini_session_id else "fresh"
+        codex_provider = CodexProvider(repo_root)
+        codex_session_id = provider_state.get("codex_session_id", "").strip()
+        codex_provider.session_id = codex_session_id
+        codex_provider.session_mode = "resume_id" if codex_session_id else "fresh"
+        file_service = RepoFileService(repo_root)
+        tool_executor = ToolExecutor(
+            repo_root=repo_root,
+            resolve_repo_path=file_service.resolve_repo_path,
+            list_files=file_service.list_files,
+            read_utf8=file_service.read_utf8,
+        )
+        tool_executor.read_only = self.tool_read_only
+        return groq_provider, gemini_provider, gemini_cli_provider, codex_provider, tool_executor
+
+    def _provider_for_request(
+        self,
+        model: str,
+        groq_provider: GroqProvider,
+        gemini_provider: GeminiProvider,
+        gemini_cli_provider: GeminiCliProvider,
+        codex_provider: CodexProvider,
+    ):
+        if model.startswith("gemini"):
+            if model.startswith("gemini-cli:"):
+                return gemini_cli_provider
+            return gemini_provider
+        if model.startswith("codex:"):
+            return codex_provider
+        return groq_provider
+
+    def _save_gemini_session_id(self, session_id: str) -> None:
+        cleaned = session_id.strip()
+        if not cleaned:
+            return
+        self.gemini_cli_provider.session_id = cleaned
+        self.gemini_cli_provider.session_mode = "resume_id"
+        self.config.gemini_session_id = cleaned
+        self.config.save()
+
+    def _save_codex_session_id(self, session_id: str) -> None:
+        cleaned = session_id.strip()
+        if not cleaned:
+            return
+        self.codex_provider.session_id = cleaned
+        self.codex_provider.session_mode = "resume_id"
+        self.config.codex_session_id = cleaned
+        self.config.save()
 
     def _initial_repo_root(self) -> Path:
         if self.config.repo_root:
@@ -87,7 +170,17 @@ class DesktopSessionService:
         if not payload:
             return
         self.active_chat_id = self.config.active_chat_id
+        self.active_chat_model = str(payload.get("model", "")).strip()
         self.messages = self._normalize_messages(payload.get("messages", []))
+        if self.model.startswith("gemini-cli:") and not self.active_chat_model.startswith("gemini-cli:"):
+            self.gemini_cli_provider.session_id = ""
+            self.gemini_cli_provider.session_mode = "fresh"
+            self.config.gemini_session_id = ""
+        if self.model.startswith("codex:") and not self.active_chat_model.startswith("codex:"):
+            self.codex_provider.session_id = ""
+            self.codex_provider.session_mode = "fresh"
+            self.config.codex_session_id = ""
+            self.config.save()
 
     def _normalize_messages(self, messages: Any) -> list[dict[str, Any]]:
         if not isinstance(messages, list):
@@ -117,6 +210,15 @@ class DesktopSessionService:
         if model.startswith("codex:"):
             return "Codex"
         return "Groq"
+
+    def _model_family(self, model: str) -> str:
+        if model.startswith("gemini-cli:"):
+            return "gemini-cli"
+        if model.startswith("gemini"):
+            return "gemini"
+        if model.startswith("codex:"):
+            return "codex"
+        return "groq"
 
     def _models(self) -> list[dict[str, str]]:
         groups = [
@@ -157,11 +259,14 @@ class DesktopSessionService:
             self.chat_store.save_chat(self.active_chat_id, self.messages, model=model)
         else:
             self.active_chat_id = self.chat_store.create_chat(self.messages, model=model)
+        self.active_chat_model = model
         self.config.active_chat_id = self.active_chat_id
         self.config.repo_root = str(self.repo_root)
         self.config.model = model
         self.config.prompt_preset = self.prompt_preset
         self.config.tool_safety_mode = "read" if self.tool_read_only else "write"
+        self.config.gemini_session_id = self.gemini_cli_provider.session_id
+        self.config.codex_session_id = self.codex_provider.session_id
         self.config.save()
 
     def _set_repo_root(self, repo_root: Path) -> None:
@@ -176,9 +281,16 @@ class DesktopSessionService:
         self.tool_executor.set_repo_root(self.repo_root)
         self.config.repo_root = str(self.repo_root)
         self.config.active_chat_id = ""
+        self.config.gemini_session_id = ""
+        self.config.codex_session_id = ""
         self.config.save()
         self.active_chat_id = ""
+        self.active_chat_model = ""
         self.messages = []
+        self.gemini_cli_provider.session_id = ""
+        self.gemini_cli_provider.session_mode = "fresh"
+        self.codex_provider.session_id = ""
+        self.codex_provider.session_mode = "fresh"
 
     def _apply_prompt_preset(self, text: str) -> str:
         preset = PRESET_PROMPTS.get(self.prompt_preset, "")
@@ -186,31 +298,51 @@ class DesktopSessionService:
             return text
         return f"[Mode: {self.prompt_preset}] {preset}\n\n{text}"
 
-    def _messages_with_preset(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _messages_with_preset(
+        self,
+        messages: list[dict[str, Any]],
+        prompt_preset: str | None = None,
+    ) -> list[dict[str, Any]]:
         copied = [dict(message) for message in messages]
+        preset_value = prompt_preset or self.prompt_preset
         for index in range(len(copied) - 1, -1, -1):
             if copied[index].get("role") == "user":
-                copied[index]["content"] = self._apply_prompt_preset(
-                    str(copied[index].get("content", "")),
+                original = str(copied[index].get("content", ""))
+                preset = PRESET_PROMPTS.get(preset_value, "")
+                copied[index]["content"] = (
+                    f"[Mode: {preset_value}] {preset}\n\n{original}" if preset else original
                 )
                 break
         return copied
 
+    def _recent_chat_context(self, messages: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
+        visible = [
+            dict(message)
+            for message in messages
+            if str(message.get("role", "")).strip() in {"user", "assistant"}
+        ]
+        if limit <= 0:
+            return visible
+        return visible[-limit:]
+
     def _event(self, event_type: str, **payload: Any) -> dict[str, Any]:
         return {"type": event_type, **payload}
 
+    def _chat_items(self, chat_store: ProjectChatStore) -> list[dict[str, Any]]:
+        return [
+            {
+                "chatId": chat.chat_id,
+                "title": chat.title,
+                "updatedAt": chat.updated_at,
+                "createdAt": chat.created_at,
+                "model": chat.model,
+            }
+            for chat in chat_store.list_chats()
+        ]
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            chat_items = [
-                {
-                    "chatId": chat.chat_id,
-                    "title": chat.title,
-                    "updatedAt": chat.updated_at,
-                    "createdAt": chat.created_at,
-                    "model": chat.model,
-                }
-                for chat in self.chat_store.list_chats()
-            ]
+            chat_items = self._chat_items(self.chat_store)
             repo_files = self.files.list_files(self.repo_root, 200)
             return {
                 "app": {"name": APP_NAME, "version": VERSION},
@@ -227,25 +359,71 @@ class DesktopSessionService:
                 "messages": self.messages,
                 "files": repo_files,
                 "providerName": self._provider_name_for_model(self.model),
+                "runningChatIds": sorted(self.running_chat_ids),
             }
 
-    def new_chat(self) -> dict[str, Any]:
+    def list_chats(self, repo_root: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
+            target_repo_root = Path(repo_root).resolve() if repo_root else self.repo_root
+            chat_store = ProjectChatStore(target_repo_root)
+            return self._chat_items(chat_store)
+
+    def new_chat(self, repo_root: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            target_repo_root = Path(repo_root).resolve() if repo_root else self.repo_root
+            if target_repo_root != self.repo_root:
+                self._set_repo_root(target_repo_root)
             self.messages = []
             self.active_chat_id = ""
+            self.active_chat_model = ""
             self.config.active_chat_id = ""
+            self.gemini_cli_provider.session_id = ""
+            self.gemini_cli_provider.session_mode = "fresh"
+            self.config.gemini_session_id = ""
+            self.codex_provider.session_id = ""
+            self.codex_provider.session_mode = "fresh"
+            self.config.codex_session_id = ""
             self.config.save()
             return self.snapshot()
 
-    def activate_chat(self, chat_id: str) -> dict[str, Any]:
+    def activate_chat(self, chat_id: str, repo_root: str | None = None) -> dict[str, Any]:
         with self._lock:
+            target_repo_root = Path(repo_root).resolve() if repo_root else self.repo_root
+            if target_repo_root != self.repo_root:
+                self._set_repo_root(target_repo_root)
             payload = self.chat_store.load_chat(chat_id)
             if not payload:
                 raise ValueError(f"Chat not found: {chat_id}")
             self.active_chat_id = chat_id
+            self.active_chat_model = str(payload.get("model", "")).strip()
             self.messages = self._normalize_messages(payload.get("messages", []))
             self.config.active_chat_id = chat_id
+            if self.model.startswith("gemini-cli:") and not self.active_chat_model.startswith("gemini-cli:"):
+                self.gemini_cli_provider.session_id = ""
+                self.gemini_cli_provider.session_mode = "fresh"
+                self.config.gemini_session_id = ""
+            if self.model.startswith("codex:") and not self.active_chat_model.startswith("codex:"):
+                self.codex_provider.session_id = ""
+                self.codex_provider.session_mode = "fresh"
+                self.config.codex_session_id = ""
             self.config.save()
+            return self.snapshot()
+
+    def delete_chat(self, chat_id: str, repo_root: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            if chat_id in self.running_chat_ids:
+                raise ValueError("Cannot delete a chat while it is still running.")
+            target_repo_root = Path(repo_root).resolve() if repo_root else self.repo_root
+            target_store = ProjectChatStore(target_repo_root)
+            ok = target_store.delete_chat(chat_id)
+            if not ok:
+                raise ValueError(f"Chat could not be deleted: {chat_id}")
+            if self.active_chat_id == chat_id and target_repo_root == self.repo_root:
+                self.active_chat_id = ""
+                self.active_chat_model = ""
+                self.messages = []
+                self.config.active_chat_id = ""
+                self.config.save()
             return self.snapshot()
 
     def update_config(
@@ -266,6 +444,14 @@ class DesktopSessionService:
             if model is not None:
                 self.model = model.strip() or DEFAULT_MODEL
                 self.config.model = self.model
+                if self.model.startswith("gemini-cli:") and not self.active_chat_model.startswith("gemini-cli:"):
+                    self.gemini_cli_provider.session_id = ""
+                    self.gemini_cli_provider.session_mode = "fresh"
+                    self.config.gemini_session_id = ""
+                if self.model.startswith("codex:") and not self.active_chat_model.startswith("codex:"):
+                    self.codex_provider.session_id = ""
+                    self.codex_provider.session_mode = "fresh"
+                    self.config.codex_session_id = ""
             if api_key is not None:
                 key = api_key.strip()
                 self.groq_provider.set_api_key(key)
@@ -296,9 +482,25 @@ class DesktopSessionService:
                 "truncated": truncated,
             }
 
-    def send_message(self, text: str) -> dict[str, Any]:
+    def send_message(
+        self,
+        text: str,
+        *,
+        chat_id: str | None = None,
+        repo_root: str | None = None,
+        model: str | None = None,
+        prompt_preset: str | None = None,
+        tool_safety_mode: str | None = None,
+    ) -> dict[str, Any]:
         completed_event: dict[str, Any] | None = None
-        for event in self.send_message_events(text):
+        for event in self.send_message_events(
+            text,
+            chat_id=chat_id,
+            repo_root=repo_root,
+            model=model,
+            prompt_preset=prompt_preset,
+            tool_safety_mode=tool_safety_mode,
+        ):
             if event["type"] == "completed":
                 completed_event = event
         if completed_event is None:
@@ -310,43 +512,126 @@ class DesktopSessionService:
             "snapshot": completed_event["snapshot"],
         }
 
-    def send_message_events(self, text: str) -> Iterator[dict[str, Any]]:
+    def send_message_events(
+        self,
+        text: str,
+        *,
+        chat_id: str | None = None,
+        repo_root: str | None = None,
+        model: str | None = None,
+        prompt_preset: str | None = None,
+        tool_safety_mode: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         message = text.strip()
         if not message:
             raise ValueError("Message is required.")
 
         with self._lock:
-            provider = self._provider_for_model(self.model)
+            request_model = (model or self.model).strip() or DEFAULT_MODEL
+            request_prompt_preset = (prompt_preset or self.prompt_preset).strip() or "code"
+            request_tool_read_only = (
+                (tool_safety_mode or ("read" if self.tool_read_only else "write")).strip() == "read"
+            )
+            request_repo_root = Path(repo_root).resolve() if repo_root else self.repo_root
+            chat_store = ProjectChatStore(request_repo_root)
+            existing_payload = chat_store.load_chat(chat_id) if chat_id else None
+            provider_state = self._provider_state_from_payload(existing_payload)
+            (
+                groq_provider,
+                gemini_provider,
+                gemini_cli_provider,
+                codex_provider,
+                tool_executor,
+            ) = self._make_request_providers(request_repo_root, provider_state)
+            tool_executor.read_only = request_tool_read_only
+            provider = self._provider_for_request(
+                request_model,
+                groq_provider,
+                gemini_provider,
+                gemini_cli_provider,
+                codex_provider,
+            )
             if not provider.connected:
                 raise ValueError(
-                    f"{self._provider_name_for_model(self.model)} is not ready for requests.",
+                    f"{self._provider_name_for_model(request_model)} is not ready for requests.",
                 )
 
-            self.messages.append({"role": "user", "content": message})
-            yield self._event("user_message", message=message)
-            started = time.monotonic()
-            yield self._event(
-                "status",
-                phase="started",
-                message=f"Running {self._provider_name_for_model(self.model)}...",
-            )
+            if existing_payload:
+                base_messages = self._normalize_messages(existing_payload.get("messages", []))
+                active_chat_model = str(existing_payload.get("model", "")).strip()
+            else:
+                base_messages = []
+                active_chat_model = ""
 
-            if self.model.startswith("codex:") or self.model.startswith("gemini-cli:"):
+            base_messages.append({"role": "user", "content": message})
+            stored_messages = [dict(message_item) for message_item in base_messages]
+
+            if chat_id:
+                if chat_id in self.running_chat_ids:
+                    raise ValueError("This chat is already running a request.")
+                chat_store.save_chat(chat_id, base_messages, model=request_model, provider_state=provider_state)
+            else:
+                chat_id = chat_store.create_chat(base_messages, model=request_model, provider_state=provider_state)
+                if self.repo_root == request_repo_root and self.active_chat_id == "":
+                    self.active_chat_id = chat_id
+                    self.config.active_chat_id = chat_id
+
+            if self.repo_root == request_repo_root and self.active_chat_id == chat_id:
+                self.messages = [dict(message_item) for message_item in base_messages]
+                self.active_chat_model = request_model
+
+            self.running_chat_ids.add(chat_id)
+            self.config.save()
+            start_snapshot = self.snapshot()
+
+        started = time.monotonic()
+        yield self._event("user_message", message=message, chatId=chat_id, snapshot=start_snapshot)
+        yield self._event(
+            "status",
+            phase="started",
+            message=f"Running {self._provider_name_for_model(request_model)}...",
+            chatId=chat_id,
+        )
+
+        try:
+            if request_model.startswith("codex:") or request_model.startswith("gemini-cli:"):
+                provider_messages = [dict(message_item) for message_item in base_messages]
+                if (
+                    request_model.startswith(("gemini-cli:", "codex:"))
+                    and active_chat_model
+                    and self._model_family(active_chat_model) != self._model_family(request_model)
+                ):
+                    provider_messages = self._recent_chat_context(base_messages, limit=5)
+                    if request_model.startswith("gemini-cli:"):
+                        gemini_cli_provider.session_id = ""
+                        gemini_cli_provider.session_mode = "fresh"
+                    if request_model.startswith("codex:"):
+                        codex_provider.session_id = ""
+                        codex_provider.session_mode = "fresh"
+                    yield self._event(
+                        "status",
+                        phase="fresh_provider_context",
+                        message=f"Started a fresh {self._provider_name_for_model(request_model)} context and carried over the last 5 chat messages.",
+                        chatId=chat_id,
+                    )
+
                 working_messages, condensed_count = maybe_trim_context(
-                    self.messages,
+                    provider_messages,
                     provider,
-                    self.model,
+                    request_model,
                 )
                 if condensed_count > 0:
                     yield self._event(
                         "status",
                         phase="context_trimmed",
                         message=f"Condensed {condensed_count} earlier messages to fit context.",
+                        chatId=chat_id,
                     )
-                if self.model.startswith("gemini-cli:"):
+                if request_model.startswith("gemini-cli:"):
                     prepared_messages = [dict(entry) for entry in working_messages]
                 else:
-                    prepared_messages = self._messages_with_preset(working_messages)
+                    prepared_messages = self._messages_with_preset(working_messages, request_prompt_preset)
+
                 cli_events: queue.Queue[dict[str, Any] | None] = queue.Queue()
                 result: dict[str, str] = {}
                 failure: dict[str, Exception] = {}
@@ -355,9 +640,9 @@ class DesktopSessionService:
                     try:
                         final_text = provider.chat_completion_stream_raw(
                             prepared_messages,
-                            self.model,
+                            request_model,
                             on_output=lambda chunk: cli_events.put(
-                                self._event("cli_output", stream="stdout", text=chunk),
+                                self._event("cli_output", stream="stdout", text=chunk, chatId=chat_id),
                             ),
                         )
                         result["assistant"] = final_text
@@ -378,30 +663,51 @@ class DesktopSessionService:
                 worker.join()
                 if "error" in failure:
                     raise failure["error"]
+
                 final_text = result.get("assistant", "")
-                self.messages = prepared_messages
-                self.messages.append({"role": "assistant", "content": final_text})
-                self._save_active_chat()
+                final_messages = [dict(entry) for entry in stored_messages]
+                final_messages.append({"role": "assistant", "content": final_text})
+                next_provider_state = {
+                    key: value
+                    for key, value in {
+                        "gemini_cli_session_id": getattr(gemini_cli_provider, "session_id", ""),
+                        "codex_session_id": getattr(codex_provider, "session_id", ""),
+                    }.items()
+                    if value
+                }
+                with self._lock:
+                    chat_store.save_chat(
+                        chat_id,
+                        final_messages,
+                        model=request_model,
+                        provider_state=next_provider_state,
+                    )
+                    if self.active_chat_id == chat_id and self.repo_root == request_repo_root:
+                        self.messages = [dict(entry) for entry in final_messages]
+                        self.active_chat_model = request_model
+                    self.running_chat_ids.discard(chat_id)
+                    snapshot = self.snapshot()
                 elapsed_seconds = round(time.monotonic() - started, 2)
-                snapshot = self.snapshot()
-                yield self._event("assistant", text=final_text)
+                yield self._event("assistant", text=final_text, chatId=chat_id)
                 yield self._event(
                     "completed",
                     assistantMessage=final_text,
                     elapsedSeconds=elapsed_seconds,
                     usedTools=0,
                     snapshot=snapshot,
+                    chatId=chat_id,
                 )
                 return
 
-            working_messages, condensed_count = maybe_trim_context(self.messages, provider, self.model)
+            working_messages, condensed_count = maybe_trim_context(base_messages, provider, request_model)
             if condensed_count > 0:
                 yield self._event(
                     "status",
                     phase="context_trimmed",
                     message=f"Condensed {condensed_count} earlier messages to fit context.",
+                    chatId=chat_id,
                 )
-            working_messages = self._messages_with_preset(working_messages)
+            working_messages = self._messages_with_preset(working_messages, request_prompt_preset)
             used_tools = 0
 
             for round_index in range(MAX_TOOL_ROUNDS):
@@ -409,11 +715,12 @@ class DesktopSessionService:
                     "status",
                     phase="thinking",
                     message=f"Thinking... round {round_index + 1}",
+                    chatId=chat_id,
                 )
                 try:
                     final_text, asst_dict, tool_calls = provider.chat_with_tools(
                         working_messages,
-                        self.model,
+                        request_model,
                         TOOLS,
                     )
                 except RuntimeError as exc:
@@ -423,41 +730,65 @@ class DesktopSessionService:
                         "status",
                         phase="fallback_plain_chat",
                         message="Tool call failed, retrying as plain chat.",
+                        chatId=chat_id,
                     )
-                    fallback_text = provider.chat_completion(working_messages, self.model)
-                    self.messages = working_messages
-                    self.messages.append({"role": "assistant", "content": fallback_text})
-                    self._save_active_chat()
+                    fallback_text = provider.chat_completion(working_messages, request_model)
+                    final_messages = [dict(entry) for entry in stored_messages]
+                    final_messages.append({"role": "assistant", "content": fallback_text})
+                    with self._lock:
+                        chat_store.save_chat(
+                            chat_id,
+                            final_messages,
+                            model=request_model,
+                            provider_state=provider_state,
+                        )
+                        if self.active_chat_id == chat_id and self.repo_root == request_repo_root:
+                            self.messages = [dict(entry) for entry in final_messages]
+                            self.active_chat_model = request_model
+                        self.running_chat_ids.discard(chat_id)
+                        snapshot = self.snapshot()
                     elapsed_seconds = round(time.monotonic() - started, 2)
-                    snapshot = self.snapshot()
-                    yield self._event("assistant", text=fallback_text)
+                    yield self._event("assistant", text=fallback_text, chatId=chat_id)
                     yield self._event(
                         "completed",
                         assistantMessage=fallback_text,
                         elapsedSeconds=elapsed_seconds,
                         usedTools=used_tools,
                         snapshot=snapshot,
+                        chatId=chat_id,
                     )
                     return
 
                 if final_text is not None:
-                    self.messages = working_messages
-                    self.messages.append({"role": "assistant", "content": final_text})
-                    self._save_active_chat()
+                    final_messages = [dict(entry) for entry in stored_messages]
+                    final_messages.append({"role": "assistant", "content": final_text})
+                    with self._lock:
+                        chat_store.save_chat(
+                            chat_id,
+                            final_messages,
+                            model=request_model,
+                            provider_state=provider_state,
+                        )
+                        if self.active_chat_id == chat_id and self.repo_root == request_repo_root:
+                            self.messages = [dict(entry) for entry in final_messages]
+                            self.active_chat_model = request_model
+                        self.running_chat_ids.discard(chat_id)
+                        snapshot = self.snapshot()
                     elapsed_seconds = round(time.monotonic() - started, 2)
-                    snapshot = self.snapshot()
-                    yield self._event("assistant", text=final_text)
+                    yield self._event("assistant", text=final_text, chatId=chat_id)
                     yield self._event(
                         "completed",
                         assistantMessage=final_text,
                         elapsedSeconds=elapsed_seconds,
                         usedTools=used_tools,
                         snapshot=snapshot,
+                        chatId=chat_id,
                     )
                     return
 
                 if asst_dict:
                     working_messages.append(asst_dict)
+                    stored_messages.append(dict(asst_dict))
 
                 if not tool_calls:
                     break
@@ -472,12 +803,14 @@ class DesktopSessionService:
                         "tool_call",
                         name=tool_call.function.name,
                         args=args,
+                        chatId=chat_id,
                     )
-                    result = self.tool_executor.execute(tool_call.function.name, args)
+                    result = tool_executor.execute(tool_call.function.name, args)
                     yield self._event(
                         "tool_result",
                         name=tool_call.function.name,
                         result=result,
+                        chatId=chat_id,
                     )
                     working_messages.append(
                         {
@@ -487,5 +820,17 @@ class DesktopSessionService:
                             "content": result,
                         },
                     )
+                    stored_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": tool_call.function.name,
+                            "content": result,
+                        },
+                    )
 
             raise RuntimeError("Maximum tool-call rounds reached.")
+        except Exception:
+            with self._lock:
+                self.running_chat_ids.discard(chat_id)
+            raise
