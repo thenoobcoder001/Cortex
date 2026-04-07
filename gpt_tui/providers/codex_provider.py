@@ -15,6 +15,7 @@ class CodexProvider:
         self._has_session = False
         self.session_id: str = ""
         self.session_mode: str = "fresh"  # fresh | resume_id
+        self.tool_read_only: bool = False
         self.on_session_init: Callable[[str], None] | None = None
 
     @property
@@ -130,6 +131,8 @@ class CodexProvider:
                 "--model",
                 self._cli_model_name(model),
             ]
+            if not self.tool_read_only:
+                cmd.append("--full-auto")
             if json_mode:
                 cmd.append("--json")
             cmd.extend([self.session_id, "-"])
@@ -146,6 +149,10 @@ class CodexProvider:
                 "--color",
                 "never",
             ]
+            if self.tool_read_only:
+                cmd.extend(["--sandbox", "read-only"])
+            else:
+                cmd.append("--full-auto")
             if json_mode:
                 cmd.append("--json")
         return cmd
