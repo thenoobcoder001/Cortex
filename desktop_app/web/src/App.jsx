@@ -187,16 +187,19 @@ export default function App() {
   const [editorMenuOpen, setEditorMenuOpen] = useState(false);
   const [groqApiKeyDraft, setGroqApiKeyDraft] = useState("");
   const [geminiApiKeyDraft, setGeminiApiKeyDraft] = useState("");
+  const [openaiApiKeyDraft, setOpenaiApiKeyDraft] = useState("");
   const [assistantMemoryDraft, setAssistantMemoryDraft] = useState("");
   const [contextCarryMessagesDraft, setContextCarryMessagesDraft] = useState("5");
   const [settingsPromptPreset, setSettingsPromptPreset] = useState("code");
-  const [settingsToolSafetyMode, setSettingsToolSafetyMode] = useState("write");
   const [bootPhase, setBootPhase] = useState(0);
   const [bootMinElapsed, setBootMinElapsed] = useState(false);
   const [bootDismissed, setBootDismissed] = useState(false);
+  const [diffPanelOpen, setDiffPanelOpen] = useState(false);
+  const [selectedDiffIndex, setSelectedDiffIndex] = useState(0);
 
   const runningChatIds = snapshot?.runningChatIds || [];
   const interruptedRuns = snapshot?.interruptedRuns || [];
+  const activeChanges = snapshot?.changes || [];
   const activeRepoRoot = normalizeProject(snapshot?.config?.repoRoot || "");
   const bootSteps = [
     "Prime the local runtime",
@@ -271,10 +274,10 @@ export default function App() {
     }
     setGroqApiKeyDraft(snapshot.config.apiKey || "");
     setGeminiApiKeyDraft(snapshot.config.geminiApiKey || "");
+    setOpenaiApiKeyDraft(snapshot.config.openaiApiKey || "");
     setAssistantMemoryDraft(snapshot.config.assistantMemory || "");
     setContextCarryMessagesDraft(String(snapshot.config.contextCarryMessages ?? 5));
     setSettingsPromptPreset(snapshot.config.promptPreset || "code");
-    setSettingsToolSafetyMode(snapshot.config.toolSafetyMode || "write");
   }, [snapshot?.config]);
 
   const toggleRepo = (repoPath) => {
@@ -457,10 +460,9 @@ export default function App() {
       .map((project) => normalizeProject(project.path))
       .filter((path) => expandedRepos.has(path));
     expandedProjectPaths.forEach((repoRoot) => {
-      if (repoRoot === activeRepoRoot || projectChats[repoRoot]) {
-        return;
+      if (repoRoot !== activeRepoRoot && !projectChats[repoRoot]) {
+        void fetchProjectChats(repoRoot).catch(() => {});
       }
-      void fetchProjectChats(repoRoot).catch(() => {});
     });
   }, [activeRepoRoot, backendUrl, expandedRepos, projectChats, savedProjects]);
 
@@ -495,11 +497,26 @@ export default function App() {
       repoRoot: repoDraft,
       apiKey: groqApiKeyDraft,
       geminiApiKey: geminiApiKeyDraft,
+      openaiApiKey: openaiApiKeyDraft,
       promptPreset: settingsPromptPreset,
-      toolSafetyMode: settingsToolSafetyMode,
       assistantMemory: assistantMemoryDraft,
       contextCarryMessages: Number.parseInt(contextCarryMessagesDraft || "5", 10) || 0,
     });
+  };
+
+  const handleToolSafetyChange = async (toolSafetyMode) => {
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/chats/preferences", {
+        chatId: snapshot?.config?.activeChatId || null,
+        repoRoot: snapshot?.config?.repoRoot || "",
+        toolSafetyMode,
+      });
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
   };
 
   const handleOpenInEditor = async (editorId) => {
@@ -594,6 +611,19 @@ export default function App() {
             if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
               setLiveStatus(event.message || event.phase || "Working...");
             }
+            break;
+          case "cli_output":
+            setPendingTurns((current) => {
+              const previous = current[eventChatId] || current[requestKey] || {};
+              return {
+                ...current,
+                [eventChatId]: {
+                  chatId: eventChatId,
+                  userMessage: previous.userMessage || outgoingMessage,
+                  assistantText: `${previous.assistantText || ""}${event.text || ""}`,
+                },
+              };
+            });
             break;
           case "assistant":
             setPendingTurns((current) => ({
@@ -744,6 +774,17 @@ export default function App() {
     return projectChats[projectPath] || [];
   };
 
+  const selectedDiff = activeChanges[selectedDiffIndex] || null;
+
+  useEffect(() => {
+    if (activeChanges.length === 0) {
+      setDiffPanelOpen(false);
+      setSelectedDiffIndex(0);
+      return;
+    }
+    setSelectedDiffIndex((current) => Math.min(current, activeChanges.length - 1));
+  }, [activeChanges]);
+
   if (!snapshot) {
     return (
       <div className="boot-screen">
@@ -847,19 +888,6 @@ export default function App() {
                   ))}
                 </select>
               </label>
-              <label className="field">
-                <span>Tool safety</span>
-                <select
-                  value={settingsToolSafetyMode}
-                  onChange={(event) => setSettingsToolSafetyMode(event.target.value)}
-                >
-                  {TOOL_SAFETY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </section>
 
             <section className="settings-section-card">
@@ -901,6 +929,15 @@ export default function App() {
                   value={geminiApiKeyDraft}
                   onChange={(event) => setGeminiApiKeyDraft(event.target.value)}
                   placeholder="AIza..."
+                />
+              </label>
+              <label className="field">
+                <span>OpenAI API key</span>
+                <input
+                  type="password"
+                  value={openaiApiKeyDraft}
+                  onChange={(event) => setOpenaiApiKeyDraft(event.target.value)}
+                  placeholder="sk-..."
                 />
               </label>
             </section>
@@ -993,7 +1030,7 @@ export default function App() {
                   </div>
 
                   {expandedRepos.has(project.path) && (
-                    <div className="project-chat-list">
+                    <div className="project-detail-list">
                       {chatsForProject(project.path).length === 0 && <div className="rail-empty">No chats yet.</div>}
                       {chatsForProject(project.path).map((chat) => {
                         const showChatLoading =
@@ -1067,6 +1104,14 @@ export default function App() {
             </div>
 
             <div className="topbar-right">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setDiffPanelOpen((current) => !current)}
+                disabled={activeChanges.length === 0}
+              >
+                {diffPanelOpen ? `Hide diff (${activeChanges.length})` : `Show diff (${activeChanges.length})`}
+              </button>
               <div className="header-menu-wrap" onClick={(event) => event.stopPropagation()}>
                 <button
                   type="button"
@@ -1103,6 +1148,42 @@ export default function App() {
             <div className="recovery-banner">
               Previous response was interrupted during restart or shutdown. Open this chat and continue from the last saved turn.
             </div>
+          )}
+          {diffPanelOpen && activeChanges.length > 0 && (
+            <section className="diff-panel">
+              <div className="diff-file-list">
+                {activeChanges.map((change, index) => (
+                  <button
+                    key={`${change.path}-${index}`}
+                    type="button"
+                    className={selectedDiffIndex === index ? "diff-file-item active" : "diff-file-item"}
+                    onClick={() => setSelectedDiffIndex(index)}
+                  >
+                    <span className={`change-action ${change.action}`}>{change.action}</span>
+                    <span className="diff-file-name">{change.path}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="diff-viewer">
+                {selectedDiff && (
+                  <>
+                    <div className="diff-viewer-header">
+                      <span className={`change-action ${selectedDiff.action}`}>{selectedDiff.action}</span>
+                      <span className="change-path">{selectedDiff.path}</span>
+                    </div>
+                    {(selectedDiff.oldPath || selectedDiff.newPath) &&
+                      selectedDiff.oldPath !== selectedDiff.newPath && (
+                        <div className="change-rename-row">
+                          {selectedDiff.oldPath || selectedDiff.path}
+                          {" -> "}
+                          {selectedDiff.newPath || selectedDiff.path}
+                        </div>
+                      )}
+                    <pre className="change-diff-preview">{selectedDiff.diff || "No diff available."}</pre>
+                  </>
+                )}
+              </div>
+            </section>
           )}
 
           <section className="conversation-scroll" ref={scrollRef}>
@@ -1150,6 +1231,17 @@ export default function App() {
             />
             <div className="composer-footer">
               <div className="composer-controls">
+                <select
+                  value={snapshot.config.toolSafetyMode || "write"}
+                  onChange={(event) => void handleToolSafetyChange(event.target.value)}
+                  title="Chat permissions"
+                >
+                  {TOOL_SAFETY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
                 <div
                   className="model-picker"
                   onMouseLeave={() => {

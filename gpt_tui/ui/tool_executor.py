@@ -6,6 +6,7 @@ This module avoids direct Textual dependencies so it can be reused/tested.
 """
 from __future__ import annotations
 
+import difflib
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
@@ -57,6 +58,10 @@ class ToolExecutor:
         self._shell_service.set_cwd(self.repo_root)
 
     def execute(self, name: str, args: dict[str, Any] | None) -> str:
+        result, _change = self.execute_with_metadata(name, args)
+        return result
+
+    def execute_with_metadata(self, name: str, args: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
         args = args or {}
         if self.read_only and name in {
             "write_file",
@@ -67,14 +72,14 @@ class ToolExecutor:
             "create_directory",
             "run_terminal_command",
         }:
-            return "ERROR: tool safety mode is read-only; mutating tools are blocked."
+            return "ERROR: tool safety mode is read-only; mutating tools are blocked.", None
 
         if name == "write_file":
             return self._write_file(args)
         if name == "edit_file":
             return self._edit_file(args)
         if name == "read_file":
-            return self._read_file(args)
+            return self._read_file(args), None
         if name in ("delete_file", "delete_path"):
             return self._delete_path(args)
         if name == "rename_file":
@@ -82,10 +87,10 @@ class ToolExecutor:
         if name == "create_directory":
             return self._create_directory(args)
         if name == "list_files":
-            return self._list_files(args)
+            return self._list_files(args), None
         if name == "run_terminal_command":
-            return self._run_terminal_command(args)
-        return f"ERROR: unknown tool '{name}'"
+            return self._run_terminal_command(args), None
+        return f"ERROR: unknown tool '{name}'", None
 
     def _emit_log(self, message: str) -> None:
         if self.hooks.log:
@@ -103,6 +108,41 @@ class ToolExecutor:
         if self.hooks.preview_clear:
             self.hooks.preview_clear()
 
+    def _safe_read_text(self, path: Path) -> str:
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return ""
+
+    def _build_diff(self, path_label: str, before: str, after: str) -> str:
+        diff = difflib.unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile=f"a/{path_label}",
+            tofile=f"b/{path_label}",
+            lineterm="",
+        )
+        return "\n".join(diff)
+
+    def _change_record(
+        self,
+        *,
+        action: str,
+        path: str,
+        before: str = "",
+        after: str = "",
+        old_path: str = "",
+        new_path: str = "",
+    ) -> dict[str, Any]:
+        record = {
+            "action": action,
+            "path": path,
+            "oldPath": old_path,
+            "newPath": new_path,
+            "diff": self._build_diff(path or new_path or old_path, before, after),
+        }
+        return record
+
     def _resolve_any_path(self, raw_path: str) -> tuple[Path | None, str]:
         if not raw_path:
             return None, "Path is required."
@@ -115,41 +155,59 @@ class ToolExecutor:
             return None, "Path rejected: outside repo root."
         return resolved, ""
 
-    def _write_file(self, args: dict[str, Any]) -> str:
+    def _write_file(self, args: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         path, err = self._resolve_any_path(str(args.get("path", "")))
         if not path:
-            return f"ERROR: {err}"
+            return f"ERROR: {err}", None
         content = str(args.get("content", ""))
+        before = self._safe_read_text(path) if path.exists() else ""
+        action = "edit" if path.exists() else "create"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
         except OSError as exc:
-            return f"ERROR: {exc}"
+            return f"ERROR: {exc}", None
         self._emit_log(f"[green]*[/] Written: [bold]{path.name}[/]")
         self._emit_tree_reload()
         self._emit_preview_show(path)
-        return f"OK: written {path}"
+        return (
+            f"OK: written {path}",
+            self._change_record(
+                action=action,
+                path=str(path.relative_to(self.repo_root)),
+                before=before,
+                after=content,
+            ),
+        )
 
-    def _edit_file(self, args: dict[str, Any]) -> str:
+    def _edit_file(self, args: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         path, err = self._resolve_any_path(str(args.get("path", "")))
         if not path:
-            return f"ERROR: {err}"
+            return f"ERROR: {err}", None
         old_str = str(args.get("old_str", ""))
         new_str = str(args.get("new_str", ""))
         if not path.exists():
-            return f"ERROR: file not found: {path}"
+            return f"ERROR: file not found: {path}", None
         try:
             original = path.read_text(encoding="utf-8")
             if old_str not in original:
-                return f"ERROR: string not found in {path.name}"
+                return f"ERROR: string not found in {path.name}", None
             updated = original.replace(old_str, new_str, 1)
             path.write_text(updated, encoding="utf-8")
         except OSError as exc:
-            return f"ERROR: {exc}"
+            return f"ERROR: {exc}", None
         self._emit_log(f"[green]*[/] Edited: [bold]{path.name}[/]")
         self._emit_tree_reload()
         self._emit_preview_show(path)
-        return f"OK: edited {path}"
+        return (
+            f"OK: edited {path}",
+            self._change_record(
+                action="edit",
+                path=str(path.relative_to(self.repo_root)),
+                before=original,
+                after=updated,
+            ),
+        )
 
     def _read_file(self, args: dict[str, Any]) -> str:
         raw_path = str(args.get("path", ""))
@@ -167,12 +225,15 @@ class ToolExecutor:
         self._emit_preview_show(file_path)
         return content + ("\n...(truncated)" if truncated else "")
 
-    def _delete_path(self, args: dict[str, Any]) -> str:
+    def _delete_path(self, args: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         path, err = self._resolve_any_path(str(args.get("path", "")))
         if not path:
-            return f"ERROR: {err}"
+            return f"ERROR: {err}", None
         if not path.exists():
-            return f"ERROR: path not found: {path}"
+            return f"ERROR: path not found: {path}", None
+        before = ""
+        if path.is_file():
+            before = self._safe_read_text(path)
         try:
             if path.is_dir():
                 shutil.rmtree(path)
@@ -181,41 +242,69 @@ class ToolExecutor:
                 path.unlink()
                 label = "File"
         except OSError as exc:
-            return f"ERROR: {exc}"
+            return f"ERROR: {exc}", None
         self._emit_log(f"[red]*[/] Deleted {label}: [bold]{path.name}[/]")
         self._emit_tree_reload()
         self._emit_preview_clear()
-        return f"OK: deleted {path}"
+        return (
+            f"OK: deleted {path}",
+            self._change_record(
+                action="delete" if label == "File" else "delete_directory",
+                path=str(path.relative_to(self.repo_root)),
+                before=before,
+                after="",
+            ),
+        )
 
-    def _rename_file(self, args: dict[str, Any]) -> str:
+    def _rename_file(self, args: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         old_path, err = self._resolve_any_path(str(args.get("old_path", "")))
         if not old_path:
-            return f"ERROR: {err}"
+            return f"ERROR: {err}", None
         new_path, err = self._resolve_any_path(str(args.get("new_path", "")))
         if not new_path:
-            return f"ERROR: {err}"
+            return f"ERROR: {err}", None
         if not old_path.exists():
-            return f"ERROR: source not found: {old_path}"
+            return f"ERROR: source not found: {old_path}", None
+        before = self._safe_read_text(old_path) if old_path.is_file() else ""
         try:
             new_path.parent.mkdir(parents=True, exist_ok=True)
             old_path.rename(new_path)
         except OSError as exc:
-            return f"ERROR: {exc}"
+            return f"ERROR: {exc}", None
         self._emit_log(f"[cyan]*[/] Renamed: [bold]{old_path.name}[/] -> [bold]{new_path.name}[/]")
         self._emit_tree_reload()
-        return f"OK: renamed to {new_path}"
+        return (
+            f"OK: renamed to {new_path}",
+            self._change_record(
+                action="rename",
+                path=str(new_path.relative_to(self.repo_root)),
+                before=before,
+                after=before,
+                old_path=str(old_path.relative_to(self.repo_root)),
+                new_path=str(new_path.relative_to(self.repo_root)),
+            ),
+        )
 
-    def _create_directory(self, args: dict[str, Any]) -> str:
+    def _create_directory(self, args: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         path, err = self._resolve_any_path(str(args.get("path", "")))
         if not path:
-            return f"ERROR: {err}"
+            return f"ERROR: {err}", None
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            return f"ERROR: {exc}"
+            return f"ERROR: {exc}", None
         self._emit_log(f"[cyan]*[/] Created dir: [bold]{path.name}[/]")
         self._emit_tree_reload()
-        return f"OK: directory created {path}"
+        return (
+            f"OK: directory created {path}",
+            {
+                "action": "create_directory",
+                "path": str(path.relative_to(self.repo_root)),
+                "oldPath": "",
+                "newPath": "",
+                "diff": "",
+            },
+        )
 
     def _list_files(self, args: dict[str, Any]) -> str:
         directory = str(args.get("directory", "")).strip()
