@@ -497,6 +497,20 @@ button:disabled {
   animation: spin 0.8s linear infinite;
 }
 
+.chat-recovery-indicator {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(199, 145, 53, 0.18);
+  color: #f2c36c;
+  font-size: 10px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
 .chat-sidebar-row:hover .chat-delete-btn {
   opacity: 1;
 }
@@ -1022,6 +1036,14 @@ button:disabled {
   background: rgba(116, 53, 53, 0.24);
   border: 1px solid rgba(227, 144, 144, 0.34);
   color: #ffd7d7;
+}
+
+.recovery-banner {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(171, 127, 46, 0.16);
+  border: 1px solid rgba(242, 195, 108, 0.28);
+  color: #f3d69a;
 }
 
 .settings-screen {
