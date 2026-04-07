@@ -196,6 +196,7 @@ export default function App() {
   const [bootDismissed, setBootDismissed] = useState(false);
 
   const runningChatIds = snapshot?.runningChatIds || [];
+  const interruptedRuns = snapshot?.interruptedRuns || [];
   const activeRepoRoot = normalizeProject(snapshot?.config?.repoRoot || "");
   const bootSteps = [
     "Prime the local runtime",
@@ -333,6 +334,19 @@ export default function App() {
   const activeChat = useMemo(
     () => snapshot?.chats?.find((chat) => chat.chatId === snapshot?.config?.activeChatId) || null,
     [snapshot],
+  );
+  const interruptedRunByChat = useMemo(
+    () =>
+      new Map(
+        interruptedRuns
+          .filter((run) => run?.chatId)
+          .map((run) => [run.chatId, run]),
+      ),
+    [interruptedRuns],
+  );
+  const activeInterruptedRun = useMemo(
+    () => interruptedRunByChat.get(snapshot?.config?.activeChatId || "") || null,
+    [interruptedRunByChat, snapshot?.config?.activeChatId],
   );
 
   const activePendingTurn = useMemo(() => {
@@ -984,6 +998,7 @@ export default function App() {
                       {chatsForProject(project.path).map((chat) => {
                         const showChatLoading =
                           runningChatIds.includes(chat.chatId) || sendingChatIds.includes(chat.chatId);
+                        const showInterrupted = Boolean(chat.interrupted) && !showChatLoading;
 
                         return (
                           <div
@@ -1001,6 +1016,15 @@ export default function App() {
                               <span className="chat-truncate">{chat.title || "Untitled chat"}</span>
                             </button>
                             {showChatLoading && <span className="chat-loading-spinner" aria-hidden="true"></span>}
+                            {showInterrupted && (
+                              <span
+                                className="chat-recovery-indicator"
+                                title="Previous response was interrupted and can be resumed from this chat."
+                                aria-hidden="true"
+                              >
+                                !
+                              </span>
+                            )}
                             <button
                               type="button"
                               className="chat-delete-btn"
@@ -1075,6 +1099,11 @@ export default function App() {
           </header>
 
           {error && <div className="error-banner">{error}</div>}
+          {!error && activeInterruptedRun && (
+            <div className="recovery-banner">
+              Previous response was interrupted during restart or shutdown. Open this chat and continue from the last saved turn.
+            </div>
+          )}
 
           <section className="conversation-scroll" ref={scrollRef}>
             {displayMessages.length === 0 ? (

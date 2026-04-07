@@ -5,6 +5,7 @@ import os
 import queue
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -87,6 +88,7 @@ class DesktopSessionService:
         self.active_chat_id = ""
         self.active_chat_model = ""
         self.running_chat_ids: set[str] = set()
+        self.interrupted_runs: dict[str, dict[str, str]] = {}
         self.tool_executor = ToolExecutor(
             repo_root=self.repo_root,
             resolve_repo_path=self.files.resolve_repo_path,
@@ -94,6 +96,7 @@ class DesktopSessionService:
             read_utf8=self.files.read_utf8,
         )
         self.tool_executor.read_only = self.tool_read_only
+        self._recover_interrupted_runs()
         self._restore_active_chat()
 
     def _provider_state_from_payload(self, payload: dict[str, Any] | None) -> dict[str, str]:
@@ -185,11 +188,126 @@ class DesktopSessionService:
             return cwd
         return Path.home().resolve()
 
+    def _now_iso(self) -> str:
+        return datetime.now().isoformat(timespec="seconds")
+
+    def _chat_exists(self, repo_root: Path, chat_id: str) -> bool:
+        return ProjectChatStore(repo_root).load_chat(chat_id) is not None
+
+    def _persist_runtime_state(self) -> None:
+        self.config.active_runs = [dict(entry) for entry in self.config.active_runs]
+        self.config.interrupted_runs = [dict(entry) for entry in self.config.interrupted_runs]
+        self.config.save()
+
+    def _sync_interrupted_run_cache(self) -> None:
+        self.interrupted_runs = {
+            entry["chat_id"]: dict(entry)
+            for entry in self.config.interrupted_runs
+            if entry.get("chat_id")
+        }
+
+    def _recover_interrupted_runs(self) -> None:
+        active_runs = [dict(entry) for entry in self.config.active_runs]
+        interrupted_runs = [dict(entry) for entry in self.config.interrupted_runs]
+        next_interrupted: list[dict[str, str]] = []
+
+        for entry in interrupted_runs:
+            repo_root = Path(entry.get("repo_root", "")).resolve()
+            if self._chat_exists(repo_root, entry.get("chat_id", "")):
+                next_interrupted.append(entry)
+
+        if active_runs:
+            recovered_at = self._now_iso()
+            seen_chat_ids = {entry.get("chat_id", "") for entry in next_interrupted}
+            for entry in active_runs:
+                repo_root = Path(entry.get("repo_root", "")).resolve()
+                chat_id = entry.get("chat_id", "")
+                if not chat_id or chat_id in seen_chat_ids:
+                    continue
+                if not self._chat_exists(repo_root, chat_id):
+                    continue
+                recovered = dict(entry)
+                recovered["repo_root"] = str(repo_root)
+                recovered["recovered_at"] = recovered_at
+                next_interrupted.append(recovered)
+                seen_chat_ids.add(chat_id)
+
+        self.config.active_runs = []
+        self.config.interrupted_runs = next_interrupted
+        self._sync_interrupted_run_cache()
+        self._persist_runtime_state()
+
+    def _track_active_run(
+        self,
+        *,
+        chat_id: str,
+        repo_root: Path,
+        model: str,
+        last_user_message: str,
+    ) -> None:
+        next_runs = [
+            entry
+            for entry in self.config.active_runs
+            if entry.get("chat_id", "") != chat_id
+        ]
+        next_runs.append(
+            {
+                "chat_id": chat_id,
+                "repo_root": str(repo_root),
+                "model": model,
+                "last_user_message": last_user_message,
+                "started_at": self._now_iso(),
+                "recovered_at": "",
+            }
+        )
+        self.config.active_runs = next_runs
+        self.config.interrupted_runs = [
+            entry
+            for entry in self.config.interrupted_runs
+            if entry.get("chat_id", "") != chat_id
+        ]
+        self._sync_interrupted_run_cache()
+        self._persist_runtime_state()
+
+    def _clear_active_run(self, chat_id: str) -> None:
+        self.config.active_runs = [
+            entry
+            for entry in self.config.active_runs
+            if entry.get("chat_id", "") != chat_id
+        ]
+        self._persist_runtime_state()
+
+    def _clear_interrupted_run(self, chat_id: str) -> None:
+        self.config.interrupted_runs = [
+            entry
+            for entry in self.config.interrupted_runs
+            if entry.get("chat_id", "") != chat_id
+        ]
+        self._sync_interrupted_run_cache()
+        self._persist_runtime_state()
+
+    def _interrupted_runs_payload(self) -> list[dict[str, str]]:
+        payload: list[dict[str, str]] = []
+        for entry in self.config.interrupted_runs:
+            payload.append(
+                {
+                    "chatId": entry.get("chat_id", ""),
+                    "repoRoot": entry.get("repo_root", ""),
+                    "model": entry.get("model", ""),
+                    "lastUserMessage": entry.get("last_user_message", ""),
+                    "startedAt": entry.get("started_at", ""),
+                    "recoveredAt": entry.get("recovered_at", ""),
+                }
+            )
+        return payload
+
     def _restore_active_chat(self) -> None:
         if not self.config.active_chat_id:
             return
         payload = self.chat_store.load_chat(self.config.active_chat_id)
         if not payload:
+            self.config.active_chat_id = ""
+            self._persist_runtime_state()
             return
         self.active_chat_id = self.config.active_chat_id
         self.active_chat_model = str(payload.get("model", "")).strip()
@@ -461,6 +579,7 @@ class DesktopSessionService:
                 "updatedAt": chat.updated_at,
                 "createdAt": chat.created_at,
                 "model": chat.model,
+                "interrupted": chat.chat_id in self.interrupted_runs,
             }
             for chat in chat_store.list_chats()
         ]
@@ -489,6 +608,8 @@ class DesktopSessionService:
                 "files": repo_files,
                 "providerName": self._provider_name_for_model(self.model),
                 "runningChatIds": sorted(self.running_chat_ids),
+                "interruptedChatIds": sorted(self.interrupted_runs),
+                "interruptedRuns": self._interrupted_runs_payload(),
             }
 
     def list_chats(self, repo_root: str | None = None) -> list[dict[str, Any]]:
@@ -552,6 +673,9 @@ class DesktopSessionService:
                 self.active_chat_model = ""
                 self.messages = []
                 self.config.active_chat_id = ""
+            self._clear_interrupted_run(chat_id)
+            self._clear_active_run(chat_id)
+            if self.active_chat_id == "":
                 self.config.save()
             return self.snapshot()
 
@@ -722,6 +846,12 @@ class DesktopSessionService:
                 self.active_chat_model = request_model
 
             self.running_chat_ids.add(chat_id)
+            self._track_active_run(
+                chat_id=chat_id,
+                repo_root=request_repo_root,
+                model=request_model,
+                last_user_message=message,
+            )
             self.config.save()
             start_snapshot = self.snapshot()
 
@@ -828,6 +958,7 @@ class DesktopSessionService:
                         self.messages = [dict(entry) for entry in final_messages]
                         self.active_chat_model = request_model
                     self.running_chat_ids.discard(chat_id)
+                    self._clear_active_run(chat_id)
                     snapshot = self.snapshot()
                 elapsed_seconds = round(time.monotonic() - started, 2)
                 yield self._event("assistant", text=final_text, chatId=chat_id)
@@ -872,6 +1003,7 @@ class DesktopSessionService:
                         self.messages = [dict(entry) for entry in final_messages]
                         self.active_chat_model = request_model
                     self.running_chat_ids.discard(chat_id)
+                    self._clear_active_run(chat_id)
                     snapshot = self.snapshot()
                 elapsed_seconds = round(time.monotonic() - started, 2)
                 yield self._event("assistant", text=fallback_text, chatId=chat_id)
@@ -922,6 +1054,7 @@ class DesktopSessionService:
                             self.messages = [dict(entry) for entry in final_messages]
                             self.active_chat_model = request_model
                         self.running_chat_ids.discard(chat_id)
+                        self._clear_active_run(chat_id)
                         snapshot = self.snapshot()
                     elapsed_seconds = round(time.monotonic() - started, 2)
                     yield self._event("assistant", text=fallback_text, chatId=chat_id)
@@ -949,6 +1082,7 @@ class DesktopSessionService:
                             self.messages = [dict(entry) for entry in final_messages]
                             self.active_chat_model = request_model
                         self.running_chat_ids.discard(chat_id)
+                        self._clear_active_run(chat_id)
                         snapshot = self.snapshot()
                     elapsed_seconds = round(time.monotonic() - started, 2)
                     yield self._event("assistant", text=final_text, chatId=chat_id)
@@ -1025,6 +1159,7 @@ class DesktopSessionService:
                     self.messages = [dict(entry) for entry in final_messages]
                     self.active_chat_model = request_model
                 self.running_chat_ids.discard(chat_id)
+                self._clear_active_run(chat_id)
                 snapshot = self.snapshot()
             elapsed_seconds = round(time.monotonic() - started, 2)
             yield self._event("assistant", text=fallback_text, chatId=chat_id)
@@ -1040,4 +1175,5 @@ class DesktopSessionService:
         except Exception:
             with self._lock:
                 self.running_chat_ids.discard(chat_id)
+                self._clear_active_run(chat_id)
             raise

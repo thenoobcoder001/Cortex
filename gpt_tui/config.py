@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 def _config_dir() -> Path:
@@ -15,6 +16,30 @@ def _config_dir() -> Path:
 
 CONFIG_DIR = _config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
+
+
+def _normalize_run_entries(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        chat_id = str(item.get("chat_id", "")).strip()
+        repo_root = str(item.get("repo_root", "")).strip()
+        if not chat_id or not repo_root:
+            continue
+        normalized.append(
+            {
+                "chat_id": chat_id,
+                "repo_root": repo_root,
+                "model": str(item.get("model", "")).strip(),
+                "last_user_message": str(item.get("last_user_message", "")).strip(),
+                "started_at": str(item.get("started_at", "")).strip(),
+                "recovered_at": str(item.get("recovered_at", "")).strip(),
+            }
+        )
+    return normalized
 
 
 @dataclass
@@ -32,6 +57,8 @@ class AppConfig:
     assistant_memory: str = ""
     context_carry_messages: int = 5
     setup_checked: bool = False
+    active_runs: list[dict[str, str]] = field(default_factory=list)
+    interrupted_runs: list[dict[str, str]] = field(default_factory=list)
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -59,6 +86,8 @@ class AppConfig:
             assistant_memory=str(data.get("assistant_memory", "")),
             context_carry_messages=context_carry_messages,
             setup_checked=bool(data.get("setup_checked", False)),
+            active_runs=_normalize_run_entries(data.get("active_runs", [])),
+            interrupted_runs=_normalize_run_entries(data.get("interrupted_runs", [])),
         )
 
     def save(self) -> None:
@@ -77,5 +106,7 @@ class AppConfig:
             "assistant_memory": self.assistant_memory,
             "context_carry_messages": self.context_carry_messages,
             "setup_checked": self.setup_checked,
+            "active_runs": self.active_runs,
+            "interrupted_runs": self.interrupted_runs,
         }
         CONFIG_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
