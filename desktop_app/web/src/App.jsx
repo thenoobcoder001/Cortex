@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const PROMPT_PRESETS = [
   { value: "code", label: "Code" },
@@ -28,71 +28,29 @@ function stripPresetPrefix(text) {
   return text.replace(/^\[Mode:[^\]]+\][^\n]*\n\n/, "").trim();
 }
 
-function relativePath(filePath, repoRoot) {
-  if (!filePath || !repoRoot) {
-    return filePath;
-  }
-  const prefix = `${repoRoot}\\`;
-  return filePath.startsWith(prefix) ? filePath.slice(prefix.length) : filePath;
-}
+function cleanResponse(text) {
+  if (!text) return "";
 
-function buildExplorerEntries(files, repoRoot) {
-  const nodeMap = new Map();
-  nodeMap.set("", {
-    id: "",
-    name: "",
-    type: "folder",
-    depth: -1,
-    children: new Set(),
+  let cleaned = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,10}(?:;[0-9]{0,10})*)?[0-9A-ORZcf-nqry=><]/g, "");
+  const metadataPatterns = [
+    /^(workdir|model|provider|approval|sandbox|reasoning|session id|tokens used):.*$/gim,
+    /^OpenAI Codex v[\d.]+.*$/gim,
+    /^Conversation context:.*$/gim,
+    /^Latest request:.*$/gim,
+    /^-{2,}$/gm,
+  ];
+
+  metadataPatterns.forEach((pattern) => {
+    cleaned = cleaned.replace(pattern, "");
   });
 
-  for (const absolutePath of files) {
-    const relative = relativePath(absolutePath, repoRoot).replaceAll("/", "\\");
-    const parts = relative.split("\\").filter(Boolean);
-    let currentPath = "";
+  cleaned = cleaned.replace(/OpenAI Codex[\s\S]*?(-{2,}|Latest request:)/gim, "");
+  cleaned = cleaned.replace(/^(user|assistant|codex|system)\s*$/gim, "");
+  cleaned = cleaned.replace(/\[Mode: [^\]]+\][^\n]*/gi, "");
+  cleaned = cleaned.replace(/\[\d+m/g, "");
+  cleaned = cleaned.replace(/\[0m/g, "");
 
-    parts.forEach((part, index) => {
-      const isFile = index === parts.length - 1;
-      const nextPath = currentPath ? `${currentPath}\\${part}` : part;
-      if (!nodeMap.has(nextPath)) {
-        nodeMap.set(nextPath, {
-          id: nextPath,
-          name: part,
-          type: isFile ? "file" : "folder",
-          absolutePath: isFile ? absolutePath : undefined,
-          depth: index,
-          children: new Set(),
-        });
-      }
-      nodeMap.get(currentPath)?.children.add(nextPath);
-      currentPath = nextPath;
-    });
-  }
-
-  const entries = [];
-  const walk = (nodeId) => {
-    const node = nodeMap.get(nodeId);
-    if (!node) return;
-    const children = [...node.children]
-      .map((childId) => nodeMap.get(childId))
-      .filter(Boolean)
-      .sort((left, right) => {
-        if (left.type !== right.type) {
-          return left.type === "folder" ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name);
-      });
-
-    for (const child of children) {
-      entries.push(child);
-      if (child.type === "folder") {
-        walk(child.id);
-      }
-    }
-  };
-
-  walk("");
-  return entries;
+  return cleaned.trim().replace(/\n{3,}/g, "\n\n");
 }
 
 function projectLabel(repoRoot) {
@@ -175,27 +133,130 @@ async function readNdjsonStream(response, onEvent) {
 }
 
 export default function App() {
+  const scrollRef = useRef(null);
+  const activeChatIdRef = useRef("");
+  const bootStartedAtRef = useRef(Date.now());
   const [backendUrl, setBackendUrl] = useState("");
   const [snapshot, setSnapshot] = useState(null);
+  const [projectChats, setProjectChats] = useState({});
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [expandedRepos, setExpandedRepos] = useState(() => new Set());
   const [error, setError] = useState("");
   const [repoDraft, setRepoDraft] = useState("");
   const [liveStatus, setLiveStatus] = useState("Idle");
-  const [pendingTurn, setPendingTurn] = useState(null);
+  const [pendingTurns, setPendingTurns] = useState({});
+  const [sendingChatIds, setSendingChatIds] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savedProjects, setSavedProjects] = useState(() => loadSavedProjects());
   const [projectMenuPath, setProjectMenuPath] = useState("");
+  const [projectMenuPos, setProjectMenuPos] = useState({ top: 0, left: 0 });
+  const [bootPhase, setBootPhase] = useState(0);
+  const [bootMinElapsed, setBootMinElapsed] = useState(false);
+  const [bootDismissed, setBootDismissed] = useState(false);
+
+  const runningChatIds = snapshot?.runningChatIds || [];
+  const activeRepoRoot = normalizeProject(snapshot?.config?.repoRoot || "");
+  const bootSteps = [
+    "Prime the local runtime",
+    "Attach provider bridges",
+    "Index project memory",
+    "Open the operator console",
+  ];
+  const splashVisible = !bootDismissed || !snapshot;
+  const completedBootSteps = snapshot
+    ? bootSteps.length
+    : Math.min(bootSteps.length - 1, Math.max(1, bootPhase + 1));
+  const bootHeadline = error
+    ? "Startup interrupted"
+    : snapshot && bootMinElapsed
+      ? "Workspace synchronized"
+      : "Activating your local AI workstation";
+  const bootMessage = error
+    ? error
+    : snapshot && bootMinElapsed
+      ? "Session state restored. Opening the workspace shell."
+      : "Bringing up the local backend, rehydrating project state, and staging the desktop shell.";
+
+  useEffect(() => {
+    activeChatIdRef.current = snapshot?.config?.activeChatId || "";
+  }, [snapshot?.config?.activeChatId]);
+
+  useEffect(() => {
+    const stepTimer = window.setInterval(() => {
+      setBootPhase((current) => Math.min(current + 1, bootSteps.length - 1));
+    }, 480);
+    const minTimer = window.setTimeout(() => {
+      setBootMinElapsed(true);
+    }, 2200);
+    return () => {
+      window.clearInterval(stepTimer);
+      window.clearTimeout(minTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!snapshot || !bootMinElapsed || error) {
+      return;
+    }
+    const remaining = Math.max(0, 2600 - (Date.now() - bootStartedAtRef.current));
+    const dismissTimer = window.setTimeout(() => {
+      setBootDismissed(true);
+    }, remaining);
+    return () => {
+      window.clearTimeout(dismissTimer);
+    };
+  }, [bootMinElapsed, error, snapshot]);
+
+  useEffect(() => {
+    if (!activeRepoRoot || !snapshot?.chats) {
+      return;
+    }
+    setProjectChats((current) => ({
+      ...current,
+      [activeRepoRoot]: snapshot.chats,
+    }));
+  }, [activeRepoRoot, snapshot?.chats]);
+
+  useEffect(() => {
+    if (snapshot?.config?.repoRoot) {
+      setExpandedRepos((prev) => new Set([...prev, snapshot.config.repoRoot]));
+    }
+  }, [snapshot?.config?.repoRoot]);
+
+  const toggleRepo = (repoPath) => {
+    setExpandedRepos((prev) => {
+      const next = new Set(prev);
+      if (next.has(repoPath)) {
+        next.delete(repoPath);
+      } else {
+        next.add(repoPath);
+      }
+      return next;
+    });
+  };
+
+  const handleOpenMenu = (event, path) => {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (projectMenuPath === path) {
+      setProjectMenuPath("");
+    } else {
+      setProjectMenuPath(path);
+      setProjectMenuPos({ top: rect.bottom + 8, left: rect.left - 130 });
+    }
+  };
 
   const modelGroups = useMemo(() => groupedModels(snapshot?.models || []), [snapshot]);
   const activeChat = useMemo(
     () => snapshot?.chats?.find((chat) => chat.chatId === snapshot?.config?.activeChatId) || null,
     [snapshot],
   );
-  const explorerEntries = useMemo(
-    () => buildExplorerEntries(snapshot?.files || [], snapshot?.config?.repoRoot || ""),
-    [snapshot],
-  );
+
+  const activePendingTurn = useMemo(() => {
+    const activeChatId = snapshot?.config?.activeChatId || "";
+    return pendingTurns[activeChatId] || null;
+  }, [pendingTurns, snapshot?.config?.activeChatId]);
+
   const displayMessages = useMemo(() => {
     const visible = (snapshot?.messages || [])
       .filter((message) => ["user", "assistant", "system"].includes(message.role))
@@ -203,19 +264,27 @@ export default function App() {
       .map((message) => ({
         ...message,
         content:
-          message.role === "user"
-            ? stripPresetPrefix(String(message.content || ""))
-            : String(message.content || "").trim(),
+          message.role === "assistant"
+            ? cleanResponse(String(message.content || ""))
+            : message.role === "user"
+              ? stripPresetPrefix(String(message.content || ""))
+              : String(message.content || "").trim(),
       }));
 
-    if (pendingTurn?.userMessage) {
-      visible.push({ role: "user", content: pendingTurn.userMessage, pending: true });
+    if (activePendingTurn?.userMessage) {
+      visible.push({ role: "user", content: activePendingTurn.userMessage, pending: true });
     }
-    if (pendingTurn?.assistantText) {
-      visible.push({ role: "assistant", content: pendingTurn.assistantText, pending: true });
+    if (activePendingTurn?.assistantText) {
+      visible.push({ role: "assistant", content: activePendingTurn.assistantText, pending: true });
     }
     return visible;
-  }, [pendingTurn, snapshot]);
+  }, [activePendingTurn, snapshot]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [displayMessages, pendingTurns]);
 
   const syncSavedProjects = (repoRoot) => {
     setSavedProjects((current) => {
@@ -223,6 +292,27 @@ export default function App() {
       saveSavedProjects(nextProjects);
       return nextProjects;
     });
+  };
+
+  const fetchProjectChats = async (repoRoot, urlOverride) => {
+    const normalizedRepoRoot = normalizeProject(repoRoot);
+    const targetUrl = urlOverride || backendUrl;
+    if (!normalizedRepoRoot || !targetUrl) {
+      return [];
+    }
+    const response = await fetch(
+      `${targetUrl}/api/chats?repoRoot=${encodeURIComponent(normalizedRepoRoot)}`,
+    );
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || `Chat list request failed (${response.status})`);
+    }
+    const chats = Array.isArray(data.chats) ? data.chats : [];
+    setProjectChats((current) => ({
+      ...current,
+      [normalizedRepoRoot]: chats,
+    }));
+    return chats;
   };
 
   const refreshStatus = async (urlOverride) => {
@@ -246,6 +336,12 @@ export default function App() {
         if (!alive) return;
         setBackendUrl(config.backendUrl);
         await refreshStatus(config.backendUrl);
+        const initialProjects = loadSavedProjects();
+        await Promise.all(
+          [...new Set(initialProjects.map((project) => project.path))]
+            .filter(Boolean)
+            .map((repoRoot) => fetchProjectChats(repoRoot, config.backendUrl).catch(() => [])),
+        );
       })
       .catch((nextError) => {
         if (!alive) return;
@@ -255,6 +351,21 @@ export default function App() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!backendUrl) {
+      return;
+    }
+    const expandedProjectPaths = savedProjects
+      .map((project) => normalizeProject(project.path))
+      .filter((path) => expandedRepos.has(path));
+    expandedProjectPaths.forEach((repoRoot) => {
+      if (repoRoot === activeRepoRoot || projectChats[repoRoot]) {
+        return;
+      }
+      void fetchProjectChats(repoRoot).catch(() => {});
+    });
+  }, [activeRepoRoot, backendUrl, expandedRepos, projectChats, savedProjects]);
 
   const postJson = async (path, payload) => {
     const response = await fetch(`${backendUrl}${path}`, {
@@ -270,34 +381,53 @@ export default function App() {
   };
 
   const handleConfigUpdate = async (patch) => {
-    setBusy(true);
     setError("");
     try {
       const nextSnapshot = await postJson("/api/config", patch);
       setSnapshot(nextSnapshot);
       setRepoDraft(nextSnapshot.config.repoRoot);
       syncSavedProjects(nextSnapshot.config.repoRoot);
+      void fetchProjectChats(nextSnapshot.config.repoRoot).catch(() => {});
     } catch (nextError) {
       setError(String(nextError));
-    } finally {
-      setBusy(false);
     }
   };
 
   const handleSend = async () => {
-    if (!draft.trim() || busy) return;
+    if (!draft.trim()) return;
 
     const outgoingMessage = draft.trim();
-    setBusy(true);
+    const currentConfig = snapshot?.config || {};
+    const currentChatId = snapshot?.config?.activeChatId || "";
+    const requestPayload = {
+      message: outgoingMessage,
+      chatId: currentChatId || null,
+      repoRoot: currentConfig.repoRoot || "",
+      model: currentConfig.model || "",
+      promptPreset: currentConfig.promptPreset || "",
+      toolSafetyMode: currentConfig.toolSafetyMode || "",
+    };
+    if (currentChatId && sendingChatIds.includes(currentChatId)) {
+      return;
+    }
+
+    const requestKey = currentChatId || `draft:${Date.now()}`;
+    setDraft("");
     setError("");
-    setLiveStatus("Starting request...");
-    setPendingTurn({ userMessage: outgoingMessage, assistantText: "" });
+    setPendingTurns((current) => ({
+      ...current,
+      [requestKey]: { chatId: requestKey, userMessage: outgoingMessage, assistantText: "" },
+    }));
+    setSendingChatIds((current) => (current.includes(requestKey) ? current : [...current, requestKey]));
+    if (activeChatIdRef.current === currentChatId) {
+      setLiveStatus("Starting request...");
+    }
 
     try {
       const response = await fetch(`${backendUrl}/api/chat/send-stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: outgoingMessage }),
+        body: JSON.stringify(requestPayload),
       });
       if (!response.ok) {
         const data = await response.json().catch(() => null);
@@ -305,74 +435,148 @@ export default function App() {
       }
 
       await readNdjsonStream(response, (event) => {
+        const eventChatId = event.chatId || requestKey;
+
         switch (event.type) {
-          case "user_message":
-            setPendingTurn((current) => ({
-              userMessage: event.message,
-              assistantText: current?.assistantText || "",
-            }));
+          case "user_message": {
+            if (
+              event.snapshot &&
+              (activeChatIdRef.current === "" || activeChatIdRef.current === event.chatId)
+            ) {
+              setSnapshot(event.snapshot);
+              setRepoDraft(event.snapshot.config.repoRoot);
+              syncSavedProjects(event.snapshot.config.repoRoot);
+            }
+            setSendingChatIds((current) => {
+              const next = current.filter((chatId) => chatId !== requestKey);
+              return next.includes(eventChatId) ? next : [...next, eventChatId];
+            });
+            setPendingTurns((current) => {
+              const previous = current[eventChatId] || current[requestKey] || {};
+              const next = { ...current };
+              delete next[requestKey];
+              next[eventChatId] = {
+                chatId: eventChatId,
+                userMessage: event.message,
+                assistantText: previous.assistantText || "",
+              };
+              return next;
+            });
             break;
+          }
           case "status":
-            setLiveStatus(event.message || event.phase || "Working...");
+            if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
+              setLiveStatus(event.message || event.phase || "Working...");
+            }
             break;
           case "assistant":
-            setPendingTurn((current) => ({
-              userMessage: current?.userMessage || outgoingMessage,
-              assistantText: event.text || "",
+            setPendingTurns((current) => ({
+              ...current,
+              [eventChatId]: {
+                chatId: eventChatId,
+                userMessage: current[eventChatId]?.userMessage || outgoingMessage,
+                assistantText: event.text || "",
+              },
             }));
             break;
           case "completed":
-            setSnapshot(event.snapshot);
-            setRepoDraft(event.snapshot.config.repoRoot);
-            syncSavedProjects(event.snapshot.config.repoRoot);
-            setPendingTurn(null);
-            setLiveStatus(`Done in ${event.elapsedSeconds}s`);
+            if (event.snapshot) {
+              setSnapshot(event.snapshot);
+              setRepoDraft(event.snapshot.config.repoRoot);
+              syncSavedProjects(event.snapshot.config.repoRoot);
+              void fetchProjectChats(event.snapshot.config.repoRoot).catch(() => {});
+            }
+            setPendingTurns((current) => {
+              const next = { ...current };
+              delete next[eventChatId];
+              return next;
+            });
+            setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
+            if (activeChatIdRef.current === eventChatId) {
+              setLiveStatus(`Done in ${event.elapsedSeconds}s`);
+            }
             break;
           case "error":
-            setError(event.message || "Stream failed.");
-            setLiveStatus("Request failed");
+            setPendingTurns((current) => {
+              const next = { ...current };
+              delete next[eventChatId];
+              delete next[requestKey];
+              return next;
+            });
+            setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
+            if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
+              setError(event.message || "Stream failed.");
+              setLiveStatus("Request failed");
+            }
             break;
           default:
             break;
         }
       });
-
-      setDraft("");
     } catch (nextError) {
+      setPendingTurns((current) => {
+        const next = { ...current };
+        delete next[requestKey];
+        return next;
+      });
+      setSendingChatIds((current) => current.filter((chatId) => chatId !== requestKey));
       setError(String(nextError));
       setLiveStatus("Request failed");
-    } finally {
-      setPendingTurn((current) => {
-        if (!current) return current;
-        return current.assistantText ? current : null;
+    }
+  };
+
+  const handleNewChat = async (repoRoot = snapshot?.config?.repoRoot || "") => {
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/chats/new", { repoRoot });
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot);
+      syncSavedProjects(nextSnapshot.config.repoRoot);
+      void fetchProjectChats(nextSnapshot.config.repoRoot).catch(() => {});
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleActivateChat = async (chatId, repoRoot = snapshot?.config?.repoRoot || "") => {
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/chats/activate", { chatId, repoRoot });
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot);
+      syncSavedProjects(nextSnapshot.config.repoRoot);
+      void fetchProjectChats(nextSnapshot.config.repoRoot).catch(() => {});
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleDeleteChat = async (event, chatId, repoRoot = snapshot?.config?.repoRoot || "") => {
+    event.stopPropagation();
+    if (!window.confirm("Permanently delete this chat?")) return;
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/chats/delete", { chatId, repoRoot });
+      setSnapshot(nextSnapshot);
+      setPendingTurns((current) => {
+        const next = { ...current };
+        delete next[chatId];
+        return next;
       });
-      setBusy(false);
-    }
-  };
-
-  const handleNewChat = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const nextSnapshot = await postJson("/api/chats/new", {});
-      setSnapshot(nextSnapshot);
+      setSendingChatIds((current) => current.filter((id) => id !== chatId));
+      const normalizedRepoRoot = normalizeProject(repoRoot);
+      if (normalizedRepoRoot && normalizedRepoRoot !== activeRepoRoot) {
+        setProjectChats((current) => ({
+          ...current,
+          [normalizedRepoRoot]: (current[normalizedRepoRoot] || []).filter(
+            (chat) => chat.chatId !== chatId,
+          ),
+        }));
+      } else {
+        void fetchProjectChats(repoRoot).catch(() => {});
+      }
     } catch (nextError) {
       setError(String(nextError));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleActivateChat = async (chatId) => {
-    setBusy(true);
-    setError("");
-    try {
-      const nextSnapshot = await postJson("/api/chats/activate", { chatId });
-      setSnapshot(nextSnapshot);
-    } catch (nextError) {
-      setError(String(nextError));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -406,13 +610,65 @@ export default function App() {
     }
   };
 
+  const chatsForProject = (repoRoot) => {
+    const projectPath = normalizeProject(repoRoot);
+    if (projectPath === activeRepoRoot) {
+      return snapshot?.chats || [];
+    }
+    return projectChats[projectPath] || [];
+  };
+
   if (!snapshot) {
     return (
       <div className="boot-screen">
-        <div className="boot-card">
-          <span className="boot-mark">GPT TUI</span>
-          <h1>Loading desktop workspace</h1>
-          <p>{error || "Starting local backend and preparing the renderer..."}</p>
+        <div className="boot-container">
+          <div className="boot-main">
+            <div className="boot-glow"></div>
+            
+            <div className="boot-hex-wrap">
+              <div className="boot-hex">
+                <div className="boot-hex-inner"></div>
+              </div>
+            </div>
+            
+            <div className="boot-content">
+              <div className="boot-badge">{error ? "SYSTEM HALTED" : "BOOT PROTOCOL"}</div>
+              <h1 className="boot-title">{bootHeadline}</h1>
+              <p className="boot-subtitle">{bootMessage}</p>
+            </div>
+
+            <div className="boot-progress-wrap">
+              <div className="boot-progress-track">
+                <div 
+                  className="boot-progress-fill" 
+                  style={{ width: `${(completedBootSteps / bootSteps.length) * 100}%` }}
+                ></div>
+              </div>
+              <div className="boot-progress-labels">
+                <span className="boot-status-text">
+                  {error ? "Error" : bootSteps[completedBootSteps - 1] || "Initializing..."}
+                </span>
+                <span className="boot-percent">
+                  {Math.round((completedBootSteps / bootSteps.length) * 100)}%
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="boot-footer">
+            <div className="boot-footer-item">
+              <span className="label">RUNTIME</span>
+              <span className="value">v1.2.4-STABLE</span>
+            </div>
+            <div className="boot-footer-item">
+              <span className="label">ENVIRONMENT</span>
+              <span className="value">WDMX_CORE</span>
+            </div>
+            <div className="boot-footer-item">
+              <span className="label">VERSION</span>
+              <span className="value">0.9.2-BETA</span>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -438,89 +694,91 @@ export default function App() {
                 <div className="rail-empty">Add a folder or project to start exploring files.</div>
               )}
               {savedProjects.map((project) => (
-                <div
-                  key={project.path}
-                  className={
-                    project.path === snapshot.config.repoRoot ? "project-item active" : "project-item"
-                  }
-                >
-                  <button
-                    type="button"
-                    className="project-main"
-                    onClick={() => handleOpenSavedProject(project.path)}
-                    title={project.path}
+                <div key={project.path} className="project-group">
+                  <div
+                    className={
+                      project.path === snapshot.config.repoRoot ? "project-item active" : "project-item"
+                    }
                   >
-                    <span className="project-name">{project.name}</span>
-                    <span className="project-path">{project.path}</span>
-                  </button>
-                  <div className="project-menu-wrap" onClick={(event) => event.stopPropagation()}>
                     <button
                       type="button"
-                      className="project-menu-trigger"
-                      onClick={() =>
-                        setProjectMenuPath((current) => (current === project.path ? "" : project.path))
-                      }
+                      className="project-main"
+                      onClick={() => toggleRepo(project.path)}
+                      title={project.path}
                     >
-                      ...
+                      <span className="project-name">
+                        <span className={expandedRepos.has(project.path) ? "chevron-icon expanded" : "chevron-icon"}>›</span>{" "}
+                        {project.name}
+                      </span>
                     </button>
-                    {projectMenuPath === project.path && (
-                      <div className="project-menu">
-                        <button type="button" onClick={() => handleOpenSavedProject(project.path)}>
-                          Open
-                        </button>
-                        <button type="button" className="danger-action" onClick={() => handleRemoveSavedProject(project.path)}>
-                          Remove
+                    <div className="project-actions" onClick={(event) => event.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="project-action-btn"
+                        onClick={() => void handleNewChat(project.path)}
+                        title="New chat in project"
+                      >
+                        +
+                      </button>
+                      <div className="project-menu-wrap">
+                        <button
+                          type="button"
+                          className="project-menu-trigger"
+                          onClick={(event) => handleOpenMenu(event, project.path)}
+                        >
+                          ...
                         </button>
                       </div>
-                    )}
+                    </div>
                   </div>
+
+                  {expandedRepos.has(project.path) && (
+                    <div className="project-chat-list">
+                      {chatsForProject(project.path).length === 0 && <div className="rail-empty">No chats yet.</div>}
+                      {chatsForProject(project.path).map((chat) => {
+                        const showChatLoading =
+                          runningChatIds.includes(chat.chatId) || sendingChatIds.includes(chat.chatId);
+
+                        return (
+                          <div
+                            key={`${normalizeProject(project.path)}:${chat.chatId}`}
+                            className={
+                              chat.chatId === snapshot.config.activeChatId &&
+                              normalizeProject(project.path) === activeRepoRoot
+                                ? "chat-sidebar-row active"
+                                : "chat-sidebar-row"
+                            }
+                            onClick={() => handleActivateChat(chat.chatId, project.path)}
+                          >
+                            <button type="button" className="chat-sidebar-item" title={chat.title}>
+                              <span className="chat-dot"></span>
+                              <span className="chat-truncate">{chat.title || "Untitled chat"}</span>
+                            </button>
+                            {showChatLoading && <span className="chat-loading-spinner" aria-hidden="true"></span>}
+                            <button
+                              type="button"
+                              className="chat-delete-btn"
+                              onClick={(event) => handleDeleteChat(event, chat.chatId, project.path)}
+                              title="Delete chat"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
-            </div>
-          </div>
-
-          <div className="sidebar-section fill">
-            <div className="sidebar-label">Folders</div>
-            <div className="explorer-list">
-              {explorerEntries.length === 0 && (
-                <div className="rail-empty">No files available for this project.</div>
-              )}
-              {explorerEntries.map((entry) =>
-                entry.type === "folder" ? (
-                  <div
-                    key={entry.id}
-                    className="explorer-folder"
-                    style={{ paddingLeft: `${12 + entry.depth * 14}px` }}
-                  >
-                    {entry.name}
-                  </div>
-                ) : (
-                  <div
-                    key={entry.id}
-                    className="explorer-file"
-                    style={{ paddingLeft: `${12 + entry.depth * 14}px` }}
-                    title={relativePath(entry.absolutePath, snapshot.config.repoRoot)}
-                  >
-                    {entry.name}
-                  </div>
-                ),
-              )}
             </div>
           </div>
         </aside>
 
         <main className="chat-area">
           <header className="chat-topbar">
-            <div>
-              <div className="chat-title">{activeChat?.title || "New thread"}</div>
-              <div className="chat-subtitle">
-                {projectLabel(snapshot.config.repoRoot)} · {liveStatus}
-              </div>
-            </div>
-
-            <div className="topbar-actions">
+            <div className="topbar-left">
               <select
-                className="header-select"
+                className="header-thread-select"
                 value={snapshot.config.activeChatId || ""}
                 onChange={(event) => {
                   if (event.target.value) {
@@ -528,13 +786,17 @@ export default function App() {
                   }
                 }}
               >
-                <option value="">Current thread</option>
+                <option value="">New thread</option>
                 {snapshot.chats.map((chat) => (
                   <option key={chat.chatId} value={chat.chatId}>
                     {chat.title}
                   </option>
                 ))}
               </select>
+              <span className="project-badge">{projectLabel(snapshot.config.repoRoot)}</span>
+            </div>
+
+            <div className="topbar-right">
               <button type="button" className="secondary-button" onClick={handleNewChat}>
                 New chat
               </button>
@@ -546,7 +808,7 @@ export default function App() {
 
           {error && <div className="error-banner">{error}</div>}
 
-          <section className="conversation-scroll">
+          <section className="conversation-scroll" ref={scrollRef}>
             {displayMessages.length === 0 ? (
               <div className="conversation-empty">
                 <h2>Start a conversation</h2>
@@ -554,14 +816,26 @@ export default function App() {
               </div>
             ) : (
               displayMessages.map((message, index) => (
-                <article
+                <div
                   key={`${message.role}-${index}`}
-                  className={`message-card ${message.role}${message.pending ? " pending" : ""}`}
+                  className={`message-row ${message.role}${message.pending ? " pending" : ""}`}
                 >
-                  <div className="message-role">{message.role}</div>
-                  <pre>{String(message.content || "")}</pre>
-                </article>
+                  <div className="message-bubble">
+                    <div className="message-content">
+                      <pre>{String(message.content || "")}</pre>
+                    </div>
+                  </div>
+                </div>
               ))
+            )}
+            {activePendingTurn && (
+              <div className="message-row assistant">
+                <div className="thinking-dots">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
             )}
           </section>
 
@@ -569,6 +843,12 @@ export default function App() {
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void handleSend();
+                }
+              }}
               placeholder="Ask for changes, inspect the repo, or debug a file..."
             />
             <div className="composer-footer">
@@ -608,7 +888,12 @@ export default function App() {
                   ))}
                 </select>
               </div>
-              <button type="button" className="primary-button" onClick={handleSend} disabled={busy}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={handleSend}
+                disabled={Boolean(snapshot.config.activeChatId) && sendingChatIds.includes(snapshot.config.activeChatId)}
+              >
                 Send
               </button>
             </div>
@@ -698,6 +983,92 @@ export default function App() {
               >
                 Save workspace
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {projectMenuPath && (
+        <div
+          className="project-menu fixed-menu"
+          style={{
+            position: "fixed",
+            top: `${projectMenuPos.top}px`,
+            left: `${projectMenuPos.left}px`,
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              void handleOpenSavedProject(projectMenuPath);
+              setProjectMenuPath("");
+            }}
+          >
+            Open folder
+          </button>
+          <button
+            type="button"
+            className="danger-action"
+            onClick={() => {
+              void handleRemoveSavedProject(projectMenuPath);
+              setProjectMenuPath("");
+            }}
+          >
+            Remove from list
+          </button>
+        </div>
+      )}
+
+      {splashVisible && (
+        <div className={bootDismissed ? "boot-overlay fading" : "boot-overlay"}>
+          <div className="boot-container">
+            <div className="boot-main">
+              <div className="boot-glow"></div>
+              
+              <div className="boot-hex-wrap">
+                <div className="boot-hex">
+                  <div className="boot-hex-inner"></div>
+                </div>
+              </div>
+              
+              <div className="boot-content">
+                <div className="boot-badge">{error ? "SYSTEM HALTED" : "BOOT PROTOCOL"}</div>
+                <h1 className="boot-title">{bootHeadline}</h1>
+                <p className="boot-subtitle">{bootMessage}</p>
+              </div>
+
+              <div className="boot-progress-wrap">
+                <div className="boot-progress-track">
+                  <div 
+                    className="boot-progress-fill" 
+                    style={{ width: `${(completedBootSteps / bootSteps.length) * 100}%` }}
+                  ></div>
+                </div>
+                <div className="boot-progress-labels">
+                  <span className="boot-status-text">
+                    {error ? "Error" : bootSteps[completedBootSteps - 1] || "Finalizing..."}
+                  </span>
+                  <span className="boot-percent">
+                    {Math.round((completedBootSteps / bootSteps.length) * 100)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="boot-footer">
+              <div className="boot-footer-item">
+                <span className="label">RUNTIME</span>
+                <span className="value">v1.2.4-STABLE</span>
+              </div>
+              <div className="boot-footer-item">
+                <span className="label">WORKSPACE</span>
+                <span className="value">{snapshot?.config?.repoRoot ? projectLabel(snapshot.config.repoRoot) : "PENDING"}</span>
+              </div>
+              <div className="boot-footer-item">
+                <span className="label">ACCESS</span>
+                <span className="value">W-CLASS</span>
+              </div>
             </div>
           </div>
         </div>
