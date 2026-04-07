@@ -50,6 +50,7 @@ class ToolExecutor:
         self.hooks = hooks or ToolExecutorHooks()
         self._shell_service = ShellService(self.repo_root, shell_timeout_seconds)
         self.run_command = run_command or self._shell_service.run
+        self.read_only = False
 
     def set_repo_root(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
@@ -57,6 +58,16 @@ class ToolExecutor:
 
     def execute(self, name: str, args: dict[str, Any] | None) -> str:
         args = args or {}
+        if self.read_only and name in {
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "delete_path",
+            "rename_file",
+            "create_directory",
+            "run_terminal_command",
+        }:
+            return "ERROR: tool safety mode is read-only; mutating tools are blocked."
 
         if name == "write_file":
             return self._write_file(args)
@@ -317,6 +328,7 @@ class ToolsMixin:
                 hooks=hooks,
             )
         self._tool_executor.set_repo_root(self.files.repo_root)
+        self._tool_executor.read_only = bool(getattr(self, "tool_read_only", False))
         return self._tool_executor
 
     def _maybe_trim_context(self) -> None:

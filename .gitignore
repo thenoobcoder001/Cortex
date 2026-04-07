@@ -21,10 +21,11 @@ env/
 
 # Distribution / installer output
 installer/
+out/
 *.exe
 *.msi
-*.iss
 desktop_app/node_modules/
+desktop_app/dist/
 desktop_app/dist-backend/
 desktop_app/build-backend/
 desktop_app/web/dist/
@@ -48,3 +49,6 @@ htmlcov/
 # Logs
 *.log
 *.err.log
+
+# Local runtime state
+.gpt-tui/

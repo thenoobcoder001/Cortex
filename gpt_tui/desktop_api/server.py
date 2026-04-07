@@ -29,8 +29,11 @@ class ConfigUpdatePayload(BaseModel):
     model: str | None = None
     repoRoot: str | None = None
     apiKey: str | None = None
+    geminiApiKey: str | None = None
     promptPreset: str | None = None
     toolSafetyMode: str | None = None
+    assistantMemory: str | None = None
+    contextCarryMessages: int | None = None
 
 
 class ActivateChatPayload(BaseModel):
@@ -80,8 +83,11 @@ def update_config(payload: ConfigUpdatePayload) -> dict[str, Any]:
             model=payload.model,
             repo_root=payload.repoRoot,
             api_key=payload.apiKey,
+            gemini_api_key=payload.geminiApiKey,
             prompt_preset=payload.promptPreset,
             tool_safety_mode=payload.toolSafetyMode,
+            assistant_memory=payload.assistantMemory,
+            context_carry_messages=payload.contextCarryMessages,
         )
     except Exception as error:  # noqa: BLE001
         raise _http_error(error) from error

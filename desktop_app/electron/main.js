@@ -8,6 +8,11 @@ const http = require("node:http");
 let backendProcess = null;
 let backendUrl = null;
 let mainWindow = null;
+const EXTERNAL_EDITORS = {
+  vscode: { command: "code", label: "VS Code" },
+  antigravity: { command: "antigravity", label: "Antigravity" },
+  cursor: { command: "cursor", label: "Cursor" },
+};
 
 function repoRoot() {
   return path.resolve(__dirname, "..", "..");
@@ -125,6 +130,34 @@ function stopBackend() {
   backendProcess = null;
 }
 
+function launchDetached(command, args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      detached: true,
+      shell: process.platform === "win32",
+      stdio: "ignore",
+    });
+
+    let settled = false;
+    child.once("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(error);
+    });
+    child.once("spawn", () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.unref();
+      resolve();
+    });
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -161,6 +194,31 @@ ipcMain.handle("desktop:pick-repo", async () => {
     return null;
   }
   return result.filePaths[0];
+});
+
+ipcMain.handle("desktop:open-in-editor", async (_event, payload) => {
+  const repoRoot = String(payload?.repoRoot || "").trim();
+  const editorId = String(payload?.editor || "").trim().toLowerCase();
+  const editor = EXTERNAL_EDITORS[editorId];
+
+  if (!editor) {
+    throw new Error("Unsupported editor.");
+  }
+  if (!repoRoot) {
+    throw new Error("No project folder is selected.");
+  }
+
+  const targetPath = path.resolve(repoRoot);
+  if (!fs.existsSync(targetPath)) {
+    throw new Error("Selected project folder does not exist.");
+  }
+
+  try {
+    await launchDetached(editor.command, [targetPath], targetPath);
+    return { ok: true };
+  } catch {
+    throw new Error(`${editor.label} is not available. Install its CLI launcher or add it to PATH.`);
+  }
 });
 
 app.whenReady().then(async () => {
