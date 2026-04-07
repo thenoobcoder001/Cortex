@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const PROMPT_PRESETS = [
+  { value: "chat", label: "Chat" },
   { value: "code", label: "Code" },
   { value: "debug", label: "Debug" },
   { value: "refactor", label: "Refactor" },
@@ -10,6 +11,12 @@ const PROMPT_PRESETS = [
 const TOOL_SAFETY_OPTIONS = [
   { value: "write", label: "Write-enabled" },
   { value: "read", label: "Read-only" },
+];
+
+const EXTERNAL_EDITOR_OPTIONS = [
+  { id: "vscode", label: "VS Code" },
+  { id: "antigravity", label: "Antigravity" },
+  { id: "cursor", label: "Cursor" },
 ];
 
 const SAVED_PROJECTS_KEY = "gpt-tui.saved-projects";
@@ -22,6 +29,31 @@ function groupedModels(models) {
     grouped.set(model.group, items);
   }
   return [...grouped.entries()];
+}
+
+function parentModelLabel(modelId, modelGroups) {
+  for (const [group, items] of modelGroups) {
+    if (items.some((model) => model.id === modelId)) {
+      return group;
+    }
+  }
+  return "Model";
+}
+
+function providerStateForGroup(group, providers) {
+  if (group === "Gemini") {
+    return providers?.gemini || { available: false, connected: false };
+  }
+  if (group === "Gemini CLI") {
+    return providers?.geminiCli || { available: false, connected: false };
+  }
+  if (group === "Codex") {
+    return providers?.codex || { available: false, connected: false };
+  }
+  if (group === "Groq") {
+    return providers?.groq || { available: false, connected: false };
+  }
+  return { available: false, connected: false };
 }
 
 function stripPresetPrefix(text) {
@@ -146,10 +178,19 @@ export default function App() {
   const [liveStatus, setLiveStatus] = useState("Idle");
   const [pendingTurns, setPendingTurns] = useState({});
   const [sendingChatIds, setSendingChatIds] = useState([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [currentScreen, setCurrentScreen] = useState("chat");
   const [savedProjects, setSavedProjects] = useState(() => loadSavedProjects());
   const [projectMenuPath, setProjectMenuPath] = useState("");
   const [projectMenuPos, setProjectMenuPos] = useState({ top: 0, left: 0 });
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [hoveredModelGroup, setHoveredModelGroup] = useState("");
+  const [editorMenuOpen, setEditorMenuOpen] = useState(false);
+  const [groqApiKeyDraft, setGroqApiKeyDraft] = useState("");
+  const [geminiApiKeyDraft, setGeminiApiKeyDraft] = useState("");
+  const [assistantMemoryDraft, setAssistantMemoryDraft] = useState("");
+  const [contextCarryMessagesDraft, setContextCarryMessagesDraft] = useState("5");
+  const [settingsPromptPreset, setSettingsPromptPreset] = useState("code");
+  const [settingsToolSafetyMode, setSettingsToolSafetyMode] = useState("write");
   const [bootPhase, setBootPhase] = useState(0);
   const [bootMinElapsed, setBootMinElapsed] = useState(false);
   const [bootDismissed, setBootDismissed] = useState(false);
@@ -223,6 +264,18 @@ export default function App() {
     }
   }, [snapshot?.config?.repoRoot]);
 
+  useEffect(() => {
+    if (!snapshot?.config) {
+      return;
+    }
+    setGroqApiKeyDraft(snapshot.config.apiKey || "");
+    setGeminiApiKeyDraft(snapshot.config.geminiApiKey || "");
+    setAssistantMemoryDraft(snapshot.config.assistantMemory || "");
+    setContextCarryMessagesDraft(String(snapshot.config.contextCarryMessages ?? 5));
+    setSettingsPromptPreset(snapshot.config.promptPreset || "code");
+    setSettingsToolSafetyMode(snapshot.config.toolSafetyMode || "write");
+  }, [snapshot?.config]);
+
   const toggleRepo = (repoPath) => {
     setExpandedRepos((prev) => {
       const next = new Set(prev);
@@ -237,6 +290,7 @@ export default function App() {
 
   const handleOpenMenu = (event, path) => {
     event.stopPropagation();
+    setEditorMenuOpen(false);
     const rect = event.currentTarget.getBoundingClientRect();
     if (projectMenuPath === path) {
       setProjectMenuPath("");
@@ -246,7 +300,36 @@ export default function App() {
     }
   };
 
+  const toggleModelMenu = (event) => {
+    event.stopPropagation();
+    setEditorMenuOpen(false);
+    if (!modelGroups.length) {
+      return;
+    }
+    const nextOpen = !modelMenuOpen;
+    setModelMenuOpen(nextOpen);
+    if (!nextOpen) {
+      setHoveredModelGroup("");
+      return;
+    }
+    const preferredGroup = modelGroupStates.get(activeModelParent)?.connected
+      ? activeModelParent
+      : modelGroups.find(([group]) => modelGroupStates.get(group)?.connected)?.[0] || activeModelParent;
+    setHoveredModelGroup(preferredGroup);
+  };
+
   const modelGroups = useMemo(() => groupedModels(snapshot?.models || []), [snapshot]);
+  const modelGroupStates = useMemo(
+    () =>
+      new Map(
+        modelGroups.map(([group]) => [group, providerStateForGroup(group, snapshot?.providers || {})]),
+      ),
+    [modelGroups, snapshot?.providers],
+  );
+  const activeModelParent = useMemo(
+    () => parentModelLabel(snapshot?.config?.model || "", modelGroups),
+    [modelGroups, snapshot?.config?.model],
+  );
   const activeChat = useMemo(
     () => snapshot?.chats?.find((chat) => chat.chatId === snapshot?.config?.activeChatId) || null,
     [snapshot],
@@ -390,6 +473,35 @@ export default function App() {
       void fetchProjectChats(nextSnapshot.config.repoRoot).catch(() => {});
     } catch (nextError) {
       setError(String(nextError));
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    await handleConfigUpdate({
+      repoRoot: repoDraft,
+      apiKey: groqApiKeyDraft,
+      geminiApiKey: geminiApiKeyDraft,
+      promptPreset: settingsPromptPreset,
+      toolSafetyMode: settingsToolSafetyMode,
+      assistantMemory: assistantMemoryDraft,
+      contextCarryMessages: Number.parseInt(contextCarryMessagesDraft || "5", 10) || 0,
+    });
+  };
+
+  const handleOpenInEditor = async (editorId) => {
+    const repoRoot = snapshot?.config?.repoRoot || "";
+    if (!repoRoot) {
+      setError("Select a project folder first.");
+      setEditorMenuOpen(false);
+      return;
+    }
+    setError("");
+    try {
+      await window.desktopApi?.openInEditor?.(editorId, repoRoot);
+      setEditorMenuOpen(false);
+    } catch (nextError) {
+      setError(String(nextError));
+      setEditorMenuOpen(false);
     }
   };
 
@@ -674,9 +786,143 @@ export default function App() {
     );
   }
 
+  if (currentScreen === "settings") {
+    return (
+      <div className="settings-screen">
+        <div className="settings-page">
+          <header className="settings-page-header">
+            <div className="settings-page-heading">
+              <button type="button" className="secondary-button settings-back" onClick={() => setCurrentScreen("chat")}>
+                Back
+              </button>
+              <div>
+                <div className="settings-title">Settings</div>
+                <div className="settings-subtitle">Provider access, memory, and workspace behavior</div>
+              </div>
+            </div>
+            <button type="button" className="primary-button" onClick={handleSaveSettings}>
+              Save settings
+            </button>
+          </header>
+
+          {error && <div className="error-banner">{error}</div>}
+
+          <div className="settings-page-grid">
+            <section className="settings-section-card">
+              <div className="settings-block-title">Workspace</div>
+              <label className="field">
+                <span>Repo root</span>
+                <div className="field-row">
+                  <input
+                    value={repoDraft}
+                    onChange={(event) => setRepoDraft(event.target.value)}
+                    placeholder="E:\\path\\to\\repo"
+                  />
+                  <button type="button" onClick={handlePickRepo}>
+                    Browse
+                  </button>
+                </div>
+              </label>
+              <label className="field">
+                <span>Default mode</span>
+                <select value={settingsPromptPreset} onChange={(event) => setSettingsPromptPreset(event.target.value)}>
+                  {PROMPT_PRESETS.map((preset) => (
+                    <option key={preset.value} value={preset.value}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Tool safety</span>
+                <select
+                  value={settingsToolSafetyMode}
+                  onChange={(event) => setSettingsToolSafetyMode(event.target.value)}
+                >
+                  {TOOL_SAFETY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+
+            <section className="settings-section-card">
+              <div className="settings-block-title">Memory</div>
+              <label className="field">
+                <span>Assistant memory</span>
+                <textarea
+                  className="settings-textarea"
+                  value={assistantMemoryDraft}
+                  onChange={(event) => setAssistantMemoryDraft(event.target.value)}
+                  placeholder="Add stable preferences, project conventions, names, or behavior notes to pass as persistent context."
+                />
+              </label>
+              <label className="field">
+                <span>Cross-model context carry</span>
+                <input
+                  value={contextCarryMessagesDraft}
+                  onChange={(event) => setContextCarryMessagesDraft(event.target.value.replace(/[^\d]/g, ""))}
+                  placeholder="5"
+                />
+              </label>
+            </section>
+
+            <section className="settings-section-card">
+              <div className="settings-block-title">Provider Keys</div>
+              <label className="field">
+                <span>Groq API key</span>
+                <input
+                  type="password"
+                  value={groqApiKeyDraft}
+                  onChange={(event) => setGroqApiKeyDraft(event.target.value)}
+                  placeholder="gsk_..."
+                />
+              </label>
+              <label className="field">
+                <span>Gemini API key</span>
+                <input
+                  type="password"
+                  value={geminiApiKeyDraft}
+                  onChange={(event) => setGeminiApiKeyDraft(event.target.value)}
+                  placeholder="AIza..."
+                />
+              </label>
+            </section>
+
+            <section className="settings-section-card settings-section-wide">
+              <div className="settings-block-title">Providers</div>
+              <div className="provider-grid">
+                {Object.entries(snapshot.providers).map(([providerId, provider]) => (
+                  <div key={providerId} className="provider-card">
+                    <span className="provider-name">{providerId}</span>
+                    <span className={provider.available ? "provider-ok" : "provider-muted"}>
+                      {provider.available ? "available" : "missing"}
+                    </span>
+                    <span className={provider.connected ? "provider-ok" : "provider-muted"}>
+                      {provider.connected ? "ready" : "not ready"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      <div className="workspace-shell" onClick={() => setProjectMenuPath("")}>
+      <div
+        className="workspace-shell"
+        onClick={() => {
+          setProjectMenuPath("");
+          setModelMenuOpen(false);
+          setEditorMenuOpen(false);
+        }}
+      >
         <aside className="sidebar">
           <div className="sidebar-section">
             <div className="sidebar-heading-row">
@@ -797,10 +1043,32 @@ export default function App() {
             </div>
 
             <div className="topbar-right">
+              <div className="header-menu-wrap" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className="secondary-button header-menu-trigger"
+                  onClick={() => setEditorMenuOpen((current) => !current)}
+                >
+                  Open in
+                </button>
+                {editorMenuOpen && (
+                  <div className="header-menu">
+                    {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
+                      <button
+                        key={editor.id}
+                        type="button"
+                        onClick={() => void handleOpenInEditor(editor.id)}
+                      >
+                        {editor.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button type="button" className="secondary-button" onClick={handleNewChat}>
                 New chat
               </button>
-              <button type="button" className="secondary-button" onClick={() => setSettingsOpen(true)}>
+              <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
                 Settings
               </button>
             </div>
@@ -853,40 +1121,82 @@ export default function App() {
             />
             <div className="composer-footer">
               <div className="composer-controls">
-                <select
-                  value={snapshot.config.model}
-                  onChange={(event) => handleConfigUpdate({ model: event.target.value })}
+                <div
+                  className="model-picker"
+                  onMouseLeave={() => {
+                    if (modelMenuOpen) {
+                      setHoveredModelGroup(activeModelParent);
+                    }
+                  }}
                 >
-                  {modelGroups.map(([group, items]) => (
-                    <optgroup key={group} label={group}>
-                      {items.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.id}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <select
-                  value={snapshot.config.promptPreset}
-                  onChange={(event) => handleConfigUpdate({ promptPreset: event.target.value })}
-                >
-                  {PROMPT_PRESETS.map((preset) => (
-                    <option key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={snapshot.config.toolSafetyMode}
-                  onChange={(event) => handleConfigUpdate({ toolSafetyMode: event.target.value })}
-                >
-                  {TOOL_SAFETY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  <button
+                    type="button"
+                    className="model-picker-trigger"
+                    title={snapshot.config.model}
+                    onClick={toggleModelMenu}
+                  >
+                    <span>{activeModelParent}</span>
+                    <span className={modelMenuOpen ? "model-picker-caret open" : "model-picker-caret"}>{">"}</span>
+                  </button>
+                  {modelMenuOpen && (
+                    <>
+                    <div className="model-picker-menu" onClick={(event) => event.stopPropagation()}>
+                      <div className="model-group-list">
+                        {modelGroups.map(([group, items]) => (
+                          <button
+                            key={group}
+                            type="button"
+                            className={
+                              !modelGroupStates.get(group)?.connected
+                                ? "model-group-item disabled"
+                                : hoveredModelGroup === group
+                                  ? "model-group-item active"
+                                  : "model-group-item"
+                            }
+                            disabled={!modelGroupStates.get(group)?.connected}
+                            onMouseEnter={() => setHoveredModelGroup(group)}
+                            onFocus={() => setHoveredModelGroup(group)}
+                            title={
+                              modelGroupStates.get(group)?.connected
+                                ? group
+                                : `${group} is not ready`
+                            }
+                          >
+                            <span>{group}</span>
+                            <span className="model-group-arrow">
+                              {modelGroupStates.get(group)?.connected ? ">" : "!"}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="model-submenu-flyout" onClick={(event) => event.stopPropagation()}>
+                      <div className="model-submenu">
+                        {(
+                          modelGroups.find(([group]) => group === hoveredModelGroup) ||
+                          modelGroups.find(([group]) => modelGroupStates.get(group)?.connected) ||
+                          [null, []]
+                        )[1].map((model) => (
+                          <button
+                            key={model.id}
+                            type="button"
+                            className={snapshot.config.model === model.id ? "model-subitem active" : "model-subitem"}
+                            title={model.label}
+                            onClick={() => {
+                              setModelMenuOpen(false);
+                              setHoveredModelGroup("");
+                              void handleConfigUpdate({ model: model.id });
+                            }}
+                          >
+                            <span className="model-subitem-name">{model.id.replace(/^codex:|^gemini-cli:/, "")}</span>
+                            <span className="model-subitem-meta">{model.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    </>
+                  )}
+                </div>
               </div>
               <button
                 type="button"
@@ -900,93 +1210,6 @@ export default function App() {
           </div>
         </main>
       </div>
-
-      {settingsOpen && (
-        <div className="settings-overlay" onClick={() => setSettingsOpen(false)}>
-          <div className="settings-dialog" onClick={(event) => event.stopPropagation()}>
-            <div className="settings-header">
-              <div>
-                <div className="settings-title">Settings</div>
-                <div className="settings-subtitle">Workspace and runtime configuration</div>
-              </div>
-              <button type="button" className="secondary-button" onClick={() => setSettingsOpen(false)}>
-                Close
-              </button>
-            </div>
-
-            <div className="settings-grid">
-              <label className="field">
-                <span>Repo root</span>
-                <div className="field-row">
-                  <input
-                    value={repoDraft}
-                    onChange={(event) => setRepoDraft(event.target.value)}
-                    placeholder="E:\\path\\to\\repo"
-                  />
-                  <button type="button" onClick={handlePickRepo}>
-                    Browse
-                  </button>
-                </div>
-              </label>
-
-              <label className="field">
-                <span>Prompt preset</span>
-                <select
-                  value={snapshot.config.promptPreset}
-                  onChange={(event) => handleConfigUpdate({ promptPreset: event.target.value })}
-                >
-                  {PROMPT_PRESETS.map((preset) => (
-                    <option key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Tool safety</span>
-                <select
-                  value={snapshot.config.toolSafetyMode}
-                  onChange={(event) => handleConfigUpdate({ toolSafetyMode: event.target.value })}
-                >
-                  {TOOL_SAFETY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="settings-block">
-                <div className="settings-block-title">Providers</div>
-                <div className="provider-grid">
-                  {Object.entries(snapshot.providers).map(([providerId, provider]) => (
-                    <div key={providerId} className="provider-card">
-                      <span className="provider-name">{providerId}</span>
-                      <span className={provider.available ? "provider-ok" : "provider-muted"}>
-                        {provider.available ? "available" : "missing"}
-                      </span>
-                      <span className={provider.connected ? "provider-ok" : "provider-muted"}>
-                        {provider.connected ? "ready" : "not ready"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="settings-actions">
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => handleConfigUpdate({ repoRoot: repoDraft })}
-              >
-                Save workspace
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {projectMenuPath && (
         <div

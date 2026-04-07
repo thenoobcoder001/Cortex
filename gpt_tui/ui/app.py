@@ -60,6 +60,7 @@ from gpt_tui.providers.codex_provider import CodexProvider
 from gpt_tui.providers.gemini_cli_provider import GeminiCliProvider
 from gpt_tui.providers.gemini_provider import GeminiProvider
 from gpt_tui.providers.groq_provider import GroqProvider
+from gpt_tui.services.chat_store import ProjectChatStore
 from gpt_tui.services.file_service import RepoFileService
 
 from gpt_tui.ui.constants import (
@@ -320,6 +321,51 @@ class GptTuiApp(ToolsMixin, App[None]):
         width: 1fr;
     }
 
+    #chat_sessions_header {
+        height: auto;
+        background: #13161e;
+        padding: 0 1;
+        border-bottom: solid #1c2030;
+    }
+
+    #chat_sessions_label {
+        color: #7ad97a;
+        text-style: bold;
+        width: 1fr;
+    }
+
+    #chat_sessions_scroller {
+        height: 24%;
+        background: #0f131a;
+        padding: 0 1;
+        border-bottom: solid #1c2030;
+    }
+
+    #chat_sessions_list {
+        height: auto;
+    }
+
+    .chat_session_btn {
+        width: 100%;
+        background: transparent;
+        color: #8a97a6;
+        border: none;
+        text-align: left;
+        padding: 0 1;
+        min-height: 1;
+    }
+
+    .chat_session_btn:hover {
+        color: #e8f0fa;
+        background: #1c2030;
+    }
+
+    .chat_session_btn.-active {
+        color: #e8f0fa;
+        background: #20283a;
+        text-style: bold;
+    }
+
     .sidebar_icon_btn {
         min-width: 7;
         background: transparent;
@@ -340,7 +386,7 @@ class GptTuiApp(ToolsMixin, App[None]):
 
     /* file tree */
     #file_tree {
-        height: 34%;
+        height: 26%;
         background: transparent;
         padding: 0 1;
         border-bottom: solid #1c2030;
@@ -454,7 +500,7 @@ class GptTuiApp(ToolsMixin, App[None]):
             # Sidebar
             with Vertical(id="sidebar"):
                 with Horizontal(id="sidebar_header"):
-                    yield Static("FILES", id="panel_title")
+                    yield Static("PROJECT", id="panel_title")
                     yield Button("RES", id="resume_btn", classes="sidebar_icon_btn")
                     yield Button("NEW", id="new_chat_btn", classes="sidebar_icon_btn")
                     yield Button("STR", id="copy_stream_btn", classes="sidebar_icon_btn")
@@ -466,6 +512,11 @@ class GptTuiApp(ToolsMixin, App[None]):
                     yield Button("GEM", id="model_q_gem", classes="model_opt_btn")
                     yield Button("GROQ", id="model_q_groq", classes="model_opt_btn")
                     yield Button("CODEX", id="model_q_codex", classes="model_opt_btn")
+                with Horizontal(id="chat_sessions_header"):
+                    yield Static("CHATS", id="chat_sessions_label")
+                with VerticalScroll(id="chat_sessions_scroller"):
+                    with Vertical(id="chat_sessions_list"):
+                        yield Static("[dim]No chats yet.[/]", id="chat_sessions_empty")
                 yield DirectoryTree(str(Path.cwd()), id="file_tree")
                 with Horizontal(id="console_header"):
                     yield Static("CONSOLE", id="console_label")
@@ -493,6 +544,9 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._last_turn_seconds: float = 0.0
         self._last_turn_chars: int = 0
         self._last_turn_tools: int = 0
+        self._chat_button_to_id: dict[str, str] = {}
+        self.active_chat_id: str = self.config.active_chat_id.strip()
+        self.chat_store = ProjectChatStore(repo_root=repo_root)
 
         # Providers
         groq_key   = self.config.api_key.strip() or os.getenv("GROQ_API_KEY", "").strip()
@@ -515,28 +569,17 @@ class GptTuiApp(ToolsMixin, App[None]):
         self.provider = self._provider_for_model(self.model)
 
         # Conversation history
-        self.messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a coding assistant running inside a Windows terminal app. "
-                    "You have full access to the file system via tools. "
-                    "Use write_file to create or edit files, read_file to read them, "
-                    "and list_files to explore the project. "
-                    "Always use tools when the user asks to save, create, edit, or read files. "
-                    "Keep explanations concise."
-                ),
-            }
-        ]
+        self.messages: list[dict[str, Any]] = [self._base_system_message()]
+        self._restore_or_create_chat_session()
 
         self._refresh_header()
 
         # Welcome banner
-        log = self.query_one("#chat_log", VerticalScroll)
-        log.mount(Static(WELCOME_ART, classes="welcome_art"))
-        self._log_system(WELCOME_MSG)
+        if not self._has_visible_chat_turns():
+            log = self.query_one("#chat_log", VerticalScroll)
+            log.mount(Static(WELCOME_ART, classes="welcome_art"))
+            self._log_system(WELCOME_MSG)
 
-        ts = self._timestamp()
         if not self.provider.connected:
             if self.model.startswith("codex:"):
                 self._log_system("Codex CLI not found. Install codex CLI or pick Gemini/Groq.")
@@ -569,15 +612,7 @@ class GptTuiApp(ToolsMixin, App[None]):
     def action_pick_model(self) -> None:
         def handle_pick(model: str | None) -> None:
             if model:
-                self.model = model
-                self.config.model = model
-                self.config.save()
-                self.provider = self._provider_for_model(model)
-                self._refresh_header()
-                pname = self._provider_name_for_model(model)
-                self._log_system(
-                    f"Switched to [bold #5ec4ff]{model}[/] ({pname})"
-                )
+                self._switch_model_quick(model)
         self.push_screen(ModelPickerModal(self.model), handle_pick)
 
     def action_focus_prompt(self)  -> None: self.query_one("#prompt", ChatInput).focus()
@@ -591,10 +626,12 @@ class GptTuiApp(ToolsMixin, App[None]):
     def action_clear_chat(self) -> None:
         log = self.query_one("#chat_log", VerticalScroll)
         log.query("*").remove()
-        self.messages = [self.messages[0]]
+        self.messages = [self._base_system_message()]
         self._last_stream_text = ""
         self._last_console_text = ""
         self.query_one("#codex_console", Static).update("")
+        self._save_active_chat()
+        self._refresh_chat_sessions()
         self._log_system("Chat cleared.")
 
     def action_copy_last(self) -> None:
@@ -621,10 +658,22 @@ class GptTuiApp(ToolsMixin, App[None]):
         self.config.model = model
         self.config.save()
         self.provider = self._provider_for_model(model)
+        self._save_active_chat()
+        self._refresh_chat_sessions()
         self._refresh_header()
         pname = self._provider_name_for_model(model)
+        chat_turns = sum(
+            1
+            for m in self.messages
+            if str(m.get("role", "")).strip() in {"user", "assistant"}
+        )
         self._set_status(f"Model switched to {model}")
-        self._log_system(f"Switched to [bold #5ec4ff]{model}[/] ({pname})")
+        if chat_turns:
+            self._log_system(
+                f"Switched to [bold #5ec4ff]{model}[/] ({pname}); existing chat context retained."
+            )
+        else:
+            self._log_system(f"Switched to [bold #5ec4ff]{model}[/] ({pname})")
 
     def _cycle_codex_model(self) -> None:
         codex_ids = [m for m, _ in CODEX_MODELS]
@@ -659,6 +708,8 @@ class GptTuiApp(ToolsMixin, App[None]):
             return
         self._log_user(text)
         self.messages.append({"role": "user", "content": text})
+        self._save_active_chat()
+        self._refresh_chat_sessions()
 
         self._set_status("Thinking...")
         self.ask_model()
@@ -693,6 +744,10 @@ class GptTuiApp(ToolsMixin, App[None]):
         elif event.button.id == "model_q_codex":
             self._cycle_codex_model()
             self._flash_button_label(event.button, "Active", "CODEX")
+        elif event.button.id and event.button.id.startswith("chat_item_"):
+            chat_id = self._chat_button_to_id.get(event.button.id, "")
+            if chat_id:
+                self._open_chat_session(chat_id)
         elif event.button.id == "preview_close":
             self.query_one("#file_preview", RichLog).clear()
             self.query_one("#preview_label", Static).update("PREVIEW")
@@ -805,12 +860,7 @@ class GptTuiApp(ToolsMixin, App[None]):
             if not m:
                 self._log_system("Usage: /model <name>")
                 return
-            self.model = m
-            self.config.model = m
-            self.config.save()
-            self.provider = self._provider_for_model(m)
-            self._refresh_header()
-            self._log_system(f"Model switched to: [bold]{m}[/]")
+            self._switch_model_quick(m)
         elif text == "/repo":
             self._log_system(f"Repo root: [bold]{self.files.repo_root}[/]")
         elif text.startswith("/repo "):
@@ -855,11 +905,19 @@ class GptTuiApp(ToolsMixin, App[None]):
             return
         self.codex_provider.set_repo_root(self.files.repo_root)
         self.gemini_cli_provider.set_repo_root(self.files.repo_root)
+        self.chat_store.set_repo_root(self.files.repo_root)
+        self.active_chat_id = ""
         self.config.repo_root = str(self.files.repo_root)
+        self.config.active_chat_id = ""
         self.config.save()
         tree = self.query_one("#file_tree", DirectoryTree)
         tree.path = self.files.repo_root
         tree.reload()
+        self._restore_or_create_chat_session()
+        if not self._has_visible_chat_turns():
+            log = self.query_one("#chat_log", VerticalScroll)
+            log.mount(Static(WELCOME_ART, classes="welcome_art"))
+            self._log_system(WELCOME_MSG)
         self._refresh_header()
         self._set_status("Repo updated.")
 
@@ -945,11 +1003,15 @@ class GptTuiApp(ToolsMixin, App[None]):
         self._log_system("[green]â—[/] Stream output copied to clipboard!")
 
     def _cmd_new_chat(self) -> None:
-        self.action_clear_chat()
+        self._create_new_chat_session()
         self.gemini_cli_provider.session_mode = "fresh"
         self.gemini_cli_provider.session_id = ""
         self.config.gemini_session_id = ""
         self.config.save()
+        if not self._has_visible_chat_turns():
+            log = self.query_one("#chat_log", VerticalScroll)
+            log.mount(Static(WELCOME_ART, classes="welcome_art"))
+            self._log_system(WELCOME_MSG)
         self._log_system("Started a fresh chat session (no resume).")
         self._refresh_header()
 
@@ -1059,6 +1121,149 @@ class GptTuiApp(ToolsMixin, App[None]):
             return
         self._show_preview(file_path)
         self._log_system(f"Loaded into preview: [bold]{file_path.name}[/]")
+
+    def _base_system_message(self) -> dict[str, str]:
+        return {
+            "role": "system",
+            "content": (
+                "You are a coding assistant running inside a Windows terminal app. "
+                "You have full access to the file system via tools. "
+                "Use write_file to create or edit files, read_file to read them, "
+                "and list_files to explore the project. "
+                "Always use tools when the user asks to save, create, edit, or read files. "
+                "Keep explanations concise."
+            ),
+        }
+
+    def _has_visible_chat_turns(self) -> bool:
+        return any(
+            str(m.get("role", "")).strip() in {"user", "assistant"}
+            and bool(str(m.get("content", "")).strip())
+            for m in self.messages
+        )
+
+    def _render_chat_messages(self) -> None:
+        log = self.query_one("#chat_log", VerticalScroll)
+        log.query("*").remove()
+        for msg in self.messages:
+            role = str(msg.get("role", "")).strip()
+            content = str(msg.get("content", "")).strip()
+            if not content:
+                continue
+            if role == "user":
+                self._mount_message("you", content, "msg_user")
+            elif role == "assistant":
+                self._mount_message("assistant", content, "msg_assistant")
+
+    def _format_chat_button_label(self, title: str, updated_at: str) -> str:
+        clean_title = (title or "New chat").strip()
+        if len(clean_title) > 36:
+            clean_title = clean_title[:36].rstrip() + "..."
+        stamp = updated_at.replace("T", " ").strip()
+        if len(stamp) >= 16:
+            stamp = stamp[:16]
+        return f"{clean_title}  ({stamp})" if stamp else clean_title
+
+    def _refresh_chat_sessions(self) -> None:
+        container = self.query_one("#chat_sessions_list", Vertical)
+        container.query("*").remove()
+        self._chat_button_to_id = {}
+
+        sessions = self.chat_store.list_chats()
+        if not sessions:
+            container.mount(Static("[dim]No chats yet.[/]", id="chat_sessions_empty"))
+            return
+
+        for idx, meta in enumerate(sessions):
+            btn_id = f"chat_item_{idx}"
+            self._chat_button_to_id[btn_id] = meta.chat_id
+            btn = Button(
+                self._format_chat_button_label(meta.title, meta.updated_at),
+                id=btn_id,
+                classes="chat_session_btn",
+            )
+            if meta.chat_id == self.active_chat_id:
+                btn.add_class("-active")
+            container.mount(btn)
+
+    def _save_active_chat(self) -> None:
+        if not self.active_chat_id:
+            return
+        try:
+            self.chat_store.save_chat(self.active_chat_id, self.messages, model=self.model)
+        except OSError:
+            return
+
+    def _create_new_chat_session(self) -> None:
+        self.messages = [self._base_system_message()]
+        self.active_chat_id = self.chat_store.create_chat(self.messages, self.model)
+        self.config.active_chat_id = self.active_chat_id
+        self.config.save()
+        self._render_chat_messages()
+        self._refresh_chat_sessions()
+
+    def _restore_or_create_chat_session(self) -> None:
+        loaded = False
+
+        if self.active_chat_id:
+            payload = self.chat_store.load_chat(self.active_chat_id)
+            if payload and isinstance(payload.get("messages"), list):
+                self.messages = payload["messages"]
+                loaded = True
+
+        if not loaded:
+            sessions = self.chat_store.list_chats()
+            for meta in sessions:
+                payload = self.chat_store.load_chat(meta.chat_id)
+                if payload and isinstance(payload.get("messages"), list):
+                    self.active_chat_id = meta.chat_id
+                    self.messages = payload["messages"]
+                    loaded = True
+                    break
+
+        if not loaded:
+            self.messages = [self._base_system_message()]
+            self.active_chat_id = self.chat_store.create_chat(self.messages, self.model)
+
+        if not self.messages:
+            self.messages = [self._base_system_message()]
+        if str(self.messages[0].get("role", "")).strip() != "system":
+            self.messages = [self._base_system_message(), *self.messages]
+
+        self.config.active_chat_id = self.active_chat_id
+        self.config.save()
+        self._render_chat_messages()
+        self._refresh_chat_sessions()
+
+    def _open_chat_session(self, chat_id: str) -> None:
+        if not chat_id or chat_id == self.active_chat_id:
+            return
+        self._save_active_chat()
+
+        payload = self.chat_store.load_chat(chat_id)
+        if not payload or not isinstance(payload.get("messages"), list):
+            self._log_system("[red]●[/] Chat not found on disk.")
+            self._refresh_chat_sessions()
+            return
+
+        loaded_messages = payload.get("messages", [])
+        if not loaded_messages:
+            loaded_messages = [self._base_system_message()]
+        if str(loaded_messages[0].get("role", "")).strip() != "system":
+            loaded_messages = [self._base_system_message(), *loaded_messages]
+
+        self.messages = loaded_messages
+        self.active_chat_id = chat_id
+        self.config.active_chat_id = chat_id
+        self.config.save()
+        self._render_chat_messages()
+        if not self._has_visible_chat_turns():
+            log = self.query_one("#chat_log", VerticalScroll)
+            log.mount(Static(WELCOME_ART, classes="welcome_art"))
+            self._log_system(WELCOME_MSG)
+        self._refresh_chat_sessions()
+        self._refresh_header()
+        self._set_status("Loaded chat from sidebar.")
 
     # â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _initial_repo_root(self) -> Path:
@@ -1339,6 +1544,8 @@ class GptTuiApp(ToolsMixin, App[None]):
                 self._last_code_block = blocks[-1]
             self.messages = working_msgs
             self.messages.append({"role": "assistant", "content": final_text})
+            self._save_active_chat()
+            self.call_from_thread(self._refresh_chat_sessions)
             self.call_from_thread(self._log_assistant, final_text)
             self.call_from_thread(self._refresh_header)
             self.call_from_thread(self._set_status, "Done.")
@@ -1382,6 +1589,8 @@ class GptTuiApp(ToolsMixin, App[None]):
                         reply = self.provider.chat_completion(working_msgs, self.model)
                         self.messages = working_msgs
                         self.messages.append({"role": "assistant", "content": reply})
+                        self._save_active_chat()
+                        self.call_from_thread(self._refresh_chat_sessions)
                         self.call_from_thread(self._log_assistant, reply)
                         self.call_from_thread(
                             self._log_system,
@@ -1414,6 +1623,8 @@ class GptTuiApp(ToolsMixin, App[None]):
                     self._last_code_block = blocks[-1]
                 self.messages = working_msgs
                 self.messages.append({"role": "assistant", "content": final_text})
+                self._save_active_chat()
+                self.call_from_thread(self._refresh_chat_sessions)
                 elapsed = time.monotonic() - started
                 self._record_turn_stats(elapsed, final_text, used_tools)
                 self.call_from_thread(self._log_assistant, final_text)

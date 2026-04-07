@@ -59,31 +59,49 @@ python app.py
 ## Project structure
 
 ```text
+app.py
+desktop_backend.py
+desktop_app/
+  electron/
+  web/
+docs/
+  help.txt
+  instructions.md
 gpt_tui/
   config.py
-  main.py
+  desktop_api/
   providers/
-    groq_provider.py
   services/
-    file_service.py
   ui/
-    app.py
-app.py
+packaging/
+  inno/
+    installer.iss
+  pyinstaller/
+    gpt-tui.spec
+    gpt-tui-backend.spec
+scripts/
+  build-tui.ps1
+  build-installer.ps1
+tests/
+debug/
+  manual-tests/
+  recovered-files/
+  scratch/
 ```
 
 ## Build Windows app (.exe)
 
 ```powershell
 cd E:\codex\gpt-tui
-powershell -ExecutionPolicy Bypass -File .\build.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-tui.ps1
 ```
 
 Output:
-- `dist\gpt-tui.exe`
+- `out\dist\gpt-tui.exe`
 
 Run packaged app:
 ```powershell
-.\dist\gpt-tui.exe
+.\out\dist\gpt-tui.exe
 ```
 
 Or use launcher:
@@ -103,11 +121,11 @@ Prerequisite:
 Build installer:
 ```powershell
 cd E:\codex\gpt-tui
-powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
 ```
 
 Output:
-- `installer\gpt-tui-setup.exe`
+- `out\installer\gpt-tui-setup.exe`
 
 The installer creates:
 - Start Menu shortcut
@@ -121,7 +139,7 @@ This repo now also contains a desktop conversion scaffold in `desktop_app/`:
 - Python backend API in `gpt_tui/desktop_api`
 - React renderer in `desktop_app/web`
 - Electron shell in `desktop_app/electron`
-- PyInstaller backend entry in `desktop_backend.py`
+- PyInstaller specs in `packaging/pyinstaller`
 
 Development flow:
 
@@ -160,3 +178,11 @@ That build does three things:
 - Gemini CLI and Codex CLI depend on local terminal/auth state; backend capacity and auth errors can be intermittent.
 - In-terminal mouse selection depends on your terminal emulator and alternate-screen behavior; use in-app copy commands as fallback.
 - Live provider tests can be flaky when network/provider limits are hit; use `scripts/smoke_test.ps1` for baseline validation.
+
+## Repo hygiene
+
+- `packaging/` contains installer and PyInstaller assets.
+- `scripts/` contains build entrypoints instead of root-level PowerShell files.
+- `docs/` contains text documentation that used to live at the repo root.
+- `debug/manual-tests/` contains one-off manual checks that are intentionally kept out of automated pytest discovery.
+- `out/` contains generated build artifacts and logs so the repo root stays source-focused.
