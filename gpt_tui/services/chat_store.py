@@ -16,6 +16,8 @@ class ChatMeta:
     updated_at: str
     created_at: str
     model: str
+    change_count: int
+    tool_safety_mode: str
 
 
 class ProjectChatStore:
@@ -106,6 +108,8 @@ class ProjectChatStore:
                     updated_at=str(item.get("updated_at", "")),
                     created_at=str(item.get("created_at", "")),
                     model=str(item.get("model", "")),
+                    change_count=int(item.get("change_count", 0) or 0),
+                    tool_safety_mode=str(item.get("tool_safety_mode", "write") or "write"),
                 )
             )
         return out
@@ -125,6 +129,9 @@ class ProjectChatStore:
         msgs = payload.get("messages", [])
         if not isinstance(msgs, list):
             return None
+        changes = payload.get("changes", [])
+        if not isinstance(changes, list):
+            payload["changes"] = []
         return payload
 
     def create_chat(
@@ -133,9 +140,18 @@ class ProjectChatStore:
         model: str,
         *,
         provider_state: dict[str, Any] | None = None,
+        changes: list[dict[str, Any]] | None = None,
+        tool_safety_mode: str = "write",
     ) -> str:
         chat_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
-        self.save_chat(chat_id, messages, model=model, provider_state=provider_state)
+        self.save_chat(
+            chat_id,
+            messages,
+            model=model,
+            provider_state=provider_state,
+            changes=changes,
+            tool_safety_mode=tool_safety_mode,
+        )
         return chat_id
 
     def save_chat(
@@ -145,6 +161,8 @@ class ProjectChatStore:
         *,
         model: str,
         provider_state: dict[str, Any] | None = None,
+        changes: list[dict[str, Any]] | None = None,
+        tool_safety_mode: str = "write",
     ) -> None:
         if not chat_id:
             return
@@ -157,6 +175,8 @@ class ProjectChatStore:
             "updated_at": now,
             "model": model,
             "messages": messages,
+            "changes": changes or [],
+            "tool_safety_mode": tool_safety_mode or "write",
         }
         if provider_state:
             payload["provider_state"] = provider_state
@@ -175,12 +195,16 @@ class ProjectChatStore:
                     "created_at": now,
                     "updated_at": now,
                     "model": model,
+                    "change_count": len(changes or []),
+                    "tool_safety_mode": tool_safety_mode or "write",
                 }
             )
         else:
             existing["title"] = title
             existing["updated_at"] = now
             existing["model"] = model
+            existing["change_count"] = len(changes or [])
+            existing["tool_safety_mode"] = tool_safety_mode or "write"
             if not existing.get("created_at"):
                 existing["created_at"] = now
         self._save_index(items)

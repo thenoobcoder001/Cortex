@@ -10,23 +10,17 @@
     "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron electron/main.js",
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
     "build:web": "vite build --config web/vite.config.js",
-    "build:backend": "pyinstaller ..\\packaging\\pyinstaller\\gpt-tui-backend.spec --distpath dist-backend --workpath build-backend --noconfirm",
-    "build": "npm run build:web && npm run build:backend && electron-builder",
+    "build": "npm run build:web && electron-builder",
     "start": "electron electron/main.js"
   },
   "build": {
     "appId": "com.chirag.gpttui.desktop",
     "productName": "GPT TUI Desktop",
     "files": [
+      "backend/**/*",
       "electron/**/*",
       "web/dist/**/*",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "dist-backend",
-        "to": "backend"
-      }
     ],
     "win": {
       "target": [

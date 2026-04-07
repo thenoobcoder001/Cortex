@@ -1,11 +1,11 @@
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
-const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
-const http = require("node:http");
+const { spawn } = require("node:child_process");
+const { startBackendServer } = require("../backend/server");
 
-let backendProcess = null;
+let backendHandle = null;
 let backendUrl = null;
 let mainWindow = null;
 const EXTERNAL_EDITORS = {
@@ -45,89 +45,18 @@ function findFreePort() {
   });
 }
 
-function waitForBackend(url, timeoutMs = 15000) {
-  const started = Date.now();
-  return new Promise((resolve, reject) => {
-    const tryOnce = () => {
-      const request = http.get(`${url}/health`, (response) => {
-        response.resume();
-        if (response.statusCode === 200) {
-          resolve();
-          return;
-        }
-        if (Date.now() - started > timeoutMs) {
-          reject(new Error(`Backend healthcheck failed with ${response.statusCode}.`));
-          return;
-        }
-        setTimeout(tryOnce, 250);
-      });
-
-      request.on("error", () => {
-        if (Date.now() - started > timeoutMs) {
-          reject(new Error("Timed out waiting for backend startup."));
-          return;
-        }
-        setTimeout(tryOnce, 250);
-      });
-    };
-
-    tryOnce();
-  });
-}
-
-function resolveBackendLaunch(port) {
-  const packagedBackend = path.join(process.resourcesPath, "backend", "gpt-tui-backend.exe");
-  if (app.isPackaged && fs.existsSync(packagedBackend)) {
-    return {
-      command: packagedBackend,
-      args: ["--port", String(port)],
-      cwd: process.resourcesPath,
-      shell: false,
-    };
-  }
-
-  if (process.env.GPT_TUI_BACKEND_CMD) {
-    return {
-      command: process.env.GPT_TUI_BACKEND_CMD,
-      args: ["--port", String(port)],
-      cwd: repoRoot(),
-      shell: true,
-    };
-  }
-
-  return {
-    command: process.env.GPT_TUI_BACKEND_PYTHON || "python",
-    args: ["-m", "gpt_tui.desktop_api.server", "--port", String(port)],
-    cwd: repoRoot(),
-    shell: process.platform === "win32",
-  };
-}
-
 async function startBackend() {
   const port = await findFreePort();
-  backendUrl = `http://127.0.0.1:${port}`;
-  const launch = resolveBackendLaunch(port);
-  backendProcess = spawn(launch.command, launch.args, {
-    cwd: launch.cwd,
-    shell: launch.shell,
-    env: {
-      ...process.env,
-      GPT_TUI_BACKEND_PORT: String(port),
-    },
-    stdio: "ignore",
-  });
-  backendProcess.on("exit", () => {
-    backendProcess = null;
-  });
-  await waitForBackend(backendUrl);
+  backendHandle = await startBackendServer({ host: "127.0.0.1", port });
+  backendUrl = backendHandle.url;
 }
 
 function stopBackend() {
-  if (!backendProcess) {
+  if (!backendHandle) {
     return;
   }
-  backendProcess.kill();
-  backendProcess = null;
+  void backendHandle.close();
+  backendHandle = null;
 }
 
 function launchDetached(command, args, cwd) {

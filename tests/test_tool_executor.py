@@ -63,6 +63,29 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertIn("hello codex", out)
         self.assertGreaterEqual(len(self.preview), 1)
 
+    def test_execute_with_metadata_tracks_diff(self) -> None:
+        result, change = self.executor.execute_with_metadata(
+            "write_file",
+            {"path": "tracked.txt", "content": "alpha\nbeta\n"},
+        )
+        self.assertIn("OK: written", result)
+        self.assertIsNotNone(change)
+        assert change is not None
+        self.assertEqual(change["action"], "create")
+        self.assertEqual(change["path"], "tracked.txt")
+        self.assertIn("+++ b/tracked.txt", change["diff"])
+
+        result, change = self.executor.execute_with_metadata(
+            "edit_file",
+            {"path": "tracked.txt", "old_str": "beta", "new_str": "gamma"},
+        )
+        self.assertIn("OK: edited", result)
+        self.assertIsNotNone(change)
+        assert change is not None
+        self.assertEqual(change["action"], "edit")
+        self.assertIn("-beta", change["diff"])
+        self.assertIn("+gamma", change["diff"])
+
     def test_reject_path_outside_repo(self) -> None:
         outside = Path("C:/Windows/System32/drivers/etc/hosts")
         out = self.executor.execute("write_file", {"path": str(outside), "content": "x"})
@@ -114,4 +137,3 @@ class ContextTrimTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

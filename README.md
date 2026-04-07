@@ -60,8 +60,8 @@ python app.py
 
 ```text
 app.py
-desktop_backend.py
 desktop_app/
+  backend/
   electron/
   web/
 docs/
@@ -69,7 +69,6 @@ docs/
   instructions.md
 gpt_tui/
   config.py
-  desktop_api/
   providers/
   services/
   ui/
@@ -78,7 +77,6 @@ packaging/
     installer.iss
   pyinstaller/
     gpt-tui.spec
-    gpt-tui-backend.spec
 scripts/
   build-tui.ps1
   build-installer.ps1
@@ -134,20 +132,16 @@ The installer creates:
 
 ## Electron + React desktop shell
 
-This repo now also contains a desktop conversion scaffold in `desktop_app/`:
+This repo now contains a desktop app in `desktop_app/`:
 
-- Python backend API in `gpt_tui/desktop_api`
+- Node.js backend in `desktop_app/backend`
 - React renderer in `desktop_app/web`
 - Electron shell in `desktop_app/electron`
-- PyInstaller specs in `packaging/pyinstaller`
 
 Development flow:
 
 ```powershell
 cd E:\codex\gpt-tui
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
 
 cd .\desktop_app
 npm install
@@ -164,8 +158,7 @@ npm run build
 
 That build does three things:
 - builds the React frontend
-- builds the Python backend executable (`gpt-tui-backend.exe`)
-- packages the Electron app as a Windows installer with `electron-builder`
+- packages the Electron app with the bundled Node backend using `electron-builder`
 
 ## Next phase
 
