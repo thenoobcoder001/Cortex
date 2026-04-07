@@ -13,6 +13,16 @@ from typing import Any, Callable
 from rich.markup import escape
 
 
+HEADLESS_PROMPT_PREFIX = (
+    "You are running in non-interactive terminal stream-json mode.\n"
+    "Return only the final answer to the user's request.\n"
+    "Do not call any tools.\n"
+    "Do not use MCP servers or extensions.\n"
+    "Do not output planning, thinking, or debugging text.\n"
+    "Do not mention tool availability.\n"
+)
+
+
 class GeminiCliProvider:
     """Provider wrapper that runs `gemini` CLI in headless stream-json mode."""
 
@@ -65,15 +75,61 @@ class GeminiCliProvider:
 
     def _build_prompt(self, messages: list[dict[str, Any]]) -> str:
         if not messages:
-            return ""
+            return HEADLESS_PROMPT_PREFIX
+        system_messages = [
+            str(m.get("content", "")).strip()
+            for m in messages
+            if str(m.get("role", "")).strip() == "system" and str(m.get("content", "")).strip()
+        ]
+        turns = [
+            m for m in messages
+            if str(m.get("role", "")).strip() in {"user", "assistant"}
+        ]
+        if not turns:
+            latest = str(messages[-1].get("content", "")).strip()
+            prompt = HEADLESS_PROMPT_PREFIX
+            if system_messages:
+                prompt += "\nInstructions:\n" + "\n\n".join(system_messages) + "\n"
+            prompt += f"\nUser request:\n{latest}"
+            return prompt.strip()
+
+        tail = turns[-8:]
         latest_user = ""
-        for msg in reversed(messages):
+        for msg in reversed(tail):
             if msg.get("role") == "user":
                 latest_user = str(msg.get("content", "")).strip()
                 break
-        if not latest_user and messages:
-            latest_user = str(messages[-1].get("content", "")).strip()
-        return latest_user
+        if not latest_user:
+            latest_user = str(tail[-1].get("content", "")).strip()
+
+        context_lines: list[str] = []
+        for msg in tail[:-1]:
+            role = str(msg.get("role", "")).strip()
+            content = str(msg.get("content", "")).strip()
+            if not role or not content:
+                continue
+            # Keep handoff prompts compact so model switching stays responsive.
+            compact = re.sub(r"\s+", " ", content)
+            if len(compact) > 700:
+                compact = compact[:700] + "..."
+            context_lines.append(f"{role}: {compact}")
+
+        if context_lines:
+            prompt = HEADLESS_PROMPT_PREFIX
+            if system_messages:
+                prompt += "\nInstructions:\n" + "\n\n".join(system_messages) + "\n"
+            prompt += (
+                "\nConversation context:\n"
+                + "\n".join(context_lines)
+                + "\n\nLatest request:\n"
+                + latest_user
+            )
+            return prompt
+        prompt = HEADLESS_PROMPT_PREFIX
+        if system_messages:
+            prompt += "\nInstructions:\n" + "\n\n".join(system_messages) + "\n"
+        prompt += f"\nUser request:\n{latest_user}"
+        return prompt.strip()
 
     def _friendly_error(self, detail: str) -> str:
         low = detail.lower()
@@ -158,6 +214,11 @@ class GeminiCliProvider:
             "attachconsole failed",
             "timeout",
             "timed out",
+            "login",
+            "sign in",
+            "not signed in",
+            "unauthorized",
+            "forbidden",
             "resource_exhausted",
             "no capacity available",
             "exhausted your capacity",
@@ -385,7 +446,8 @@ class GeminiCliProvider:
     ) -> str:
         def trace(msg: str) -> None:
             try:
-                log_path = self.repo_root / "trace.log"
+                log_path = self.repo_root / "out" / "logs" / "trace.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(f"[{time.time()}] {msg}\n")
             except Exception:
@@ -416,6 +478,7 @@ class GeminiCliProvider:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                shell=True,
             )
             if proc.stdin:
                 proc.stdin.close()
@@ -425,6 +488,7 @@ class GeminiCliProvider:
             force_fresh_due_model_mismatch = False
             force_fresh_due_tool_loop = False
             non_json_tool_loop_hits = 0
+            startup_noise_hits = 0
 
             out_q: queue.Queue[bytes | None] = queue.Queue()
             reader = None
@@ -465,18 +529,23 @@ class GeminiCliProvider:
                 if not line:
                     continue
 
-                json_start = line.find("{")
-                json_end = line.rfind("}")
-                evt = None
-                if json_start != -1 and json_end != -1 and json_end > json_start:
-                    json_str = line[json_start : json_end + 1]
-                    try:
-                        evt = json.loads(json_str)
-                    except json.JSONDecodeError:
-                        evt = None
-
-                if evt is None:
+                json_matches = list(re.finditer(r"\{.*\}", line))
+                if not json_matches:
                     trace(f"Non-JSON line: {line}")
+                    if any(
+                        marker in line.lower()
+                        for marker in (
+                            "loaded cached credentials",
+                            "loading extension:",
+                            "supports tool updates",
+                            "scheduling mcp context refresh",
+                            "executing mcp context refresh",
+                            "mcp context refresh complete",
+                            "yolo mode is enabled",
+                        )
+                    ):
+                        startup_noise_hits += 1
+                        last_activity = time.monotonic()
                     if self._is_capacity_error(line):
                         last_detail = line
                         last_activity = time.monotonic()
@@ -484,110 +553,91 @@ class GeminiCliProvider:
                     if (
                         self._is_planning_chatter(line)
                         or "error executing tool" in low_line
-                        or "tool execution denied by policy" in low_line
+                        or "tool execution denied" in low_line
                         or "tool \"run_shell_command\" not found" in low_line
                         or "tool \"write_file\" not found" in low_line
                         or "tool \"replace\" not found" in low_line
                     ):
                         non_json_tool_loop_hits += 1
-                    if non_json_tool_loop_hits >= 6:
-                        if session_mode_for_attempt != "fresh":
-                            force_fresh_due_tool_loop = True
-                            last_detail = "resumed session entered non-interactive tool loop"
-                            trace("Detected non-interactive tool loop from resumed session; retrying with fresh session.")
+                    if non_json_tool_loop_hits >= 2:
+                        last_detail = "non-interactive tool loop"
+                        force_fresh_due_tool_loop = True
+                        last_activity = time.monotonic()
+                        stream_done = True
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        break
+                    extracted = self._extract_non_json_error(line)
+                    if extracted:
+                        last_detail = extracted
+                        last_activity = time.monotonic()
+                    continue
+
+                for match in json_matches:
+                    json_str = match.group(0)
+                    try:
+                        evt = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if "error" in evt and isinstance(evt["error"], dict):
+                        last_detail = str(evt["error"].get("message", "Unknown CLI error"))
+                        trace(f"CLI Error: {last_detail}")
+                        last_activity = time.monotonic()
+                        continue
+
+                    etype = evt.get("type")
+                    if etype == "init":
+                        last_activity = time.monotonic()
+                        init_model = str(evt.get("model", "")).strip().lower()
+                        if (
+                            self._is_25_pin_requested(model_for_attempt)
+                            and "gemini-3" in init_model
+                            and session_mode_for_attempt != "fresh"
+                        ):
+                            last_detail = f"resumed session kept model {init_model}"
+                            force_fresh_due_model_mismatch = True
                             stream_done = True
                             try:
                                 proc.terminate()
                             except Exception:
                                 pass
+                            break
+                        sid = str(evt.get("session_id", "")).strip()
+                        if sid and sid != self.session_id:
+                            self.session_id = sid
+                            self.session_mode = "resume_id"
+                            if self.on_session_init:
+                                self.on_session_init(sid)
+
+                    if etype == "message" and evt.get("role") == "assistant":
+                        content = str(evt.get("content", ""))
+                        is_delta = bool(evt.get("delta", False))
+                        if not content:
                             continue
-                        # Already fresh and still looping: fail fast instead of spinning forever.
-                        last_detail = "fresh session entered non-interactive tool/planning loop"
-                        trace("Detected non-interactive tool loop in fresh session; aborting attempt.")
-                        stream_done = True
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        continue
-                    extracted = self._extract_non_json_error(line)
-                    if extracted:
-                        generic_critical = "an unexpected critical error occurred:[object object]"
-                        low_extracted = extracted.lower()
-                        if generic_critical in low_extracted:
-                            if not last_detail:
-                                last_detail = extracted
-                        else:
-                            last_detail = extracted
+                        if self._is_planning_chatter(content):
+                            continue
                         last_activity = time.monotonic()
-                    # In stream-json mode, non-JSON lines are backend chatter/traces.
-                    # Keep them out of user-visible assistant output.
-                    continue
-
-                if "error" in evt and isinstance(evt["error"], dict):
-                    last_detail = str(evt["error"].get("message", "Unknown CLI error"))
-                    trace(f"CLI Error: {last_detail}")
-                    last_activity = time.monotonic()
-                    continue
-
-                etype = evt.get("type")
-                if etype == "init":
-                    last_activity = time.monotonic()
-                    init_model = str(evt.get("model", "")).strip().lower()
-                    if (
-                        self._is_25_pin_requested(model_for_attempt)
-                        and "gemini-3" in init_model
-                        and session_mode_for_attempt != "fresh"
-                    ):
-                        last_detail = f"resumed session kept model {init_model}"
-                        force_fresh_due_model_mismatch = True
-                        trace(
-                            "Resume/model mismatch detected: requested 2.5 pin "
-                            f"but got {init_model}. Retrying once with fresh session."
-                        )
-                        stream_done = True
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        continue
-                    sid = str(evt.get("session_id", "")).strip()
-                    if sid and sid != self.session_id:
-                        self.session_id = sid
-                        self.session_mode = "resume_id"
-                        if self.on_session_init:
-                            self.on_session_init(sid)
-
-                if etype == "message" and evt.get("role") == "assistant":
-                    content = str(evt.get("content", ""))
-                    is_delta = bool(evt.get("delta", False))
-                    if not content:
-                        continue
-                    if self._is_planning_chatter(content):
-                        # Suppress extension-side planning/debug chatter unrelated to user-visible output.
-                        continue
-                    last_activity = time.monotonic()
-                    if is_delta:
-                        delta = content
-                        assistant_text += content
-                    else:
-                        if content.startswith(assistant_text):
-                            delta = content[len(assistant_text):]
-                            assistant_text = content
-                        else:
+                        if is_delta:
                             delta = content
                             assistant_text += content
-                    if delta:
-                        assistant_chunks.append(delta)
-                        if on_output:
-                            on_output(escape(delta))
-                elif etype in {"tool_use", "tool_result"}:
-                    # Keep tool chatter silent in chat stream.
-                    continue
-                elif etype == "result":
-                    last_activity = time.monotonic()
-                    stream_done = True
-                    break
+                        else:
+                            if content.startswith(assistant_text):
+                                delta = content[len(assistant_text):]
+                                assistant_text = content
+                            else:
+                                delta = content
+                                assistant_text += content
+                        if delta:
+                            assistant_chunks.append(delta)
+                            if on_output:
+                                on_output(escape(delta))
+                    elif etype == "result":
+                        last_activity = time.monotonic()
+                        stream_done = True
+                        break
 
             if last_detail.startswith("timeout"):
                 try:

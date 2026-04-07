@@ -30,11 +30,31 @@ from gpt_tui.ui.tool_executor import ToolExecutor, maybe_trim_context
 
 
 PRESET_PROMPTS: dict[str, str] = {
+    "chat": "",
     "code": "Focus on implementation quality and concise code changes.",
     "debug": "Prioritize root-cause analysis, reproduction, and minimal-risk fixes.",
     "refactor": "Prioritize maintainability, readability, and behavior-preserving changes.",
     "explain": "Prioritize clear explanation, tradeoffs, and short examples.",
 }
+
+BASE_ASSISTANT_SYSTEM_PROMPT = (
+    "You are a local desktop coding assistant working inside the user's current workspace. "
+    "Answer casual greetings and generic questions naturally and directly. "
+    "Do not volunteer statements about lacking file access, tool access, or terminal access unless "
+    "the current request truly requires an action you cannot perform. "
+    "Do not turn simple chat into a discussion of safety restrictions. "
+    "When the user asks about the project or codebase, help clearly and pragmatically."
+)
+
+TOOL_DECIDER_SYSTEM_PROMPT = (
+    "You are deciding whether the assistant must use workspace tools for the next user request. "
+    "Reply with exactly one token: NEED_TOOLS or NO_TOOLS.\n"
+    "Reply NEED_TOOLS only if answering correctly requires inspecting or changing files, reading project state, "
+    "running commands, or using other workspace tools.\n"
+    "Reply NO_TOOLS for casual chat, greetings, generic advice, model comparisons, brainstorming, or questions "
+    "that can be answered directly without touching the workspace.\n"
+    "Do not explain your answer."
+)
 
 
 class DesktopSessionService:
@@ -47,7 +67,9 @@ class DesktopSessionService:
         self.groq_provider = GroqProvider(
             api_key=(self.config.api_key or os.getenv("GROQ_API_KEY", "")).strip(),
         )
-        self.gemini_provider = GeminiProvider(os.getenv("GEMINI_API_KEY", "").strip())
+        self.gemini_provider = GeminiProvider(
+            (self.config.gemini_api_key or os.getenv("GEMINI_API_KEY", "")).strip(),
+        )
         self.gemini_cli_provider = GeminiCliProvider(self.repo_root)
         self.gemini_cli_provider.session_id = self.config.gemini_session_id.strip()
         self.gemini_cli_provider.session_mode = (
@@ -298,13 +320,116 @@ class DesktopSessionService:
             return text
         return f"[Mode: {self.prompt_preset}] {preset}\n\n{text}"
 
-    def _messages_with_preset(
+    def _context_carry_limit(self) -> int:
+        try:
+            limit = int(self.config.context_carry_messages)
+        except (TypeError, ValueError):
+            limit = 5
+        return max(0, min(limit, 20))
+
+    def _looks_like_repo_task(self, text: str) -> bool:
+        lowered = text.lower()
+        repo_markers = (
+            "repo",
+            "repository",
+            "project",
+            "code",
+            "file",
+            "folder",
+            "function",
+            "class",
+            "component",
+            "bug",
+            "fix",
+            "implement",
+            "update",
+            "edit",
+            "refactor",
+            "debug",
+            "test",
+            "terminal",
+            "command",
+            "script",
+            "read ",
+            "write ",
+            "search ",
+            "inspect ",
+            "change ",
+            ".py",
+            ".js",
+            ".ts",
+            ".tsx",
+            "/",
+            "\\",
+        )
+        return any(marker in lowered for marker in repo_markers)
+
+    def _effective_prompt_preset(self, text: str, prompt_preset: str) -> str:
+        normalized = prompt_preset.strip() or "code"
+        if normalized in {"chat", "explain"}:
+            return normalized
+        if self._looks_like_repo_task(text):
+            return normalized
+        return "chat"
+
+    def _should_use_tool_mode(self, text: str, prompt_preset: str) -> bool:
+        if prompt_preset not in {"code", "debug", "refactor"}:
+            return False
+        return self._looks_like_repo_task(text)
+
+    def _should_use_tool_mode_with_model(
+        self,
+        provider: Any,
+        model: str,
+        message: str,
+        prompt_preset: str,
+        repo_root: Path,
+    ) -> bool:
+        if prompt_preset == "chat":
+            return False
+        try:
+            decision = provider.chat_completion(
+                [
+                    {"role": "system", "content": TOOL_DECIDER_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Workspace: {repo_root}\n"
+                            f"Mode: {prompt_preset}\n"
+                            f"Request: {message}"
+                        ),
+                    },
+                ],
+                model,
+            ).strip().upper()
+        except Exception:
+            return self._should_use_tool_mode(message, prompt_preset)
+        if "NEED_TOOLS" in decision:
+            return True
+        if "NO_TOOLS" in decision:
+            return False
+        return self._should_use_tool_mode(message, prompt_preset)
+
+    def _messages_with_context(
         self,
         messages: list[dict[str, Any]],
         prompt_preset: str | None = None,
+        assistant_memory: str | None = None,
     ) -> list[dict[str, Any]]:
         copied = [dict(message) for message in messages]
+        copied.insert(0, {"role": "system", "content": BASE_ASSISTANT_SYSTEM_PROMPT})
+        memory_text = (assistant_memory if assistant_memory is not None else self.config.assistant_memory).strip()
+        if memory_text:
+            copied.insert(
+                1,
+                {
+                    "role": "system",
+                    "content": f"Persistent user preferences and workspace memory:\n{memory_text}",
+                },
+            )
         preset_value = prompt_preset or self.prompt_preset
+        if preset_value == "chat":
+            return copied
         for index in range(len(copied) - 1, -1, -1):
             if copied[index].get("role") == "user":
                 original = str(copied[index].get("content", ""))
@@ -350,8 +475,12 @@ class DesktopSessionService:
                     "model": self.model,
                     "repoRoot": str(self.repo_root),
                     "activeChatId": self.active_chat_id,
+                    "apiKey": self.config.api_key,
+                    "geminiApiKey": self.config.gemini_api_key,
                     "promptPreset": self.prompt_preset,
                     "toolSafetyMode": "read" if self.tool_read_only else "write",
+                    "assistantMemory": self.config.assistant_memory,
+                    "contextCarryMessages": self._context_carry_limit(),
                 },
                 "providers": self._providers(),
                 "models": self._models(),
@@ -432,8 +561,11 @@ class DesktopSessionService:
         model: str | None = None,
         repo_root: str | None = None,
         api_key: str | None = None,
+        gemini_api_key: str | None = None,
         prompt_preset: str | None = None,
         tool_safety_mode: str | None = None,
+        assistant_memory: str | None = None,
+        context_carry_messages: int | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             if repo_root is not None:
@@ -456,6 +588,10 @@ class DesktopSessionService:
                 key = api_key.strip()
                 self.groq_provider.set_api_key(key)
                 self.config.api_key = key
+            if gemini_api_key is not None:
+                key = gemini_api_key.strip()
+                self.gemini_provider.set_api_key(key)
+                self.config.gemini_api_key = key
             if prompt_preset is not None:
                 self.prompt_preset = prompt_preset.strip() or "code"
                 self.config.prompt_preset = self.prompt_preset
@@ -464,6 +600,10 @@ class DesktopSessionService:
                 self.tool_read_only = mode == "read"
                 self.tool_executor.read_only = self.tool_read_only
                 self.config.tool_safety_mode = "read" if self.tool_read_only else "write"
+            if assistant_memory is not None:
+                self.config.assistant_memory = assistant_memory.strip()
+            if context_carry_messages is not None:
+                self.config.context_carry_messages = max(0, min(int(context_carry_messages), 20))
             self.config.save()
             return self.snapshot()
 
@@ -529,6 +669,7 @@ class DesktopSessionService:
         with self._lock:
             request_model = (model or self.model).strip() or DEFAULT_MODEL
             request_prompt_preset = (prompt_preset or self.prompt_preset).strip() or "code"
+            effective_prompt_preset = self._effective_prompt_preset(message, request_prompt_preset)
             request_tool_read_only = (
                 (tool_safety_mode or ("read" if self.tool_read_only else "write")).strip() == "read"
             )
@@ -601,7 +742,8 @@ class DesktopSessionService:
                     and active_chat_model
                     and self._model_family(active_chat_model) != self._model_family(request_model)
                 ):
-                    provider_messages = self._recent_chat_context(base_messages, limit=5)
+                    carry_limit = self._context_carry_limit()
+                    provider_messages = self._recent_chat_context(base_messages, limit=carry_limit)
                     if request_model.startswith("gemini-cli:"):
                         gemini_cli_provider.session_id = ""
                         gemini_cli_provider.session_mode = "fresh"
@@ -611,7 +753,7 @@ class DesktopSessionService:
                     yield self._event(
                         "status",
                         phase="fresh_provider_context",
-                        message=f"Started a fresh {self._provider_name_for_model(request_model)} context and carried over the last 5 chat messages.",
+                        message=f"Started a fresh {self._provider_name_for_model(request_model)} context and carried over the last {carry_limit} chat messages.",
                         chatId=chat_id,
                     )
 
@@ -630,7 +772,7 @@ class DesktopSessionService:
                 if request_model.startswith("gemini-cli:"):
                     prepared_messages = [dict(entry) for entry in working_messages]
                 else:
-                    prepared_messages = self._messages_with_preset(working_messages, request_prompt_preset)
+                    prepared_messages = self._messages_with_context(working_messages, effective_prompt_preset)
 
                 cli_events: queue.Queue[dict[str, Any] | None] = queue.Queue()
                 result: dict[str, str] = {}
@@ -699,6 +841,13 @@ class DesktopSessionService:
                 )
                 return
 
+            plain_chat_mode = not self._should_use_tool_mode_with_model(
+                provider,
+                request_model,
+                message,
+                request_prompt_preset,
+                request_repo_root,
+            )
             working_messages, condensed_count = maybe_trim_context(base_messages, provider, request_model)
             if condensed_count > 0:
                 yield self._event(
@@ -707,7 +856,34 @@ class DesktopSessionService:
                     message=f"Condensed {condensed_count} earlier messages to fit context.",
                     chatId=chat_id,
                 )
-            working_messages = self._messages_with_preset(working_messages, request_prompt_preset)
+            working_messages = self._messages_with_context(working_messages, effective_prompt_preset)
+            if plain_chat_mode:
+                fallback_text = provider.chat_completion(working_messages, request_model)
+                final_messages = [dict(entry) for entry in stored_messages]
+                final_messages.append({"role": "assistant", "content": fallback_text})
+                with self._lock:
+                    chat_store.save_chat(
+                        chat_id,
+                        final_messages,
+                        model=request_model,
+                        provider_state=provider_state,
+                    )
+                    if self.active_chat_id == chat_id and self.repo_root == request_repo_root:
+                        self.messages = [dict(entry) for entry in final_messages]
+                        self.active_chat_model = request_model
+                    self.running_chat_ids.discard(chat_id)
+                    snapshot = self.snapshot()
+                elapsed_seconds = round(time.monotonic() - started, 2)
+                yield self._event("assistant", text=fallback_text, chatId=chat_id)
+                yield self._event(
+                    "completed",
+                    assistantMessage=fallback_text,
+                    elapsedSeconds=elapsed_seconds,
+                    usedTools=0,
+                    snapshot=snapshot,
+                    chatId=chat_id,
+                )
+                return
             used_tools = 0
 
             for round_index in range(MAX_TOOL_ROUNDS):
@@ -829,7 +1005,38 @@ class DesktopSessionService:
                         },
                     )
 
-            raise RuntimeError("Maximum tool-call rounds reached.")
+            yield self._event(
+                "status",
+                phase="fallback_plain_chat",
+                message="Tool loop did not converge, retrying as plain chat.",
+                chatId=chat_id,
+            )
+            fallback_text = provider.chat_completion(working_messages, request_model)
+            final_messages = [dict(entry) for entry in stored_messages]
+            final_messages.append({"role": "assistant", "content": fallback_text})
+            with self._lock:
+                chat_store.save_chat(
+                    chat_id,
+                    final_messages,
+                    model=request_model,
+                    provider_state=provider_state,
+                )
+                if self.active_chat_id == chat_id and self.repo_root == request_repo_root:
+                    self.messages = [dict(entry) for entry in final_messages]
+                    self.active_chat_model = request_model
+                self.running_chat_ids.discard(chat_id)
+                snapshot = self.snapshot()
+            elapsed_seconds = round(time.monotonic() - started, 2)
+            yield self._event("assistant", text=fallback_text, chatId=chat_id)
+            yield self._event(
+                "completed",
+                assistantMessage=fallback_text,
+                elapsedSeconds=elapsed_seconds,
+                usedTools=used_tools,
+                snapshot=snapshot,
+                chatId=chat_id,
+            )
+            return
         except Exception:
             with self._lock:
                 self.running_chat_ids.discard(chat_id)

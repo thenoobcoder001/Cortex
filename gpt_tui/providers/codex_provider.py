@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -14,6 +13,9 @@ class CodexProvider:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
         self._has_session = False
+        self.session_id: str = ""
+        self.session_mode: str = "fresh"  # fresh | resume_id
+        self.on_session_init: Callable[[str], None] | None = None
 
     @property
     def available(self) -> bool:
@@ -28,6 +30,8 @@ class CodexProvider:
         new_root = repo_root.resolve()
         if new_root != self.repo_root:
             self._has_session = False
+            self.session_id = ""
+            self.session_mode = "fresh"
         self.repo_root = new_root
 
     def set_api_key(self, api_key: str) -> None:
@@ -41,6 +45,11 @@ class CodexProvider:
     def _build_prompt(self, messages: list[dict[str, Any]]) -> str:
         if not messages:
             return ""
+        system_messages = [
+            str(m.get("content", "")).strip()
+            for m in messages
+            if str(m.get("role", "")).strip() == "system" and str(m.get("content", "")).strip()
+        ]
         # Keep Codex input minimal: latest user message + short prior context.
         tail = [m for m in messages[-6:] if str(m.get("role", "")) in {"user", "assistant"}]
         latest_user = ""
@@ -60,14 +69,19 @@ class CodexProvider:
                 continue
             context_lines.append(f"{role}: {content}")
 
+        prompt = ""
+        if system_messages:
+            prompt += "Instructions:\n" + "\n\n".join(system_messages) + "\n\n"
         if context_lines:
-            return (
+            prompt += (
                 "Conversation context:\n"
                 + "\n".join(context_lines)
                 + "\n\nLatest request:\n"
                 + latest_user
             )
-        return latest_user
+            return prompt
+        prompt += latest_user
+        return prompt
 
     def _should_stream_line(self, line: str) -> bool:
         text = line.strip()
@@ -102,47 +116,23 @@ class CodexProvider:
             return model.split(":", 1)[1]
         return model
 
-    def _extract_assistant_from_raw_output(self, output: str) -> str:
-        text = output.strip()
-        if not text:
-            return "(No response from codex.)"
-
-        marker = "\ncodex\n"
-        start = text.rfind(marker)
-        if start != -1:
-            body = text[start + len(marker):]
-            end = body.find("\ntokens used")
-            if end != -1:
-                body = body[:end]
-            body = body.strip()
-            if body:
-                return body
-
-        return text
-
-    def chat_completion_stream_raw(
-        self,
-        messages: list[dict[str, Any]],
-        model: str,
-        on_output: Callable[[str], None] | None = None,
-    ) -> str:
-        """Run codex exec and stream terminal-like output as lines."""
+    def _build_exec_command(self, model: str, *, json_mode: bool, resume: bool) -> list[str]:
         codex_exec = self._resolve_codex_executable()
         if not codex_exec:
             raise RuntimeError("codex CLI not found in PATH")
 
-        prompt = self._build_prompt(messages)
-        if self._has_session:
+        if resume and self.session_id:
             cmd = [
                 codex_exec,
                 "exec",
                 "resume",
-                "--last",
+                "--skip-git-repo-check",
                 "--model",
                 self._cli_model_name(model),
-                "--skip-git-repo-check",
-                "-",
             ]
+            if json_mode:
+                cmd.append("--json")
+            cmd.extend([self.session_id, "-"])
         else:
             cmd = [
                 codex_exec,
@@ -156,37 +146,93 @@ class CodexProvider:
                 "--color",
                 "never",
             ]
+            if json_mode:
+                cmd.append("--json")
+        return cmd
+
+    def _run_json_exec(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        on_output: Callable[[str], None] | None = None,
+    ) -> str:
+        prompt = self._build_prompt(messages)
+        resume = self.session_mode == "resume_id" and bool(self.session_id)
+        cmd = self._build_exec_command(model, json_mode=True, resume=resume)
 
         proc = subprocess.Popen(
             cmd,
             cwd=str(self.repo_root),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
         )
         if proc.stdin:
-            proc.stdin.write(prompt.encode("utf-8"))
+            proc.stdin.write(prompt)
             proc.stdin.close()
 
-        chunks: list[str] = []
-        if proc.stdout:
-            while True:
-                raw = proc.stdout.readline()
-                if not raw:
-                    break
-                line = raw.decode("utf-8", errors="replace")
-                chunks.append(line)
-                if on_output and self._should_stream_line(line):
-                    on_output(line.rstrip("\r\n"))
+        assistant_text = ""
+        stderr_text = ""
+        try:
+            if proc.stdout:
+                while True:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = str(event.get("type", "")).strip()
+                    if event_type == "thread.started":
+                        thread_id = str(event.get("thread_id", "")).strip()
+                        if thread_id:
+                            self.session_id = thread_id
+                            self.session_mode = "resume_id"
+                            if self.on_session_init:
+                                self.on_session_init(thread_id)
+                    elif event_type == "item.completed":
+                        item = event.get("item") or {}
+                        if str(item.get("type", "")).strip() != "agent_message":
+                            continue
+                        next_text = str(item.get("text", "")).strip()
+                        if not next_text:
+                            continue
+                        delta = next_text
+                        if assistant_text and next_text.startswith(assistant_text):
+                            delta = next_text[len(assistant_text):]
+                        assistant_text = next_text
+                        if delta and on_output:
+                            on_output(delta)
+                    elif event_type == "error":
+                        message = str(event.get("message", "")).strip()
+                        if message:
+                            stderr_text = message
+        finally:
+            if proc.stderr:
+                stderr_text = (proc.stderr.read() or "").strip() or stderr_text
 
         return_code = proc.wait(timeout=600)
-        full_output = "".join(chunks)
         if return_code != 0:
-            detail = full_output.strip() or f"exit code {return_code}"
+            detail = stderr_text or f"exit code {return_code}"
             raise RuntimeError(f"codex exec failed: {detail}")
 
-        self._has_session = True
-        return self._extract_assistant_from_raw_output(full_output)
+        self._has_session = bool(self.session_id)
+        if assistant_text:
+            return assistant_text
+        return "(No response from codex.)"
+
+    def chat_completion_stream_raw(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        on_output: Callable[[str], None] | None = None,
+    ) -> str:
+        """Run codex exec in JSON mode and stream assistant text."""
+        return self._run_json_exec(messages, model, on_output=on_output)
 
     def chat_completion_events(
         self,
@@ -195,138 +241,14 @@ class CodexProvider:
         on_event: Callable[[str, str], None] | None = None,
     ) -> str:
         """Run codex exec in JSON mode and surface live events."""
-        codex_exec = self._resolve_codex_executable()
-        if not codex_exec:
-            raise RuntimeError("codex CLI not found in PATH")
+        def relay_output(chunk: str) -> None:
+            if on_event:
+                on_event("assistant", chunk)
 
-        prompt = self._build_prompt(messages)
-        cmd = [
-            codex_exec,
-            "exec",
-            "-",
-            "-C",
-            str(self.repo_root),
-            "--skip-git-repo-check",
-            "--model",
-            self._cli_model_name(model),
-            "--json",
-            "--color",
-            "never",
-        ]
-
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.repo_root),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        if proc.stdin:
-            proc.stdin.write(prompt.encode("utf-8"))
-            proc.stdin.close()
-
-        assistant_text = ""
-        if proc.stdout:
-            while True:
-                raw = proc.stdout.readline()
-                if not raw:
-                    break
-                line = raw.decode("utf-8", errors="replace").strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    if on_event:
-                        on_event("status", line)
-                    continue
-
-                event_type = str(event.get("type", ""))
-                if event_type == "item.completed":
-                    item = event.get("item") or {}
-                    item_type = str(item.get("type", ""))
-                    text = str(item.get("text", "")).strip()
-                    if not text:
-                        continue
-                    if item_type == "reasoning":
-                        if on_event:
-                            on_event("reasoning", text)
-                    elif item_type == "agent_message":
-                        assistant_text = text
-                        if on_event:
-                            on_event("assistant", text)
-                elif event_type == "error":
-                    msg = str(event.get("message", "codex error")).strip()
-                    if on_event:
-                        on_event("error", msg)
-
-        stderr_bytes = b""
-        if proc.stderr:
-            stderr_bytes = proc.stderr.read()
-        return_code = proc.wait(timeout=600)
-
-        if return_code != 0:
-            stderr = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
-            detail = stderr or f"exit code {return_code}"
-            raise RuntimeError(f"codex exec failed: {detail}")
-
-        if assistant_text:
-            return assistant_text
-        return "(No response from codex.)"
+        return self._run_json_exec(messages, model, on_output=relay_output)
 
     def chat_completion(self, messages: list[dict[str, Any]], model: str) -> str:
-        codex_exec = self._resolve_codex_executable()
-        if not codex_exec:
-            raise RuntimeError("codex CLI not found in PATH")
-
-        prompt = self._build_prompt(messages)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp:
-            output_file = Path(tmp.name)
-
-        cmd = [
-            codex_exec,
-            "exec",
-            "-",
-            "-C",
-            str(self.repo_root),
-            "--skip-git-repo-check",
-            "--output-last-message",
-            str(output_file),
-            "--model",
-            self._cli_model_name(model),
-        ]
-
-        try:
-            result = subprocess.run(
-                cmd,
-                input=prompt.encode("utf-8"),
-                capture_output=True,
-                text=False,
-                cwd=str(self.repo_root),
-                timeout=600,
-            )
-            if result.returncode != 0:
-                stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
-                stdout = (result.stdout or b"").decode("utf-8", errors="replace").strip()
-                detail = stderr or stdout or f"exit code {result.returncode}"
-                raise RuntimeError(f"codex exec failed: {detail}")
-
-            if output_file.exists():
-                text = output_file.read_text(encoding="utf-8").strip()
-                if text:
-                    return text
-
-            stdout = (result.stdout or b"").decode("utf-8", errors="replace").strip()
-            if stdout:
-                return stdout
-
-            return "(No response from codex.)"
-        finally:
-            try:
-                output_file.unlink(missing_ok=True)
-            except OSError:
-                pass
+        return self._run_json_exec(messages, model, on_output=None)
 
     def chat_with_tools(
         self,

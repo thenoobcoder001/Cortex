@@ -1,4 +1,4 @@
-﻿"""
+"""
 constants.py â€” All static data: branding, model lists, tool schemas, limits.
 No Textual imports here â€” this file must be importable anywhere.
 """
@@ -55,6 +55,7 @@ GROQ_MODELS: list[tuple[str, str]] = [
     ("mixtral-8x7b-32768",             "Mixtral 8x7B           [free Â· long ctx]"),
 ]
 CODEX_MODELS: list[tuple[str, str]] = [
+    ("codex:gpt-5.4", "gpt-5.4                 [latest]"),
     ("codex:gpt-5.3-codex", "gpt-5.3-codex         [current]"),
     ("codex:gpt-5.2-codex", "gpt-5.2-codex         [frontier coding]"),
     ("codex:gpt-5.1-codex-max", "gpt-5.1-codex-max     [deep reasoning]"),
