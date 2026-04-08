@@ -1,59 +1,45 @@
-const fs = require("node:fs");
 const path = require("node:path");
 const {
-  APP_NAME,
-  VERSION,
   DEFAULT_MODEL,
-  MAX_TOOL_ROUNDS,
   PRESET_PROMPTS,
   BASE_ASSISTANT_SYSTEM_PROMPT,
-  GEMINI_MODELS,
-  GEMINI_CLI_MODELS,
-  GROQ_MODELS,
-  CODEX_MODELS,
-  TOOLS,
 } = require("./constants");
 const { AppConfigStore } = require("./configStore");
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
 const { CodexProvider, GeminiCliProvider, GroqProvider, GeminiApiProvider } = require("./providers");
-
-function nowIso() {
-  return new Date().toISOString().slice(0, 19);
-}
-
-function normalizeMessages(messages) {
-  return Array.isArray(messages) ? messages.filter((message) => message && message.role).map((message) => ({ ...message })) : [];
-}
-
-function normalizeChanges(changes) {
-  return Array.isArray(changes)
-    ? changes
-        .filter((change) => change && change.action && change.path)
-        .map((change) => ({
-          action: String(change.action),
-          path: String(change.path),
-          oldPath: String(change.oldPath || ""),
-          newPath: String(change.newPath || ""),
-          diff: String(change.diff || ""),
-        }))
-    : [];
-}
+const { RequestRegistry } = require("./requestRegistry");
+const { normalizeMessages, normalizeChanges } = require("./sessionShared");
+const {
+  buildSnapshot,
+  modelFamily,
+  providerNameForModel,
+} = require("./sessionSnapshot");
+const {
+  initialRepoRoot,
+  persistConfig,
+  recoverInterruptedRuns,
+  restoreActiveChat,
+  trackActiveRun,
+  clearActiveRun,
+  saveCompletedChat,
+} = require("./sessionPersistence");
+const { sendMessageEvents } = require("./sessionSend");
 
 class DesktopSessionService {
-  constructor() {
-    this.config = AppConfigStore.load();
-    this.repoRoot = this.initialRepoRoot();
-    this.files = new RepoFileService(this.repoRoot);
-    this.chatStore = new ProjectChatStore(this.repoRoot);
-    this.toolExecutor = new ToolExecutor(this.files, this.repoRoot);
-    this.groqProvider = new GroqProvider(this.config.apiKey || process.env.GROQ_API_KEY || "");
-    this.geminiProvider = new GeminiApiProvider(this.config.geminiApiKey || process.env.GEMINI_API_KEY || "");
-    this.geminiCliProvider = new GeminiCliProvider(this.repoRoot);
+  constructor(overrides = {}) {
+    this.config = overrides.config || AppConfigStore.load();
+    this.repoRoot = path.resolve(overrides.repoRoot || initialRepoRoot(this.config));
+    this.files = overrides.files || new RepoFileService(this.repoRoot);
+    this.chatStore = overrides.chatStore || new ProjectChatStore(this.repoRoot);
+    this.toolExecutor = overrides.toolExecutor || new ToolExecutor(this.files, this.repoRoot);
+    this.groqProvider = overrides.groqProvider || new GroqProvider(this.config.apiKey || process.env.GROQ_API_KEY || "");
+    this.geminiProvider = overrides.geminiProvider || new GeminiApiProvider(this.config.geminiApiKey || process.env.GEMINI_API_KEY || "");
+    this.geminiCliProvider = overrides.geminiCliProvider || new GeminiCliProvider(this.repoRoot);
+    this.codexProvider = overrides.codexProvider || new CodexProvider(this.repoRoot, this.config.openaiApiKey || process.env.OPENAI_API_KEY || "");
     this.geminiCliProvider.sessionId = this.config.geminiSessionId || "";
     this.geminiCliProvider.sessionMode = this.geminiCliProvider.sessionId ? "resume_id" : "fresh";
-    this.codexProvider = new CodexProvider(this.repoRoot, this.config.openaiApiKey || process.env.OPENAI_API_KEY || "");
     this.codexProvider.sessionId = this.config.codexSessionId || "";
     this.codexProvider.sessionMode = this.codexProvider.sessionId ? "resume_id" : "fresh";
     this.model = this.config.model || DEFAULT_MODEL;
@@ -63,95 +49,34 @@ class DesktopSessionService {
     this.changes = [];
     this.activeChatId = "";
     this.activeChatModel = "";
-    this.runningChatIds = new Set();
     this.interruptedRuns = new Map();
-    this.recoverInterruptedRuns();
-    this.restoreActiveChat();
-  }
-
-  initialRepoRoot() {
-    if (this.config.repoRoot && fs.existsSync(this.config.repoRoot) && fs.statSync(this.config.repoRoot).isDirectory()) {
-      return path.resolve(this.config.repoRoot);
-    }
-    return process.cwd();
+    this.requestRegistry = new RequestRegistry();
+    recoverInterruptedRuns(this);
+    restoreActiveChat(this);
   }
 
   modelFamily(model) {
-    if (String(model).startsWith("gemini-cli:")) return "gemini-cli";
-    if (String(model).startsWith("gemini")) return "gemini";
-    if (String(model).startsWith("codex:")) return "codex";
-    return "groq";
+    return modelFamily(model);
   }
 
   providerNameForModel(model) {
-    if (String(model).startsWith("gemini-cli:")) return "Gemini CLI";
-    if (String(model).startsWith("gemini")) return "Gemini";
-    if (String(model).startsWith("codex:")) return "Codex";
-    return "Groq";
-  }
-
-  models() {
-    return [
-      ...GEMINI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini" })),
-      ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI" })),
-      ...GROQ_MODELS.map(([id, label]) => ({ id, label, group: "Groq" })),
-      ...CODEX_MODELS.map(([id, label]) => ({ id, label, group: "Codex" })),
-    ];
-  }
-
-  providers() {
-    return {
-      groq: { available: this.groqProvider.available, connected: this.groqProvider.connected },
-      gemini: { available: this.geminiProvider.available, connected: this.geminiProvider.connected },
-      geminiCli: { available: this.geminiCliProvider.available, connected: this.geminiCliProvider.connected },
-      codex: { available: this.codexProvider.available, connected: this.codexProvider.connected },
-    };
+    return providerNameForModel(model);
   }
 
   persistConfig() {
-    this.config.repoRoot = this.repoRoot;
-    this.config.activeChatId = this.activeChatId;
-    this.config.model = this.model;
-    this.config.promptPreset = this.promptPreset;
-    this.config.toolSafetyMode = this.toolReadOnly ? "read" : "write";
-    this.config.geminiSessionId = this.geminiCliProvider.sessionId || "";
-    this.config.codexSessionId = this.codexProvider.sessionId || "";
-    this.config.interruptedRuns = [...this.interruptedRuns.values()];
-    this.config.save();
+    persistConfig(this);
   }
 
-  recoverInterruptedRuns() {
-    const activeRuns = Array.isArray(this.config.activeRuns) ? this.config.activeRuns : [];
-    const interrupted = Array.isArray(this.config.interruptedRuns) ? this.config.interruptedRuns : [];
-    for (const entry of interrupted) {
-      if (entry?.chat_id) {
-        this.interruptedRuns.set(entry.chat_id, { ...entry });
-      }
-    }
-    for (const entry of activeRuns) {
-      if (!entry?.chat_id) continue;
-      this.interruptedRuns.set(entry.chat_id, { ...entry, recovered_at: nowIso() });
-    }
-    this.config.activeRuns = [];
-    this.persistConfig();
+  trackActiveRun(payload) {
+    trackActiveRun(this, payload);
   }
 
-  restoreActiveChat() {
-    if (!this.config.activeChatId) {
-      return;
-    }
-    const payload = this.chatStore.loadChat(this.config.activeChatId);
-    if (!payload) {
-      this.config.activeChatId = "";
-      this.persistConfig();
-      return;
-    }
-    this.activeChatId = this.config.activeChatId;
-    this.activeChatModel = String(payload.model || "");
-    this.messages = normalizeMessages(payload.messages);
-    this.changes = normalizeChanges(payload.changes);
-    this.toolReadOnly = String(payload.tool_safety_mode || "write") === "read";
-    this.toolExecutor.readOnly = this.toolReadOnly;
+  clearActiveRun(chatId) {
+    clearActiveRun(this, chatId);
+  }
+
+  saveCompletedChat(payload) {
+    return saveCompletedChat(this, payload);
   }
 
   setRepoRoot(repoRoot) {
@@ -180,38 +105,7 @@ class DesktopSessionService {
   }
 
   snapshot() {
-    return {
-      app: { name: APP_NAME, version: VERSION },
-      config: {
-        model: this.model,
-        repoRoot: this.repoRoot,
-        activeChatId: this.activeChatId,
-        apiKey: this.config.apiKey,
-        geminiApiKey: this.config.geminiApiKey,
-        openaiApiKey: this.config.openaiApiKey,
-        promptPreset: this.promptPreset,
-        toolSafetyMode: this.toolReadOnly ? "read" : "write",
-        assistantMemory: this.config.assistantMemory || "",
-        contextCarryMessages: this.config.contextCarryMessages || 5,
-      },
-      providers: this.providers(),
-      models: this.models(),
-      chats: this.chatItems(),
-      messages: this.messages,
-      changes: this.changes,
-      files: this.files.listFiles(this.repoRoot, 200),
-      providerName: this.providerNameForModel(this.model),
-      runningChatIds: [...this.runningChatIds].sort(),
-      interruptedChatIds: [...this.interruptedRuns.keys()].sort(),
-      interruptedRuns: [...this.interruptedRuns.values()].map((entry) => ({
-        chatId: entry.chat_id,
-        repoRoot: entry.repo_root,
-        model: entry.model,
-        lastUserMessage: entry.last_user_message,
-        startedAt: entry.started_at,
-        recoveredAt: entry.recovered_at || "",
-      })),
-    };
+    return buildSnapshot(this);
   }
 
   listChats(repoRoot = null) {
@@ -254,7 +148,7 @@ class DesktopSessionService {
   }
 
   deleteChat(chatId, repoRoot = null) {
-    if (this.runningChatIds.has(chatId)) {
+    if (this.requestRegistry.has(chatId)) {
       throw new Error("Cannot delete a chat while it is still running.");
     }
     const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
@@ -269,6 +163,16 @@ class DesktopSessionService {
     }
     this.interruptedRuns.delete(chatId);
     this.persistConfig();
+    return this.snapshot();
+  }
+
+  interruptChat(chatId) {
+    if (!chatId) {
+      throw new Error("Chat id is required.");
+    }
+    if (!this.requestRegistry.interrupt(chatId)) {
+      throw new Error("Chat is not currently running.");
+    }
     return this.snapshot();
   }
 
@@ -383,25 +287,6 @@ class DesktopSessionService {
     return messages.filter((message) => ["user", "assistant"].includes(String(message.role || ""))).slice(-limit);
   }
 
-  trackActiveRun({ chatId, repoRoot, model, lastUserMessage }) {
-    this.config.activeRuns = [
-      ...this.config.activeRuns.filter((entry) => entry.chat_id !== chatId),
-      {
-        chat_id: chatId,
-        repo_root: repoRoot,
-        model,
-        last_user_message: lastUserMessage,
-        started_at: nowIso(),
-      },
-    ];
-    this.persistConfig();
-  }
-
-  clearActiveRun(chatId) {
-    this.config.activeRuns = this.config.activeRuns.filter((entry) => entry.chat_id !== chatId);
-    this.persistConfig();
-  }
-
   captureRepoState(repoRoot) {
     return new RepoFileService(repoRoot).snapshotRepoState(repoRoot);
   }
@@ -411,335 +296,8 @@ class DesktopSessionService {
     return normalizeChanges(fileService.diffRepoState(beforeState, fileService.snapshotRepoState(repoRoot)));
   }
 
-  saveCompletedChat({ chatStore, chatId, messages, model, providerState, toolSafetyMode, repoRoot, changes }) {
-    chatStore.saveChat(chatId, messages, {
-      model,
-      providerState,
-      changes,
-      toolSafetyMode,
-    });
-    if (this.activeChatId === chatId && this.repoRoot === repoRoot) {
-      this.messages = normalizeMessages(messages);
-      this.changes = normalizeChanges(changes);
-      this.activeChatModel = model;
-    }
-    this.runningChatIds.delete(chatId);
-    this.clearActiveRun(chatId);
-    this.interruptedRuns.delete(chatId);
-    return this.snapshot();
-  }
-
-  async *sendMessageEvents(text, { chatId = null, repoRoot = null, model = null, promptPreset = null, toolSafetyMode = null } = {}) {
-    const message = String(text || "").trim();
-    if (!message) {
-      throw new Error("Message is required.");
-    }
-
-    const requestModel = String(model || this.model).trim() || DEFAULT_MODEL;
-    const requestRepoRoot = repoRoot ? path.resolve(repoRoot) : this.repoRoot;
-    const requestPromptPreset = String(promptPreset || this.promptPreset).trim() || "code";
-    const effectivePromptPreset = this.effectivePromptPreset(message, requestPromptPreset);
-    const requestChatStore = new ProjectChatStore(requestRepoRoot);
-    const existingPayload = chatId ? requestChatStore.loadChat(chatId) : null;
-    const existingProviderState = existingPayload?.provider_state && typeof existingPayload.provider_state === "object"
-      ? { ...existingPayload.provider_state }
-      : {};
-    const requestToolSafetyMode = String(toolSafetyMode || existingPayload?.tool_safety_mode || (this.toolReadOnly ? "read" : "write")).trim().toLowerCase() === "read" ? "read" : "write";
-    const requestToolReadOnly = requestToolSafetyMode === "read";
-    const provider = this.providerForRequest(requestModel);
-    if (!provider.connected) {
-      throw new Error(`${this.providerNameForModel(requestModel)} is not ready for requests.`);
-    }
-
-    let baseMessages = existingPayload ? normalizeMessages(existingPayload.messages) : [];
-    let storedChanges = existingPayload ? normalizeChanges(existingPayload.changes) : [];
-    const existingModel = existingPayload ? String(existingPayload.model || "") : "";
-    this.codexProvider.sessionId = String(existingProviderState.codex_session_id || "");
-    this.codexProvider.sessionMode = this.codexProvider.sessionId ? "resume_id" : "fresh";
-    this.geminiCliProvider.sessionId = String(existingProviderState.gemini_cli_session_id || "");
-    this.geminiCliProvider.sessionMode = this.geminiCliProvider.sessionId ? "resume_id" : "fresh";
-    if (
-      this.codexProvider.sessionId
-      && String(existingProviderState.codex_tool_safety_mode || "") !== requestToolSafetyMode
-    ) {
-      this.codexProvider.sessionId = "";
-      this.codexProvider.sessionMode = "fresh";
-    }
-    if (
-      existingModel
-      && this.modelFamily(existingModel) !== this.modelFamily(requestModel)
-      && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:"))
-    ) {
-      baseMessages = this.recentChatContext(baseMessages, this.config.contextCarryMessages || 5);
-      if (requestModel.startsWith("codex:")) {
-        this.codexProvider.sessionId = "";
-        this.codexProvider.sessionMode = "fresh";
-      }
-      if (requestModel.startsWith("gemini-cli:")) {
-        this.geminiCliProvider.sessionId = "";
-        this.geminiCliProvider.sessionMode = "fresh";
-      }
-    }
-
-    baseMessages = [...baseMessages, { role: "user", content: message }];
-    const repoStateBefore = this.captureRepoState(requestRepoRoot);
-
-    if (chatId && this.runningChatIds.has(chatId)) {
-      throw new Error("This chat is already running a request.");
-    }
-    if (!chatId) {
-      chatId = requestChatStore.createChat(baseMessages, {
-        model: requestModel,
-        providerState: {},
-        changes: storedChanges,
-        toolSafetyMode: requestToolSafetyMode,
-      });
-      if (this.repoRoot === requestRepoRoot && !this.activeChatId) {
-        this.activeChatId = chatId;
-      }
-    } else {
-      requestChatStore.saveChat(chatId, baseMessages, {
-        model: requestModel,
-        providerState: existingProviderState,
-        changes: storedChanges,
-        toolSafetyMode: requestToolSafetyMode,
-      });
-    }
-
-    if (this.repoRoot === requestRepoRoot && this.activeChatId === chatId) {
-      this.messages = normalizeMessages(baseMessages);
-      this.changes = normalizeChanges(storedChanges);
-      this.toolReadOnly = requestToolReadOnly;
-      this.toolExecutor.readOnly = requestToolReadOnly;
-      this.activeChatModel = requestModel;
-    }
-
-    this.runningChatIds.add(chatId);
-    this.trackActiveRun({ chatId, repoRoot: requestRepoRoot, model: requestModel, lastUserMessage: message });
-    const startSnapshot = this.snapshot();
-
-    yield this.event("user_message", { message, chatId, snapshot: startSnapshot });
-    yield this.event("status", { phase: "started", message: `Running ${this.providerNameForModel(requestModel)}...`, chatId });
-
-    try {
-      const providerState = {};
-      const baseForProvider = this.messagesWithContext([...baseMessages], effectivePromptPreset);
-
-      if (requestModel.startsWith("codex:")) {
-        this.codexProvider.toolReadOnly = requestToolReadOnly;
-        const cliEvents = [];
-        let cliWaiter = null;
-        let cliDone = false;
-        let cliError = null;
-        let finalText = "";
-        const notifyCli = () => {
-          if (cliWaiter) {
-            cliWaiter();
-            cliWaiter = null;
-          }
-        };
-        const worker = (async () => {
-          try {
-            finalText = await this.codexProvider.chatCompletionStreamRaw(baseForProvider, requestModel, (chunk) => {
-              if (!chunk) {
-                return;
-              }
-              cliEvents.push(this.event("cli_output", { stream: "stdout", text: chunk, chatId }));
-              notifyCli();
-            });
-          } catch (error) {
-            cliError = error;
-          } finally {
-            cliDone = true;
-            notifyCli();
-          }
-        })();
-        while (!cliDone || cliEvents.length) {
-          if (cliEvents.length) {
-            yield cliEvents.shift();
-            continue;
-          }
-          await new Promise((resolve) => {
-            cliWaiter = resolve;
-          });
-        }
-        await worker;
-        if (cliError) {
-          throw cliError;
-        }
-        const finalMessages = [...baseMessages, { role: "assistant", content: finalText }];
-        providerState.codex_session_id = this.codexProvider.sessionId || "";
-        providerState.codex_tool_safety_mode = requestToolSafetyMode;
-        const finalChanges = this.finalRepoChanges(requestRepoRoot, repoStateBefore);
-        const snapshot = this.saveCompletedChat({
-          chatStore: requestChatStore,
-          chatId,
-          messages: finalMessages,
-          model: requestModel,
-          providerState,
-          toolSafetyMode: requestToolSafetyMode,
-          repoRoot: requestRepoRoot,
-          changes: finalChanges,
-        });
-        yield this.event("assistant", { text: finalText, chatId });
-        yield this.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-        return;
-      }
-
-      if (requestModel.startsWith("gemini-cli:")) {
-        const cliEvents = [];
-        let cliWaiter = null;
-        let cliDone = false;
-        let cliError = null;
-        let finalText = "";
-        const notifyCli = () => {
-          if (cliWaiter) {
-            cliWaiter();
-            cliWaiter = null;
-          }
-        };
-        const worker = (async () => {
-          try {
-            finalText = await this.geminiCliProvider.chatCompletionStreamRaw(baseForProvider, requestModel, (chunk) => {
-              if (!chunk) {
-                return;
-              }
-              cliEvents.push(this.event("cli_output", { stream: "stdout", text: chunk, chatId }));
-              notifyCli();
-            });
-          } catch (error) {
-            cliError = error;
-          } finally {
-            cliDone = true;
-            notifyCli();
-          }
-        })();
-        while (!cliDone || cliEvents.length) {
-          if (cliEvents.length) {
-            yield cliEvents.shift();
-            continue;
-          }
-          await new Promise((resolve) => {
-            cliWaiter = resolve;
-          });
-        }
-        await worker;
-        if (cliError) {
-          throw cliError;
-        }
-        const finalMessages = [...baseMessages, { role: "assistant", content: finalText }];
-        providerState.gemini_cli_session_id = this.geminiCliProvider.sessionId || "";
-        const finalChanges = this.finalRepoChanges(requestRepoRoot, repoStateBefore);
-        const snapshot = this.saveCompletedChat({
-          chatStore: requestChatStore,
-          chatId,
-          messages: finalMessages,
-          model: requestModel,
-          providerState,
-          toolSafetyMode: requestToolSafetyMode,
-          repoRoot: requestRepoRoot,
-          changes: finalChanges,
-        });
-        yield this.event("assistant", { text: finalText, chatId });
-        yield this.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-        return;
-      }
-
-      if (!this.requestUsesTools(requestModel, message, effectivePromptPreset)) {
-        const finalText = await provider.chatCompletion(baseForProvider, requestModel);
-        const finalMessages = [...baseMessages, { role: "assistant", content: finalText }];
-        const finalChanges = this.finalRepoChanges(requestRepoRoot, repoStateBefore);
-        const snapshot = this.saveCompletedChat({
-          chatStore: requestChatStore,
-          chatId,
-          messages: finalMessages,
-          model: requestModel,
-          providerState,
-          toolSafetyMode: requestToolSafetyMode,
-          repoRoot: requestRepoRoot,
-          changes: finalChanges,
-        });
-        yield this.event("assistant", { text: finalText, chatId });
-        yield this.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-        return;
-      }
-
-      let workingMessages = [...baseForProvider];
-      let usedTools = 0;
-      for (let roundIndex = 0; roundIndex < MAX_TOOL_ROUNDS; roundIndex += 1) {
-        yield this.event("status", { phase: "thinking", message: `Thinking... round ${roundIndex + 1}`, chatId });
-        const [finalText, assistantMessage, toolCalls] = await provider.chatWithTools(workingMessages, requestModel, TOOLS);
-        if (finalText != null) {
-          const finalMessages = [...baseMessages, { role: "assistant", content: finalText }];
-          const finalChanges = this.finalRepoChanges(requestRepoRoot, repoStateBefore);
-          const snapshot = this.saveCompletedChat({
-            chatStore: requestChatStore,
-            chatId,
-            messages: finalMessages,
-            model: requestModel,
-            providerState,
-            toolSafetyMode: requestToolSafetyMode,
-            repoRoot: requestRepoRoot,
-            changes: finalChanges,
-          });
-          yield this.event("assistant", { text: finalText, chatId });
-          yield this.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools, snapshot, chatId });
-          return;
-        }
-        if (assistantMessage) {
-          workingMessages.push(assistantMessage);
-        }
-        if (!Array.isArray(toolCalls) || !toolCalls.length) {
-          break;
-        }
-        for (const toolCall of toolCalls) {
-          usedTools += 1;
-          const args = JSON.parse(toolCall.function.arguments || "{}");
-          yield this.event("tool_call", { name: toolCall.function.name, args, chatId });
-          this.toolExecutor.readOnly = requestToolReadOnly;
-          const [result, change] = await this.toolExecutor.executeWithMetadata(toolCall.function.name, args);
-          if (change) {
-            storedChanges = [...storedChanges, change];
-          }
-          yield this.event("tool_result", { name: toolCall.function.name, result, change, chatId });
-          workingMessages.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            name: toolCall.function.name,
-            content: result,
-          });
-        }
-      }
-
-      const fallbackText = await provider.chatCompletion(workingMessages, requestModel);
-      const finalMessages = [...baseMessages, { role: "assistant", content: fallbackText }];
-      const finalChanges = this.finalRepoChanges(requestRepoRoot, repoStateBefore);
-      const snapshot = this.saveCompletedChat({
-        chatStore: requestChatStore,
-        chatId,
-        messages: finalMessages,
-        model: requestModel,
-        providerState,
-        toolSafetyMode: requestToolSafetyMode,
-        repoRoot: requestRepoRoot,
-        changes: finalChanges,
-      });
-      yield this.event("assistant", { text: fallbackText, chatId });
-      yield this.event("completed", { assistantMessage: fallbackText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-    } catch (error) {
-      this.runningChatIds.delete(chatId);
-      this.clearActiveRun(chatId);
-      this.interruptedRuns.set(chatId, {
-        chat_id: chatId,
-        repo_root: requestRepoRoot,
-        model: requestModel,
-        last_user_message: message,
-        started_at: nowIso(),
-        recovered_at: "",
-      });
-      this.persistConfig();
-      throw error;
-    }
+  async *sendMessageEvents(text, options = {}) {
+    yield* sendMessageEvents(this, text, options);
   }
 
   async sendMessage(text, options = {}) {

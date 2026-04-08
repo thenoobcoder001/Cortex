@@ -351,6 +351,10 @@ export default function App() {
     () => interruptedRunByChat.get(snapshot?.config?.activeChatId || "") || null,
     [interruptedRunByChat, snapshot?.config?.activeChatId],
   );
+  const activeChatRunning = useMemo(
+    () => runningChatIds.includes(snapshot?.config?.activeChatId || ""),
+    [runningChatIds, snapshot?.config?.activeChatId],
+  );
 
   const activePendingTurn = useMemo(() => {
     const activeChatId = snapshot?.config?.activeChatId || "";
@@ -519,6 +523,21 @@ export default function App() {
     }
   };
 
+  const handleInterruptChat = async () => {
+    const activeChatId = snapshot?.config?.activeChatId || "";
+    if (!activeChatId) {
+      return;
+    }
+    setError("");
+    setLiveStatus("Stopping request...");
+    try {
+      await postJson("/api/chats/interrupt", { chatId: activeChatId });
+    } catch (nextError) {
+      setError(String(nextError));
+      setLiveStatus("Interrupt failed");
+    }
+  };
+
   const handleOpenInEditor = async (editorId) => {
     const repoRoot = snapshot?.config?.repoRoot || "";
     if (!repoRoot) {
@@ -559,7 +578,7 @@ export default function App() {
     setError("");
     setPendingTurns((current) => ({
       ...current,
-      [requestKey]: { chatId: requestKey, userMessage: outgoingMessage, assistantText: "" },
+      [requestKey]: { chatId: requestKey, userMessage: outgoingMessage, assistantText: "", running: true },
     }));
     setSendingChatIds((current) => (current.includes(requestKey) ? current : [...current, requestKey]));
     if (activeChatIdRef.current === currentChatId) {
@@ -602,6 +621,7 @@ export default function App() {
                 chatId: eventChatId,
                 userMessage: event.message,
                 assistantText: previous.assistantText || "",
+                running: true,
               };
               return next;
             });
@@ -621,6 +641,7 @@ export default function App() {
                   chatId: eventChatId,
                   userMessage: previous.userMessage || outgoingMessage,
                   assistantText: `${previous.assistantText || ""}${event.text || ""}`,
+                  running: true,
                 },
               };
             });
@@ -632,6 +653,7 @@ export default function App() {
                 chatId: eventChatId,
                 userMessage: current[eventChatId]?.userMessage || outgoingMessage,
                 assistantText: event.text || "",
+                running: true,
               },
             }));
             break;
@@ -650,6 +672,27 @@ export default function App() {
             setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
             if (activeChatIdRef.current === eventChatId) {
               setLiveStatus(`Done in ${event.elapsedSeconds}s`);
+            }
+            break;
+          case "interrupted":
+            if (event.snapshot) {
+              setSnapshot(event.snapshot);
+              setRepoDraft(event.snapshot.config.repoRoot);
+              syncSavedProjects(event.snapshot.config.repoRoot);
+              void fetchProjectChats(event.snapshot.config.repoRoot).catch(() => {});
+            }
+            setPendingTurns((current) => ({
+              ...current,
+              [eventChatId]: {
+                chatId: eventChatId,
+                userMessage: current[eventChatId]?.userMessage || outgoingMessage,
+                assistantText: event.partialText || current[eventChatId]?.assistantText || "",
+                running: false,
+              },
+            }));
+            setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
+            if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
+              setLiveStatus("Request interrupted");
             }
             break;
           case "error":
@@ -1112,6 +1155,11 @@ export default function App() {
               >
                 {diffPanelOpen ? `Hide diff (${activeChanges.length})` : `Show diff (${activeChanges.length})`}
               </button>
+              {activeChatRunning && (
+                <button type="button" className="secondary-button" onClick={handleInterruptChat}>
+                  Stop
+                </button>
+              )}
               <div className="header-menu-wrap" onClick={(event) => event.stopPropagation()}>
                 <button
                   type="button"
@@ -1206,7 +1254,7 @@ export default function App() {
                 </div>
               ))
             )}
-            {activePendingTurn && (
+            {activePendingTurn?.running && (
               <div className="message-row assistant">
                 <div className="thinking-dots">
                   <span></span>
