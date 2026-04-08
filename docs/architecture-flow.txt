@@ -1,0 +1,316 @@
+GPT TUI Desktop Architecture Flow
+
+1. Runtime shape
+
+The desktop app is split into three layers:
+
+- Electron shell
+- Node backend
+- React renderer
+
+Electron is only responsible for native desktop concerns. The Node backend owns app state,
+provider orchestration, chat persistence, repo diffing, and streaming. The React renderer
+talks to the backend over localhost HTTP and renders the UI.
+
+
+2. Boot flow
+
+Entry point:
+- desktop_app/electron/main.js
+
+Boot sequence:
+- Electron becomes ready.
+- A free localhost port is allocated.
+- startBackendServer() from desktop_app/backend/server.js is started on that port.
+- The BrowserWindow is created.
+- In development, the window loads the Vite URL from ELECTRON_RENDERER_URL.
+- In production, the window loads desktop_app/web/dist/index.html.
+
+The Electron preload bridge exposes a minimal API:
+- desktop:get-config
+- desktop:pick-repo
+- desktop:open-in-editor
+
+That bridge is defined in:
+- desktop_app/electron/preload.js
+
+
+3. Backend HTTP surface
+
+Backend entry:
+- desktop_app/backend/server.js
+
+The backend is a small HTTP server over DesktopSessionService.
+
+Important endpoints:
+- GET /api/status
+  Returns the current snapshot for the renderer.
+- GET /api/chats?repoRoot=...
+  Returns chat summaries for a project.
+- GET /api/file?path=...
+  Returns file content.
+- POST /api/config
+  Updates app-level config.
+- POST /api/chats/new
+  Starts a fresh chat.
+- POST /api/chats/activate
+  Opens an existing chat.
+- POST /api/chats/delete
+  Deletes a chat.
+- POST /api/chats/preferences
+  Updates per-chat tool safety mode.
+- POST /api/chat/send
+  Non-streaming send.
+- POST /api/chat/send-stream
+  Streaming NDJSON send path used by the UI.
+
+
+4. Backend state owner
+
+Core service:
+- desktop_app/backend/sessionService.js
+
+DesktopSessionService owns:
+- selected repo root
+- active chat id
+- active model
+- prompt preset
+- current messages
+- current diff/change list
+- running chat ids
+- interrupted run recovery state
+
+It constructs and coordinates:
+- AppConfigStore
+- ProjectChatStore
+- RepoFileService
+- ToolExecutor
+- CodexProvider
+- GeminiCliProvider
+- GeminiApiProvider
+- GroqProvider
+
+
+5. Persistence model
+
+Global app config:
+- desktop_app/backend/configStore.js
+- Stored in LOCALAPPDATA\\gpt-tui\\config.json on Windows
+
+This global config contains:
+- active repo
+- active chat id
+- selected model
+- API keys
+- prompt preset
+- assistant memory
+- context-carry setting
+- provider session ids
+- interrupted run metadata
+
+Per-project chat persistence:
+- desktop_app/backend/chatStore.js
+- Stored in repoRoot\\.gpt-tui\\chats\\
+
+Files created there:
+- index.json for the chat list
+- one JSON file per chat
+
+Each saved chat contains:
+- title
+- messages
+- model
+- provider state
+- tool safety mode
+- tracked file changes
+
+
+6. Request lifecycle
+
+Main streaming path:
+- DesktopSessionService.sendMessageEvents()
+
+Flow:
+- Resolve the target repo/chat/model/tool safety mode.
+- Load existing chat state if this is an existing thread.
+- Restore provider session ids for CLI-backed models.
+- Add the new user message to the chat.
+- Snapshot repo state before the request.
+- Mark the chat as running.
+- Emit an initial status event.
+- Route to the selected provider.
+
+If the request completes:
+- Collect the final assistant output.
+- Snapshot repo state again.
+- Build the diff/change list.
+- Save the completed chat.
+- Emit assistant + completed events.
+
+If the request fails:
+- Remove the chat from the running set.
+- Store interrupted run metadata.
+- Persist recovery state so restart can show interrupted chats.
+
+
+7. Provider routing
+
+Provider selection happens in:
+- desktop_app/backend/sessionService.js
+  providerForRequest()
+
+Current mapping:
+- codex:* -> CodexProvider
+- gemini-cli:* -> GeminiCliProvider
+- gemini* -> GeminiApiProvider
+- everything else -> GroqProvider
+
+
+8. Codex flow
+
+Codex implementation:
+- desktop_app/backend/providers.js
+
+Current path:
+- Uses codex app-server, not codex exec
+- Initializes a long-lived app-server process
+- Starts or resumes a Codex thread
+- Starts a turn with text input
+- Parses item/agentMessage/delta notifications
+- Streams those deltas back to the frontend as cli_output events
+
+Per-chat permission mode affects the Codex sandbox:
+- read-only chat -> sandbox: read-only
+- write-enabled chat -> sandbox: workspace-write
+
+Codex session ids are persisted so follow-up turns can resume the same thread.
+
+
+9. Gemini CLI flow
+
+Gemini CLI implementation:
+- desktop_app/backend/providers.js
+
+Flow:
+- Spawn gemini CLI in stream-json mode
+- Send the prompt over stdin
+- Parse JSON events from stdout
+- Emit incremental cli_output chunks
+- Persist the Gemini CLI session id for follow-up turns
+
+
+10. API model flow
+
+Groq and Gemini API models use direct HTTP-style completion requests.
+
+For those models, the backend can optionally enter a tool loop:
+- decide whether the prompt needs tools
+- ask the model for tool calls
+- execute tools locally
+- feed tool results back into the model
+
+This logic is coordinated in:
+- desktop_app/backend/sessionService.js
+
+
+11. Tools and file changes
+
+Local tool execution:
+- desktop_app/backend/toolExecutor.js
+
+Supported actions include:
+- read file
+- write file
+- edit file
+- delete path
+- rename file
+- create directory
+- list files
+- run terminal command
+
+Repo diffing:
+- desktop_app/backend/fileService.js
+
+The backend snapshots repo state before and after a turn, then computes changed files.
+Those changes are attached to the chat and shown in the UI as the chat-specific diff view.
+
+
+12. Frontend flow
+
+Main renderer:
+- desktop_app/web/src/App.jsx
+
+Renderer responsibilities:
+- fetch initial backend URL from preload
+- fetch backend snapshot
+- keep local UI state such as menus, splash state, and pending streamed text
+- send prompts to /api/chat/send-stream
+- parse NDJSON streaming events
+- update the visible active chat
+- keep background loaders for chats still running in other threads/projects
+
+Important renderer concepts:
+- snapshot: latest backend state
+- pendingTurns: in-progress streamed text per chat id
+- projectChats: cached chat lists per saved project
+- savedProjects: persisted in browser localStorage
+- diffPanelOpen: toggles the changed-files diff UI for the active chat
+
+
+13. UI composition
+
+The UI is project-first:
+- left sidebar shows saved projects and chats
+- main panel shows the chat
+- composer at the bottom controls message input, tool safety, and model choice
+- top header contains project actions, diff toggle, new chat, and settings
+
+The settings screen is not a modal. It replaces the main UI surface and lets the user edit:
+- API keys
+- prompt preset
+- assistant memory
+- context carry count
+
+
+14. Open in editor flow
+
+Electron main process owns native editor launching:
+- desktop_app/electron/main.js
+
+Current supported editors:
+- VS Code
+- Antigravity
+- Cursor
+
+Renderer -> preload -> ipcMain -> spawn detached editor process with the current repo root.
+
+
+15. What is project-local vs global
+
+Project-local:
+- chat history
+- chat titles
+- provider thread/session state stored with each chat
+- tracked diff list per chat
+
+Global:
+- selected active repo
+- selected active chat
+- model default
+- API keys
+- assistant memory
+- context carry count
+- interrupted run metadata
+
+
+16. Current design intent
+
+This app is no longer "Python backend + Electron wrapper".
+Its current architecture is:
+
+- Electron for native desktop shell
+- Node for backend state and orchestration
+- React for UI
+- local CLIs and APIs for model execution
+
+The desktop backend is now fully JS-based.
