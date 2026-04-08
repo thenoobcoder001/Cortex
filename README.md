@@ -1,154 +1,26 @@
-# gpt-tui (Windows TUI - Refactored)
+# GPT TUI Desktop
 
-Windows-first coding TUI with:
-- Cleaner two-pane UI (workspace + assistant)
-- Split architecture (`ui`, `providers`, `services`, `config`)
-- API key onboarding with live validation + persistence
-- Repo-safe absolute-path file commands
+Desktop-first local AI coding app built with:
+- Electron
+- React
+- Node.js backend
 
-## What this includes
-
-- Textual app with improved layout + status chips
-- Prompt input box (Enter to submit)
-- Groq-backed chat responses
-- Simple commands:
-  - `/help`
-  - `/model <model-name>`
-  - `/clear`
-  - `/repo`
-  - `/repo <absolute_dir_path>`
-  - `/files [absolute_dir_path]` (absolute path only, inside repo only)
-  - `/read <absolute_file_path>` (absolute path only, inside repo only)
-  - `/apikey set <key>` (tests key, saves only if valid)
-  - `/apikey status`
-  - `/apikey clear`
-- Keybindings:
-  - `q` or `Ctrl+C`: quit
-  - `Ctrl+L`: clear chat
-  - `Ctrl+1`: focus prompt
-  - `Ctrl+2`: focus file tree
-  - `Ctrl+R`: refresh file tree
-
-## API key flow
-
-1. Start app
-2. Run:
-   - `/apikey set gsk_...`
-3. App validates the key against Groq
-4. On success, app shows confirmation and saves key in local config for future sessions
-
-## File tree behavior
-
-- Navigate in the left pane.
-- Select a file to preview its content in chat log.
-- Selection is still repo-scoped: outside paths are rejected.
+The old Python/Textual app has been removed. This repo now tracks only the desktop application and its supporting docs/debug artifacts.
 
 ## Run
 
 ```powershell
-cd E:\codex\gpt-tui
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-$env:GROQ_API_KEY="your_groq_api_key_here"
-# Optional:
-# $env:GROQ_MODEL="llama-3.3-70b-versatile"
-python app.py
-```
-
-## Project structure
-
-```text
-app.py
-desktop_app/
-  backend/
-  electron/
-  web/
-docs/
-  help.txt
-  instructions.md
-gpt_tui/
-  config.py
-  providers/
-  services/
-  ui/
-packaging/
-  inno/
-    installer.iss
-  pyinstaller/
-    gpt-tui.spec
-scripts/
-  build-tui.ps1
-  build-installer.ps1
-tests/
-debug/
-  manual-tests/
-  recovered-files/
-  scratch/
-```
-
-## Build Windows app (.exe)
-
-```powershell
-cd E:\codex\gpt-tui
-powershell -ExecutionPolicy Bypass -File .\scripts\build-tui.ps1
-```
-
-Output:
-- `out\dist\gpt-tui.exe`
-
-Run packaged app:
-```powershell
-.\out\dist\gpt-tui.exe
-```
-
-Or use launcher:
-```powershell
-.\run-gpt-tui.bat
-```
-
-Notes:
-- This is a console app (required for Textual TUI).
-- Keep using `GROQ_API_KEY` in env (User env is supported by launcher).
-
-## Build Windows installer (.exe setup)
-
-Prerequisite:
-- Inno Setup 6 (`ISCC.exe`) installed
-
-Build installer:
-```powershell
-cd E:\codex\gpt-tui
-powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
-```
-
-Output:
-- `out\installer\gpt-tui-setup.exe`
-
-The installer creates:
-- Start Menu shortcut
-- Optional desktop shortcut
-- Installed app under `Program Files\gpt-tui`
-
-## Electron + React desktop shell
-
-This repo now contains a desktop app in `desktop_app/`:
-
-- Node.js backend in `desktop_app/backend`
-- React renderer in `desktop_app/web`
-- Electron shell in `desktop_app/electron`
-
-Development flow:
-
-```powershell
-cd E:\codex\gpt-tui
-
-cd .\desktop_app
+cd E:\codex\gpt-tui\desktop_app
 npm install
 npm run dev
 ```
 
-Packaged desktop build flow:
+That starts:
+- the Vite renderer
+- Electron
+- the local Node backend
+
+## Build
 
 ```powershell
 cd E:\codex\gpt-tui\desktop_app
@@ -156,26 +28,56 @@ npm install
 npm run build
 ```
 
-That build does three things:
-- builds the React frontend
-- packages the Electron app with the bundled Node backend using `electron-builder`
+That builds:
+- the React renderer
+- the packaged Electron desktop app with the bundled Node backend
 
-## Next phase
+## Repo Shape
 
-- Add provider abstraction (`Ollama`, `OpenAI`, others)
-- Add file tools (`list/read`) and patch apply flow
-- Add shell command tool with confirmation
+```text
+desktop_app/
+  backend/
+  electron/
+  web/
+docs/
+  architecture-flow.txt
+debug/
+out/
+images/
+```
 
-## Known issues
+## Architecture
 
-- Gemini CLI and Codex CLI depend on local terminal/auth state; backend capacity and auth errors can be intermittent.
-- In-terminal mouse selection depends on your terminal emulator and alternate-screen behavior; use in-app copy commands as fallback.
-- Live provider tests can be flaky when network/provider limits are hit; use `scripts/smoke_test.ps1` for baseline validation.
+Main flow:
+- Electron boots the local backend
+- React talks to the backend over localhost HTTP
+- the backend manages chats, projects, provider sessions, diffs, and streaming
 
-## Repo hygiene
+Key files:
+- `desktop_app/electron/main.js`
+- `desktop_app/backend/server.js`
+- `desktop_app/backend/sessionService.js`
+- `desktop_app/web/src/App.jsx`
+- `docs/architecture-flow.txt`
 
-- `packaging/` contains installer and PyInstaller assets.
-- `scripts/` contains build entrypoints instead of root-level PowerShell files.
-- `docs/` contains text documentation that used to live at the repo root.
-- `debug/manual-tests/` contains one-off manual checks that are intentionally kept out of automated pytest discovery.
-- `out/` contains generated build artifacts and logs so the repo root stays source-focused.
+## Current Backend Features
+
+- per-project chat storage
+- Codex streaming via `codex app-server`
+- Gemini CLI streaming
+- Groq and Gemini API support
+- per-chat permission mode
+- chat interruption / stop
+- tracked workspace diffs per chat
+
+## Verification
+
+Current Node-side checks include:
+- backend unit/integration tests in `desktop_app/backend/*.test.js`
+- renderer production build with `npm run build:web`
+
+## Notes
+
+- `local-notes/` is ignored and intended for private working notes.
+- `out/` contains generated artifacts and logs.
+- `debug/` is for local scratch artifacts only, not product runtime.
