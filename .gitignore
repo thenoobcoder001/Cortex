@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -9,47 +8,34 @@ __pycache__/
 dist/
 build/
 /build/
-.eggs/
 .env
 .venv/
 venv/
 env/
 
-# PyInstaller — keep the spec file but ignore build output
-# *.spec  ← intentionally tracked (has custom build config)
-*.manifest
-
-# Distribution / installer output
 installer/
 out/
 *.exe
 *.msi
 desktop_app/node_modules/
 desktop_app/dist/
-desktop_app/dist-backend/
-desktop_app/build-backend/
 desktop_app/web/dist/
 
-# IDE / Editor
 .vscode/
 .idea/
 *.suo
 *.user
 
-# OS
 Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Test artifacts
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Logs
 *.log
 *.err.log
 
-# Local runtime state
 .gpt-tui/
 local-notes/
