@@ -37,8 +37,8 @@ function sendError(response, error) {
   sendJson(response, 400, { detail: String(error?.message || error) });
 }
 
-function startBackendServer({ host = "127.0.0.1", port = 8765 } = {}) {
-  const service = new DesktopSessionService();
+function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } = {}) {
+  const effectiveService = service || new DesktopSessionService();
   const server = http.createServer(async (request, response) => {
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
@@ -57,38 +57,42 @@ function startBackendServer({ host = "127.0.0.1", port = 8765 } = {}) {
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/status") {
-        sendJson(response, 200, service.snapshot());
+        sendJson(response, 200, effectiveService.snapshot());
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/chats") {
-        sendJson(response, 200, { chats: service.listChats(url.searchParams.get("repoRoot")) });
+        sendJson(response, 200, { chats: effectiveService.listChats(url.searchParams.get("repoRoot")) });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/file") {
-        sendJson(response, 200, service.readFile(url.searchParams.get("path") || ""));
+        sendJson(response, 200, effectiveService.readFile(url.searchParams.get("path") || ""));
         return;
       }
 
       const body = request.method === "POST" ? await readJsonBody(request) : {};
 
       if (request.method === "POST" && url.pathname === "/api/config") {
-        sendJson(response, 200, service.updateConfig(body));
+        sendJson(response, 200, effectiveService.updateConfig(body));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/new") {
-        sendJson(response, 200, service.newChat(body.repoRoot || null));
+        sendJson(response, 200, effectiveService.newChat(body.repoRoot || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/activate") {
-        sendJson(response, 200, service.activateChat(body.chatId, body.repoRoot || null));
+        sendJson(response, 200, effectiveService.activateChat(body.chatId, body.repoRoot || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/delete") {
-        sendJson(response, 200, service.deleteChat(body.chatId, body.repoRoot || null));
+        sendJson(response, 200, effectiveService.deleteChat(body.chatId, body.repoRoot || null));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/chats/interrupt") {
+        sendJson(response, 200, effectiveService.interruptChat(body.chatId || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/preferences") {
-        sendJson(response, 200, service.updateChatPreferences({
+        sendJson(response, 200, effectiveService.updateChatPreferences({
           toolSafetyMode: body.toolSafetyMode,
           chatId: body.chatId || null,
           repoRoot: body.repoRoot || null,
@@ -99,7 +103,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765 } = {}) {
         sendJson(
           response,
           200,
-          await service.sendMessage(body.message, {
+          await effectiveService.sendMessage(body.message, {
             chatId: body.chatId || null,
             repoRoot: body.repoRoot || null,
             model: body.model || null,
@@ -117,7 +121,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765 } = {}) {
           "Access-Control-Allow-Origin": "*",
         });
         try {
-          for await (const event of service.sendMessageEvents(body.message, {
+          for await (const event of effectiveService.sendMessageEvents(body.message, {
             chatId: body.chatId || null,
             repoRoot: body.repoRoot || null,
             model: body.model || null,
@@ -144,7 +148,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765 } = {}) {
     server.listen(port, host, () => {
       resolve({
         server,
-        service,
+        service: effectiveService,
         url: `http://${host}:${port}`,
         close: () =>
           new Promise((closeResolve, closeReject) => {
