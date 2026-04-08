@@ -1,2 +1,0 @@
-"""gpt_tui package."""
-
