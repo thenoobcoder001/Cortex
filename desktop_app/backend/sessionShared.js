@@ -22,8 +22,26 @@ function normalizeChanges(changes) {
     : [];
 }
 
+function normalizePlan(plan) {
+  if (!plan || typeof plan !== "object") {
+    return null;
+  }
+  const path = String(plan.path || "").trim();
+  const content = String(plan.content || "").trim();
+  if (!path || !content) {
+    return null;
+  }
+  return {
+    path,
+    content,
+    createdAt: String(plan.createdAt || plan.created_at || ""),
+    title: String(plan.title || ""),
+  };
+}
+
 module.exports = {
   nowIso,
   normalizeMessages,
   normalizeChanges,
+  normalizePlan,
 };

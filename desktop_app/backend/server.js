@@ -99,6 +99,26 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
         }));
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/workspace/accept") {
+        sendJson(response, 200, effectiveService.acceptWorkspaceChanges(body.repoRoot || null));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/workspace/revert") {
+        sendJson(response, 200, effectiveService.revertWorkspaceChanges(body.repoRoot || null));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/cache/clear") {
+        sendJson(response, 200, effectiveService.clearLocalData(Array.isArray(body.repoRoots) ? body.repoRoots : []));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/config/delete") {
+        sendJson(response, 200, effectiveService.deleteSettingsFile());
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/providers/test") {
+        sendJson(response, 200, await effectiveService.testProviderConnection(body));
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/chat/send") {
         sendJson(
           response,
