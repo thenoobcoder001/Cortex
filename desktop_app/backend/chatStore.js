@@ -27,12 +27,24 @@ class ProjectChatStore {
     return path.join(this.storeDir, "index.json");
   }
 
+  get workspaceFile() {
+    return path.join(this.storeDir, "workspace.json");
+  }
+
+  get plansDir() {
+    return path.join(this.repoRoot, ".gpt-tui", "plans");
+  }
+
   chatFile(chatId) {
     return path.join(this.storeDir, `${chatId}.json`);
   }
 
   ensureDir() {
     fs.mkdirSync(this.storeDir, { recursive: true });
+  }
+
+  ensurePlansDir() {
+    fs.mkdirSync(this.plansDir, { recursive: true });
   }
 
   loadIndex() {
@@ -50,6 +62,37 @@ class ProjectChatStore {
   saveIndex(items) {
     this.ensureDir();
     fs.writeFileSync(this.indexFile, JSON.stringify(items, null, 2), "utf8");
+  }
+
+  loadWorkspaceState() {
+    try {
+      if (!fs.existsSync(this.workspaceFile)) {
+        return {};
+      }
+      const raw = JSON.parse(fs.readFileSync(this.workspaceFile, "utf8"));
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  saveWorkspaceState(state) {
+    this.ensureDir();
+    fs.writeFileSync(this.workspaceFile, JSON.stringify(state || {}, null, 2), "utf8");
+  }
+
+  loadAcceptedRepoState() {
+    const state = this.loadWorkspaceState();
+    return state?.accepted_repo_state && typeof state.accepted_repo_state === "object"
+      ? state.accepted_repo_state
+      : null;
+  }
+
+  saveAcceptedRepoState(repoState) {
+    const state = this.loadWorkspaceState();
+    state.accepted_repo_state = repoState || {};
+    state.updated_at = nowIso();
+    this.saveWorkspaceState(state);
   }
 
   titleFromMessages(messages) {
@@ -102,7 +145,37 @@ class ProjectChatStore {
     return chatId;
   }
 
-  saveChat(chatId, messages, { model, providerState = null, changes = [], toolSafetyMode = "write" } = {}) {
+  savePlan(chatId, title, prompt, content) {
+    this.ensurePlansDir();
+    const slug = String(title || "plan")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "plan";
+    const fileName = `${chatId}-${Date.now()}-${slug}.md`;
+    const fullPath = path.join(this.plansDir, fileName);
+    const markdown = [
+      `# ${title || "Implementation Plan"}`,
+      "",
+      "## Request",
+      "",
+      String(prompt || "").trim(),
+      "",
+      "## Plan",
+      "",
+      String(content || "").trim(),
+      "",
+    ].join("\n");
+    fs.writeFileSync(fullPath, markdown, "utf8");
+    return {
+      path: fullPath,
+      content: markdown,
+      createdAt: nowIso(),
+      title: title || "Implementation Plan",
+    };
+  }
+
+  saveChat(chatId, messages, { model, providerState = null, changes = [], toolSafetyMode = "write", plan = null } = {}) {
     if (!chatId) {
       return;
     }
@@ -118,6 +191,9 @@ class ProjectChatStore {
       changes,
       tool_safety_mode: toolSafetyMode || "write",
     };
+    if (plan && typeof plan === "object") {
+      payload.plan = plan;
+    }
     if (providerState && Object.keys(providerState).length > 0) {
       payload.provider_state = providerState;
     }
@@ -131,6 +207,7 @@ class ProjectChatStore {
       existing.model = model;
       existing.change_count = Array.isArray(changes) ? changes.length : 0;
       existing.tool_safety_mode = toolSafetyMode || "write";
+      existing.has_plan = Boolean(plan?.path);
       if (!existing.created_at) {
         existing.created_at = timestamp;
       }
@@ -143,6 +220,7 @@ class ProjectChatStore {
         model,
         change_count: Array.isArray(changes) ? changes.length : 0,
         tool_safety_mode: toolSafetyMode || "write",
+        has_plan: Boolean(plan?.path),
       });
     }
     this.saveIndex(items);

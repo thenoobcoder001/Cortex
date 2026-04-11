@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
@@ -111,56 +111,82 @@ function createWindow() {
   }
 }
 
-ipcMain.handle("desktop:get-config", () => ({
-  backendUrl,
-}));
+if (ipcMain) {
+  ipcMain.handle("desktop:get-config", () => ({
+    backendUrl,
+  }));
 
-ipcMain.handle("desktop:pick-repo", async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ["openDirectory"],
+  ipcMain.handle("desktop:pick-repo", async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0];
   });
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
-  }
-  return result.filePaths[0];
-});
 
-ipcMain.handle("desktop:open-in-editor", async (_event, payload) => {
-  const repoRoot = String(payload?.repoRoot || "").trim();
-  const editorId = String(payload?.editor || "").trim().toLowerCase();
-  const editor = EXTERNAL_EDITORS[editorId];
+  ipcMain.handle("desktop:open-in-editor", async (_event, payload) => {
+    const repoRoot = String(payload?.repoRoot || "").trim();
+    const editorId = String(payload?.editor || "").trim().toLowerCase();
+    const editor = EXTERNAL_EDITORS[editorId];
 
-  if (!editor) {
-    throw new Error("Unsupported editor.");
-  }
-  if (!repoRoot) {
-    throw new Error("No project folder is selected.");
-  }
+    if (!editor) {
+      throw new Error("Unsupported editor.");
+    }
+    if (!repoRoot) {
+      throw new Error("No project folder is selected.");
+    }
 
-  const targetPath = path.resolve(repoRoot);
-  if (!fs.existsSync(targetPath)) {
-    throw new Error("Selected project folder does not exist.");
-  }
+    const targetPath = path.resolve(repoRoot);
+    if (!fs.existsSync(targetPath)) {
+      throw new Error("Selected project folder does not exist.");
+    }
 
-  try {
-    await launchDetached(editor.command, [targetPath], targetPath);
+    try {
+      await launchDetached(editor.command, [targetPath], targetPath);
+      return { ok: true };
+    } catch {
+      throw new Error(`${editor.label} is not available. Install its CLI launcher or add it to PATH.`);
+    }
+  });
+
+  ipcMain.handle("desktop:open-file", async (_event, payload) => {
+    const filePath = String(payload?.path || "").trim();
+    if (!filePath) {
+      throw new Error("No file path was provided.");
+    }
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved)) {
+      throw new Error("Selected file does not exist.");
+    }
+
+    const error = await shell.openPath(resolved);
+    if (error) {
+      throw new Error(error);
+    }
     return { ok: true };
-  } catch {
-    throw new Error(`${editor.label} is not available. Install its CLI launcher or add it to PATH.`);
-  }
-});
+  });
+}
 
-app.whenReady().then(async () => {
-  await startBackend();
-  createWindow();
-});
+if (app) {
+  app.whenReady().then(async () => {
+    await startBackend();
+    createWindow();
+  });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
 
-app.on("before-quit", () => {
-  stopBackend();
-});
+  app.on("before-quit", () => {
+    stopBackend();
+  });
+} else {
+  // Fallback testing local backend if electron fails to load
+  console.log("Starting backend without electron...");
+  startBackend();
+}
+

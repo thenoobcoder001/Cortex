@@ -10,6 +10,7 @@ const PRESET_PROMPTS = {
   debug: "Prioritize root-cause analysis, reproduction, and minimal-risk fixes.",
   refactor: "Prioritize maintainability, readability, and behavior-preserving changes.",
   explain: "Prioritize clear explanation, tradeoffs, and short examples.",
+  plan: "Return a concrete markdown implementation plan. Use short sections: Goal, Assumptions, Plan, Risks, Validation. Do not execute changes. Do not use tools unless explicitly requested.",
 };
 
 const BASE_ASSISTANT_SYSTEM_PROMPT = [

@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { nowIso, normalizeMessages, normalizeChanges } = require("./sessionShared");
+const { nowIso, normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
 
 function initialRepoRoot(config) {
   if (config.repoRoot && fs.existsSync(config.repoRoot) && fs.statSync(config.repoRoot).isDirectory()) {
@@ -51,6 +51,7 @@ function restoreActiveChat(service) {
   service.activeChatModel = String(payload.model || "");
   service.messages = normalizeMessages(payload.messages);
   service.changes = normalizeChanges(payload.changes);
+  service.activePlan = normalizePlan(payload.plan);
   service.toolReadOnly = String(payload.tool_safety_mode || "write") === "read";
   service.toolExecutor.readOnly = service.toolReadOnly;
 }
@@ -74,16 +75,18 @@ function clearActiveRun(service, chatId) {
   persistConfig(service);
 }
 
-function saveCompletedChat(service, { chatStore, chatId, messages, model, providerState, toolSafetyMode, repoRoot, changes }) {
+function saveCompletedChat(service, { chatStore, chatId, messages, model, providerState, toolSafetyMode, repoRoot, changes, plan = null }) {
   chatStore.saveChat(chatId, messages, {
     model,
     providerState,
     changes,
     toolSafetyMode,
+    plan,
   });
   if (service.activeChatId === chatId && service.repoRoot === repoRoot) {
     service.messages = normalizeMessages(messages);
     service.changes = normalizeChanges(changes);
+    service.activePlan = normalizePlan(plan);
     service.activeChatModel = model;
   }
   service.requestRegistry.finish(chatId);

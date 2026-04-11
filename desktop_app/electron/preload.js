@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld("desktopApi", {
   pickRepoDirectory: () => ipcRenderer.invoke("desktop:pick-repo"),
   openInEditor: (editor, repoRoot) =>
     ipcRenderer.invoke("desktop:open-in-editor", { editor, repoRoot }),
+  openFile: (filePath) => ipcRenderer.invoke("desktop:open-file", { path: filePath }),
 });
