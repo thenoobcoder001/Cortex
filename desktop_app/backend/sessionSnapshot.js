@@ -52,7 +52,7 @@ function buildSnapshot(service) {
       promptPreset: service.promptPreset,
       toolSafetyMode: service.toolReadOnly ? "read" : "write",
       assistantMemory: service.config.assistantMemory || "",
-      contextCarryMessages: service.config.contextCarryMessages || 5,
+      contextCarryMessages: service.config.contextCarryMessages ?? 5,
     },
     providers: providersSnapshot(service),
     models: models(),

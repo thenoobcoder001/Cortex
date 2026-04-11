@@ -109,7 +109,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     && service.modelFamily(existingModel) !== service.modelFamily(requestModel)
     && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:"))
   ) {
-    baseMessages = service.recentChatContext(baseMessages, service.config.contextCarryMessages || 5);
+    baseMessages = service.recentChatContext(baseMessages, service.config.contextCarryMessages ?? 5);
     if (requestModel.startsWith("codex:")) {
       service.codexProvider.sessionId = "";
       service.codexProvider.sessionMode = "fresh";
