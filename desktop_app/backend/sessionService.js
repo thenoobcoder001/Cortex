@@ -4,7 +4,7 @@ const {
   PRESET_PROMPTS,
   BASE_ASSISTANT_SYSTEM_PROMPT,
 } = require("./constants");
-const { AppConfigStore } = require("./configStore");
+const { AppConfigStore, normalizeContextCarryMessages } = require("./configStore");
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
@@ -202,7 +202,7 @@ class DesktopSessionService {
       this.config.assistantMemory = String(assistantMemory || "");
     }
     if (contextCarryMessages != null) {
-      this.config.contextCarryMessages = Math.max(0, Math.min(Number(contextCarryMessages) || 0, 20));
+      this.config.contextCarryMessages = normalizeContextCarryMessages(contextCarryMessages, 0);
     }
     this.persistConfig();
     return this.snapshot();

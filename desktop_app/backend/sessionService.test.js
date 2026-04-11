@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { DesktopSessionService } = require("./sessionService");
+const { AppConfigStore } = require("./configStore");
 const { startBackendServer } = require("./server");
 const { InterruptError } = require("./providers");
 
@@ -91,7 +92,7 @@ function makeTempRepo() {
 
 function createService(repoRoot, overrides = {}) {
   return new DesktopSessionService({
-    config: new MemoryConfig(repoRoot),
+    config: overrides.config || new MemoryConfig(repoRoot),
     repoRoot,
     codexProvider: overrides.codexProvider || new FakeCliProvider(),
     geminiCliProvider: overrides.geminiCliProvider || new FakeCliProvider(),
@@ -186,5 +187,34 @@ test("interrupt endpoint aborts a running codex chat and emits interrupted event
     assert.deepEqual(service.requestRegistry.ids(), []);
   } finally {
     await backend.close();
+  }
+});
+
+
+test("context carry can be set to zero and survives snapshot/config reload", () => {
+  const repoRoot = makeTempRepo();
+  const localAppDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gpt-tui-config-"));
+  const configPath = path.join(localAppDataDir, "gpt-tui", "config.json");
+  const config = new AppConfigStore();
+  config.path = configPath;
+  const service = createService(repoRoot, { config });
+
+  const snapshot = service.updateConfig({ contextCarryMessages: 0 });
+  assert.equal(snapshot.config.contextCarryMessages, 0);
+
+  const savedRaw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.equal(savedRaw.context_carry_messages, 0);
+
+  const originalLocalAppData = process.env.LOCALAPPDATA;
+  process.env.LOCALAPPDATA = localAppDataDir;
+  try {
+    const reloaded = AppConfigStore.load();
+    assert.equal(reloaded.contextCarryMessages, 0);
+  } finally {
+    if (originalLocalAppData == null) {
+      delete process.env.LOCALAPPDATA;
+    } else {
+      process.env.LOCALAPPDATA = originalLocalAppData;
+    }
   }
 });

@@ -3,6 +3,14 @@ const os = require("node:os");
 const path = require("node:path");
 const { DEFAULT_MODEL } = require("./constants");
 
+function normalizeContextCarryMessages(value, fallback = 5) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(Math.trunc(parsed), 20));
+}
+
 function configDir() {
   if (process.platform === "win32") {
     return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "gpt-tui");
@@ -47,7 +55,10 @@ class AppConfigStore {
         config.promptPreset = String(raw.prompt_preset || raw.promptPreset || "code") || "code";
         config.toolSafetyMode = String(raw.tool_safety_mode || raw.toolSafetyMode || "write") || "write";
         config.assistantMemory = String(raw.assistant_memory || raw.assistantMemory || "");
-        config.contextCarryMessages = Number(raw.context_carry_messages ?? raw.contextCarryMessages ?? 5) || 5;
+        config.contextCarryMessages = normalizeContextCarryMessages(
+          raw.context_carry_messages ?? raw.contextCarryMessages,
+          5,
+        );
         config.geminiSessionId = String(raw.gemini_session_id || raw.geminiSessionId || "");
         config.codexSessionId = String(raw.codex_session_id || raw.codexSessionId || "");
         config.activeRuns = Array.isArray(raw.active_runs || raw.activeRuns) ? raw.active_runs || raw.activeRuns : [];
@@ -92,4 +103,5 @@ class AppConfigStore {
 
 module.exports = {
   AppConfigStore,
+  normalizeContextCarryMessages,
 };
