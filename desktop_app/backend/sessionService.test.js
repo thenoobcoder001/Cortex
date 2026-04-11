@@ -11,6 +11,7 @@ const { InterruptError } = require("./providers");
 class MemoryConfig {
   constructor(repoRoot) {
     this.repoRoot = repoRoot;
+    this.path = "";
     this.activeChatId = "";
     this.model = "codex:gpt-5.4";
     this.apiKey = "";
@@ -26,7 +27,36 @@ class MemoryConfig {
     this.interruptedRuns = [];
   }
 
-  save() {}
+  save() {
+    if (!this.path) {
+      return;
+    }
+    fs.mkdirSync(path.dirname(this.path), { recursive: true });
+    fs.writeFileSync(this.path, JSON.stringify({ api_key: this.apiKey }), "utf8");
+  }
+
+  reset() {
+    this.repoRoot = "";
+    this.activeChatId = "";
+    this.model = "codex:gpt-5.4";
+    this.apiKey = "";
+    this.geminiApiKey = "";
+    this.openaiApiKey = "";
+    this.promptPreset = "code";
+    this.toolSafetyMode = "write";
+    this.assistantMemory = "";
+    this.contextCarryMessages = 5;
+    this.geminiSessionId = "";
+    this.codexSessionId = "";
+    this.activeRuns = [];
+    this.interruptedRuns = [];
+  }
+
+  deleteFile() {
+    if (this.path && fs.existsSync(this.path)) {
+      fs.unlinkSync(this.path);
+    }
+  }
 }
 
 class FakeCliProvider {
@@ -71,9 +101,12 @@ class FakeApiProvider {
   constructor() {
     this.available = true;
     this.connected = true;
+    this.apiKey = "";
   }
 
-  setApiKey() {}
+  setApiKey(value) {
+    this.apiKey = String(value || "");
+  }
 
   async chatCompletion() {
     return "ok";
@@ -96,6 +129,7 @@ function createService(repoRoot, overrides = {}) {
     repoRoot,
     codexProvider: overrides.codexProvider || new FakeCliProvider(),
     geminiCliProvider: overrides.geminiCliProvider || new FakeCliProvider(),
+    claudeProvider: overrides.claudeProvider || new FakeCliProvider(),
     groqProvider: new FakeApiProvider(),
     geminiProvider: new FakeApiProvider(),
   });
@@ -190,6 +224,120 @@ test("interrupt endpoint aborts a running codex chat and emits interrupted event
   }
 });
 
+test("workspace diff persists across chats until accepted", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+
+  const initialSnapshot = service.snapshot();
+  assert.equal(initialSnapshot.changes.length, 0);
+
+  fs.writeFileSync(path.join(repoRoot, "seed.txt"), "seed changed\n", "utf8");
+
+  const changedSnapshot = service.snapshot();
+  assert.equal(changedSnapshot.changes.length, 1);
+  assert.equal(changedSnapshot.changes[0].action, "edit");
+
+  service.newChat(repoRoot);
+  const newChatSnapshot = service.snapshot();
+  assert.equal(newChatSnapshot.changes.length, 1);
+
+  const acceptedSnapshot = service.acceptWorkspaceChanges(repoRoot);
+  assert.equal(acceptedSnapshot.changes.length, 0);
+});
+
+test("revert workspace changes restores accepted baseline", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+
+  service.acceptWorkspaceChanges(repoRoot);
+  fs.writeFileSync(path.join(repoRoot, "seed.txt"), "changed\n", "utf8");
+  fs.writeFileSync(path.join(repoRoot, "new-file.txt"), "new\n", "utf8");
+
+  const changedSnapshot = service.snapshot();
+  assert.equal(changedSnapshot.changes.length, 2);
+
+  const revertedSnapshot = service.revertWorkspaceChanges(repoRoot);
+  assert.equal(revertedSnapshot.changes.length, 0);
+  assert.equal(fs.readFileSync(path.join(repoRoot, "seed.txt"), "utf8"), "seed\n");
+  assert.ok(!fs.existsSync(path.join(repoRoot, "new-file.txt")));
+});
+
+test("clear local data removes project metadata and resets service state", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+
+  service.newChat(repoRoot);
+  service.updateConfig({
+    apiKey: "gsk_test",
+    geminiApiKey: "gem_test",
+    openaiApiKey: "sk_test",
+    assistantMemory: "remember this",
+    contextCarryMessages: 9,
+  });
+  service.acceptWorkspaceChanges(repoRoot);
+
+  const metadataDir = path.join(repoRoot, ".gpt-tui");
+  assert.ok(fs.existsSync(metadataDir));
+
+  const snapshot = service.clearLocalData([repoRoot]);
+  assert.equal(snapshot.config.activeChatId, "");
+  assert.equal(snapshot.config.apiKey, "");
+  assert.equal(snapshot.config.geminiApiKey, "");
+  assert.equal(snapshot.config.openaiApiKey, "");
+  assert.equal(snapshot.config.assistantMemory, "");
+  assert.equal(snapshot.chats.length, 0);
+  assert.ok(!fs.existsSync(metadataDir));
+});
+
+test("delete settings file clears saved keys without deleting project metadata", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  const configPath = path.join(repoRoot, "fake-config.json");
+  service.config.path = configPath;
+
+  service.updateConfig({
+    apiKey: "gsk_test",
+    geminiApiKey: "gem_test",
+    openaiApiKey: "sk_test",
+    assistantMemory: "remember this",
+    contextCarryMessages: 9,
+  });
+  service.newChat(repoRoot);
+
+  assert.ok(fs.existsSync(configPath));
+
+  const snapshot = service.deleteSettingsFile();
+  assert.equal(snapshot.config.apiKey, "");
+  assert.equal(snapshot.config.geminiApiKey, "");
+  assert.equal(snapshot.config.openaiApiKey, "");
+  assert.equal(snapshot.config.assistantMemory, "");
+  assert.equal(snapshot.config.activeChatId, "");
+  assert.equal(snapshot.config.configPath, configPath);
+  assert.ok(!fs.existsSync(configPath));
+  assert.ok(fs.existsSync(path.join(repoRoot, ".gpt-tui")));
+});
+
+test("provider connection test uses current draft keys and reports success", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+
+  let groqSignalSeen = false;
+  service.groqProvider.chatCompletion = async (_messages, _model, options = {}) => {
+    groqSignalSeen = Boolean(options.signal);
+    return "OK";
+  };
+
+  const result = await service.testProviderConnection({
+    providerId: "groq",
+    apiKey: "gsk_test",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.providerId, "groq");
+  assert.equal(result.message, "OK");
+  assert.equal(groqSignalSeen, true);
+  assert.equal(service.groqProvider.apiKey, "");
+});
 
 test("context carry can be set to zero and survives snapshot/config reload", () => {
   const repoRoot = makeTempRepo();
@@ -217,4 +365,42 @@ test("context carry can be set to zero and survives snapshot/config reload", () 
       process.env.LOCALAPPDATA = originalLocalAppData;
     }
   }
+});
+
+test("claude provider connection test reports success", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot, {
+    claudeProvider: new FakeCliProvider({ chunks: ["OK"], delayMs: 1 }),
+  });
+
+  const result = await service.testProviderConnection({
+    providerId: "claude",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.providerId, "claude");
+  assert.equal(result.message, "OK");
+});
+
+test("plan mode saves a markdown plan file and exposes it on the active snapshot", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  service.groqProvider.chatCompletion = async () => "## Goal\n\nShip the feature.\n";
+
+  let finalSnapshot = null;
+  for await (const event of service.sendMessageEvents("Plan the implementation", {
+    repoRoot,
+    model: "llama-3.3-70b-versatile",
+    promptPreset: "plan",
+  })) {
+    if (event.type === "completed") {
+      finalSnapshot = event.snapshot;
+    }
+  }
+
+  assert.ok(finalSnapshot);
+  assert.ok(finalSnapshot.activePlan);
+  assert.match(finalSnapshot.activePlan.path, /\\.gpt-tui[\\/]plans[\\/].+\.md$/i);
+  assert.ok(fs.existsSync(finalSnapshot.activePlan.path));
+  assert.match(fs.readFileSync(finalSnapshot.activePlan.path, "utf8"), /## Plan/i);
 });

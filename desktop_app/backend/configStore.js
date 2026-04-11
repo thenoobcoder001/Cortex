@@ -99,6 +99,33 @@ class AppConfigStore {
       "utf8",
     );
   }
+
+  reset() {
+    this.repoRoot = "";
+    this.activeChatId = "";
+    this.model = DEFAULT_MODEL;
+    this.apiKey = "";
+    this.geminiApiKey = "";
+    this.openaiApiKey = "";
+    this.promptPreset = "code";
+    this.toolSafetyMode = "write";
+    this.assistantMemory = "";
+    this.contextCarryMessages = 5;
+    this.geminiSessionId = "";
+    this.codexSessionId = "";
+    this.activeRuns = [];
+    this.interruptedRuns = [];
+  }
+
+  deleteFile() {
+    try {
+      if (fs.existsSync(this.path)) {
+        fs.unlinkSync(this.path);
+      }
+    } catch {
+      // Ignore cleanup failures; reset state is still applied in memory.
+    }
+  }
 }
 
 module.exports = {

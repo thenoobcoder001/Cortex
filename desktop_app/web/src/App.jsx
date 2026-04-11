@@ -73,6 +73,9 @@ function parentModelLabel(modelId, modelGroups) {
 }
 
 function providerStateForGroup(group, providers) {
+  if (group === "Claude") {
+    return providers?.claude || { available: false, connected: false };
+  }
   if (group === "Gemini") {
     return providers?.gemini || { available: false, connected: false };
   }
@@ -410,7 +413,7 @@ export default function App() {
     return pendingTurns[activeChatId] || null;
   }, [pendingTurns, snapshot?.config?.activeChatId]);
   const activeModelId = snapshot?.config?.model || "";
-  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:/, "");
+  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:/, "");
   const activePlan = snapshot?.activePlan || null;
 
   const displayMessages = useMemo(() => {

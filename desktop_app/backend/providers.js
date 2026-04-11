@@ -520,6 +520,199 @@ class GeminiCliProvider {
   }
 }
 
+class ClaudeCliProvider {
+  constructor(repoRoot) {
+    this.repoRoot = path.resolve(repoRoot);
+    this.sessionId = "";
+    this.sessionMode = "fresh";
+  }
+
+  setRepoRoot(repoRoot) {
+    const resolved = path.resolve(repoRoot);
+    if (resolved !== this.repoRoot) {
+      this.sessionId = "";
+      this.sessionMode = "fresh";
+    }
+    this.repoRoot = resolved;
+  }
+
+  resolveCli() {
+    const shim =
+      which("claude.cmd")
+      || which("claude.ps1")
+      || which("claude");
+    if (!shim) {
+      return null;
+    }
+    const basedir = path.dirname(shim);
+    const cliJs = path.join(basedir, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+    if (which("node") && require("node:fs").existsSync(cliJs)) {
+      return { command: "node", argsPrefix: [cliJs] };
+    }
+    return { command: shim, argsPrefix: [] };
+  }
+
+  get available() {
+    return Boolean(this.resolveCli());
+  }
+
+  get connected() {
+    return this.available;
+  }
+
+  cliModelName(model) {
+    if (!String(model || "").startsWith("claude:")) {
+      return model;
+    }
+    const raw = String(model).split(":", 2)[1];
+    if (raw === "sonnet") return "sonnet";
+    if (raw === "opus") return "opus";
+    if (raw === "haiku") return "haiku";
+    return raw;
+  }
+
+  buildArgs(model) {
+    const args = [
+      "--print",
+      "--verbose",
+      "--output-format",
+      "stream-json",
+    ];
+    if (this.sessionMode === "resume_id" && this.sessionId) {
+      args.push("--resume", this.sessionId);
+    }
+    const cliModel = this.cliModelName(model);
+    if (cliModel) {
+      args.push("--model", cliModel);
+    }
+    return args;
+  }
+
+  extractEventText(event) {
+    const assistantParts = Array.isArray(event?.message?.content)
+      ? event.message.content
+      : Array.isArray(event?.content)
+        ? event.content
+        : [];
+    const assistantText = assistantParts
+      .map((part) => {
+        if (typeof part === "string") {
+          return part;
+        }
+        if (part && typeof part === "object" && part.type === "text") {
+          return String(part.text || "");
+        }
+        return "";
+      })
+      .join("");
+    if (assistantText) {
+      return assistantText;
+    }
+    return String(
+      event?.delta
+      ?? event?.text
+      ?? event?.completion
+      ?? event?.result
+      ?? "",
+    );
+  }
+
+  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
+    if (signal?.aborted) {
+      throw new InterruptError("Request interrupted.");
+    }
+    const entry = this.resolveCli();
+    if (!entry) {
+      throw new Error("claude CLI not found in PATH");
+    }
+    const prompt = buildCompactPrompt(messages, {
+      head: [
+        "You are running in non-interactive print mode.",
+        "Return only the final answer to the user's request.",
+        "Do not output planning or tool chatter.",
+      ].join("\n"),
+    });
+    const child = spawnCommand(entry.command, [...entry.argsPrefix, ...this.buildArgs(model)], {
+      cwd: this.repoRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+    let stderr = "";
+    let assistantText = "";
+    let aborted = false;
+    let abortListener = null;
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    if (signal) {
+      abortListener = () => {
+        aborted = true;
+        if (process.platform === "win32" && child.pid !== undefined) {
+          try {
+            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+          } catch {
+            child.kill();
+          }
+          return;
+        }
+        child.kill();
+      };
+      signal.addEventListener("abort", abortListener, { once: true });
+    }
+    const stream = readline.createInterface({ input: child.stdout });
+    try {
+      for await (const line of stream) {
+        const trimmed = String(line || "").trim();
+        if (!trimmed) {
+          continue;
+        }
+        let event;
+        try {
+          event = JSON.parse(trimmed);
+        } catch {
+          assistantText += trimmed;
+          onOutput?.(trimmed);
+          continue;
+        }
+        if (event.session_id) {
+          this.sessionId = String(event.session_id);
+          this.sessionMode = "resume_id";
+        }
+        const content = event?.type === "result" && assistantText
+          ? ""
+          : this.extractEventText(event);
+        if (content) {
+          assistantText += content;
+          onOutput?.(content);
+        }
+      }
+      const exitCode = await new Promise((resolve) => child.once("close", resolve));
+      if (aborted) {
+        throw new InterruptError("Request interrupted.", assistantText);
+      }
+      if (exitCode !== 0) {
+        throw new Error(`claude CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
+      }
+      return assistantText || "(No response from Claude.)";
+    } finally {
+      if (signal && abortListener) {
+        signal.removeEventListener("abort", abortListener);
+      }
+      stream.removeAllListeners();
+      stream.close();
+    }
+  }
+
+  async chatCompletion(messages, model, options = {}) {
+    return this.chatCompletionStreamRaw(messages, model, options);
+  }
+
+  async chatWithTools(messages, model, _tools, options = {}) {
+    return [await this.chatCompletion(messages, model, options), null, null];
+  }
+}
+
 class GroqProvider {
   constructor(apiKey = "") {
     this.apiKey = String(apiKey || "").trim();
@@ -736,6 +929,7 @@ class GeminiApiProvider {
 module.exports = {
   CodexProvider,
   GeminiCliProvider,
+  ClaudeCliProvider,
   GroqProvider,
   GeminiApiProvider,
   InterruptError,

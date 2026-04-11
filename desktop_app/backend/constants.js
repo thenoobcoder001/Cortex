@@ -36,6 +36,12 @@ const GEMINI_CLI_MODELS = [
   ["gemini-cli:manual", "Manual [Gemini CLI]"],
 ];
 
+const CLAUDE_MODELS = [
+  ["claude:sonnet", "Claude Sonnet"],
+  ["claude:opus", "Claude Opus"],
+  ["claude:haiku", "Claude Haiku"],
+];
+
 const GROQ_MODELS = [
   ["llama-3.3-70b-versatile", "Llama 3.3 70B"],
   ["llama-3.1-8b-instant", "Llama 3.1 8B"],
@@ -180,6 +186,7 @@ module.exports = {
   BASE_ASSISTANT_SYSTEM_PROMPT,
   GEMINI_MODELS,
   GEMINI_CLI_MODELS,
+  CLAUDE_MODELS,
   GROQ_MODELS,
   CODEX_MODELS,
   TOOLS,
