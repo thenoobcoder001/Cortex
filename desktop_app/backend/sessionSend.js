@@ -4,6 +4,12 @@ const { DEFAULT_MODEL, MAX_TOOL_ROUNDS, TOOLS } = require("./constants");
 const { normalizeMessages, normalizeChanges, nowIso } = require("./sessionShared");
 const { isInterruptError } = require("./providers");
 
+function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
+  const titleSource = String(userPrompt || "").split(/\r?\n/, 1)[0].trim() || "Implementation Plan";
+  const title = titleSource.length > 64 ? `${titleSource.slice(0, 64).trimEnd()}...` : titleSource;
+  return chatStore.savePlan(chatId, title, userPrompt, assistantText);
+}
+
 async function *drainQueuedEvents(worker, queue, takeWaiter) {
   let queueWaiter = null;
   const notify = () => {
@@ -83,6 +89,9 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   const existingProviderState = existingPayload?.provider_state && typeof existingPayload.provider_state === "object"
     ? { ...existingPayload.provider_state }
     : {};
+  const existingPlan = existingPayload?.plan && typeof existingPayload.plan === "object"
+    ? { ...existingPayload.plan }
+    : null;
   const requestToolSafetyMode = String(toolSafetyMode || existingPayload?.tool_safety_mode || (service.toolReadOnly ? "read" : "write")).trim().toLowerCase() === "read" ? "read" : "write";
   const requestToolReadOnly = requestToolSafetyMode === "read";
   const provider = service.providerForRequest(requestModel);
@@ -97,6 +106,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   service.codexProvider.sessionMode = service.codexProvider.sessionId ? "resume_id" : "fresh";
   service.geminiCliProvider.sessionId = String(existingProviderState.gemini_cli_session_id || "");
   service.geminiCliProvider.sessionMode = service.geminiCliProvider.sessionId ? "resume_id" : "fresh";
+  service.claudeProvider.sessionId = String(existingProviderState.claude_session_id || "");
+  service.claudeProvider.sessionMode = service.claudeProvider.sessionId ? "resume_id" : "fresh";
   if (
     service.codexProvider.sessionId
     && String(existingProviderState.codex_tool_safety_mode || "") !== requestToolSafetyMode
@@ -107,7 +118,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   if (
     existingModel
     && service.modelFamily(existingModel) !== service.modelFamily(requestModel)
-    && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:"))
+    && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:") || requestModel.startsWith("claude:"))
   ) {
     baseMessages = service.recentChatContext(baseMessages, service.config.contextCarryMessages ?? 5);
     if (requestModel.startsWith("codex:")) {
@@ -118,10 +129,15 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       service.geminiCliProvider.sessionId = "";
       service.geminiCliProvider.sessionMode = "fresh";
     }
+    if (requestModel.startsWith("claude:")) {
+      service.claudeProvider.sessionId = "";
+      service.claudeProvider.sessionMode = "fresh";
+    }
   }
 
   baseMessages = [...baseMessages, { role: "user", content: message }];
   const repoStateBefore = service.captureRepoState(requestRepoRoot);
+  const shouldCreatePlan = effectivePromptPreset === "plan";
 
   if (chatId && service.requestRegistry.has(chatId)) {
     throw new Error("This chat is already running a request.");
@@ -142,6 +158,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       providerState: existingProviderState,
       changes: storedChanges,
       toolSafetyMode: requestToolSafetyMode,
+      plan: existingPlan,
     });
   }
 
@@ -185,6 +202,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       providerState.codex_session_id = service.codexProvider.sessionId || "";
       providerState.codex_tool_safety_mode = requestToolSafetyMode;
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({
         chatStore: requestChatStore,
         chatId,
@@ -194,6 +212,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         toolSafetyMode: requestToolSafetyMode,
         repoRoot: requestRepoRoot,
         changes: finalChanges,
+        plan,
       });
       yield service.event("assistant", { text: finalText, chatId });
       yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
@@ -213,6 +232,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       }
       providerState.gemini_cli_session_id = service.geminiCliProvider.sessionId || "";
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({
         chatStore: requestChatStore,
         chatId,
@@ -222,6 +242,37 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         toolSafetyMode: requestToolSafetyMode,
         repoRoot: requestRepoRoot,
         changes: finalChanges,
+        plan,
+      });
+      yield service.event("assistant", { text: finalText, chatId });
+      yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
+      return;
+    }
+
+    if (requestModel.startsWith("claude:")) {
+      let finalText = "";
+      const claudeStream = runCliRequest(service.claudeProvider, baseForProvider, requestModel, service, chatId);
+      while (true) {
+        const next = await claudeStream.next();
+        if (next.done) {
+          finalText = String(next.value || "");
+          break;
+        }
+        yield next.value;
+      }
+      providerState.claude_session_id = service.claudeProvider.sessionId || "";
+      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
+      const snapshot = service.saveCompletedChat({
+        chatStore: requestChatStore,
+        chatId,
+        messages: [...baseMessages, { role: "assistant", content: finalText }],
+        model: requestModel,
+        providerState,
+        toolSafetyMode: requestToolSafetyMode,
+        repoRoot: requestRepoRoot,
+        changes: finalChanges,
+        plan,
       });
       yield service.event("assistant", { text: finalText, chatId });
       yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
@@ -231,6 +282,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     if (!service.requestUsesTools(requestModel, message, effectivePromptPreset)) {
       const finalText = await provider.chatCompletion(baseForProvider, requestModel, requestOptions);
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({
         chatStore: requestChatStore,
         chatId,
@@ -240,6 +292,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         toolSafetyMode: requestToolSafetyMode,
         repoRoot: requestRepoRoot,
         changes: finalChanges,
+        plan,
       });
       yield service.event("assistant", { text: finalText, chatId });
       yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
@@ -253,6 +306,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       const [finalText, assistantMessage, toolCalls] = await provider.chatWithTools(workingMessages, requestModel, TOOLS, requestOptions);
       if (finalText != null) {
         const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+        const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
         const snapshot = service.saveCompletedChat({
           chatStore: requestChatStore,
           chatId,
@@ -262,6 +316,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
           toolSafetyMode: requestToolSafetyMode,
           repoRoot: requestRepoRoot,
           changes: finalChanges,
+          plan,
         });
         yield service.event("assistant", { text: finalText, chatId });
         yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools, snapshot, chatId });
@@ -294,6 +349,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
 
     const fallbackText = await provider.chatCompletion(workingMessages, requestModel, requestOptions);
     const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+    const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, fallbackText) : existingPlan;
     const snapshot = service.saveCompletedChat({
       chatStore: requestChatStore,
       chatId,
@@ -303,6 +359,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       toolSafetyMode: requestToolSafetyMode,
       repoRoot: requestRepoRoot,
       changes: finalChanges,
+      plan,
     });
     yield service.event("assistant", { text: fallbackText, chatId });
     yield service.event("completed", { assistantMessage: fallbackText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
