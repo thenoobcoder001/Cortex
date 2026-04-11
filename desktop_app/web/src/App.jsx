@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 const PROMPT_PRESETS = [
   { value: "chat", label: "Chat" },
   { value: "code", label: "Code" },
+  { value: "plan", label: "Plan" },
   { value: "debug", label: "Debug" },
   { value: "refactor", label: "Refactor" },
   { value: "explain", label: "Explain" },
@@ -18,6 +19,37 @@ const EXTERNAL_EDITOR_OPTIONS = [
   { id: "antigravity", label: "Antigravity" },
   { id: "cursor", label: "Cursor" },
 ];
+
+function EditorIcon({ editorId }) {
+  if (editorId === "vscode") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M16.2 2.4 7.8 10l-4-3.1L1.4 8.1l4.2 3.9-4.2 3.9 2.4 1.2 4-3.1 8.4 7.6 5.4-2.6V5z"
+        />
+      </svg>
+    );
+  }
+  if (editorId === "cursor") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M12 2 4 7v10l8 5 8-5V7zm0 2.2 5.8 3.6L12 11.4 6.2 7.8zM6 9.5l5 3.1v6.8L6 16.3zm7 9.9v-6.8l5-3.1v6.8z"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 2c-1.7 3.6-5.3 5.1-8 5.6 1.5 1.8 2.6 4.3 2.6 7 0 2.7-1.1 5.2-2.6 7 2.7-.5 6.3-2 8-5.6 1.7 3.6 5.3 5.1 8 5.6-1.5-1.8-2.6-4.3-2.6-7 0-2.7 1.1-5.2 2.6-7-2.7-.5-6.3-2-8-5.6z"
+      />
+    </svg>
+  );
+}
 
 const SAVED_PROJECTS_KEY = "gpt-tui.saved-projects";
 
@@ -94,6 +126,14 @@ function projectLabel(repoRoot) {
 
 function normalizeProject(repoRoot) {
   return String(repoRoot || "").trim().replaceAll("/", "\\");
+}
+
+function diffLineClass(line) {
+  if (line.startsWith("@@")) return "hunk";
+  if (line.startsWith("---") || line.startsWith("+++")) return "meta";
+  if (line.startsWith("+")) return "add";
+  if (line.startsWith("-")) return "remove";
+  return "context";
 }
 
 function loadSavedProjects() {
@@ -196,6 +236,13 @@ export default function App() {
   const [bootDismissed, setBootDismissed] = useState(false);
   const [diffPanelOpen, setDiffPanelOpen] = useState(false);
   const [selectedDiffIndex, setSelectedDiffIndex] = useState(0);
+  const [showClearCacheConfirm, setShowClearCacheConfirm] = useState(false);
+  const [showDeleteSettingsConfirm, setShowDeleteSettingsConfirm] = useState(false);
+  const [showRevertDiffConfirm, setShowRevertDiffConfirm] = useState(false);
+  const [providerTestState, setProviderTestState] = useState({});
+  const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
+  const [headerInfoOpen, setHeaderInfoOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const runningChatIds = snapshot?.runningChatIds || [];
   const interruptedRuns = snapshot?.interruptedRuns || [];
@@ -295,6 +342,7 @@ export default function App() {
   const handleOpenMenu = (event, path) => {
     event.stopPropagation();
     setEditorMenuOpen(false);
+    setHeaderMoreOpen(false);
     const rect = event.currentTarget.getBoundingClientRect();
     if (projectMenuPath === path) {
       setProjectMenuPath("");
@@ -307,6 +355,7 @@ export default function App() {
   const toggleModelMenu = (event) => {
     event.stopPropagation();
     setEditorMenuOpen(false);
+    setHeaderMoreOpen(false);
     if (!modelGroups.length) {
       return;
     }
@@ -360,6 +409,9 @@ export default function App() {
     const activeChatId = snapshot?.config?.activeChatId || "";
     return pendingTurns[activeChatId] || null;
   }, [pendingTurns, snapshot?.config?.activeChatId]);
+  const activeModelId = snapshot?.config?.model || "";
+  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:/, "");
+  const activePlan = snapshot?.activePlan || null;
 
   const displayMessages = useMemo(() => {
     const visible = (snapshot?.messages || [])
@@ -523,6 +575,10 @@ export default function App() {
     }
   };
 
+  const handlePromptPresetChange = async (promptPreset) => {
+    await handleConfigUpdate({ promptPreset });
+  };
+
   const handleInterruptChat = async () => {
     const activeChatId = snapshot?.config?.activeChatId || "";
     if (!activeChatId) {
@@ -535,6 +591,116 @@ export default function App() {
     } catch (nextError) {
       setError(String(nextError));
       setLiveStatus("Interrupt failed");
+    }
+  };
+
+  const handleAcceptWorkspaceChanges = async () => {
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/workspace/accept", {
+        repoRoot: snapshot?.config?.repoRoot || "",
+      });
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot);
+      setDiffPanelOpen(false);
+      setSelectedDiffIndex(0);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleRevertWorkspaceChanges = async () => {
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/workspace/revert", {
+        repoRoot: snapshot?.config?.repoRoot || "",
+      });
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot);
+      setShowRevertDiffConfirm(false);
+      setSelectedDiffIndex(0);
+      if (nextSnapshot.changes.length === 0) {
+        setDiffPanelOpen(false);
+      }
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleClearCache = async () => {
+    setError("");
+    try {
+      const repoRoots = [...new Set(
+        [snapshot?.config?.repoRoot || "", ...savedProjects.map((project) => project.path)]
+          .map((value) => normalizeProject(value))
+          .filter(Boolean),
+      )];
+      const nextSnapshot = await postJson("/api/cache/clear", { repoRoots });
+      window.localStorage.removeItem(SAVED_PROJECTS_KEY);
+      setSavedProjects([]);
+      setProjectChats({});
+      setPendingTurns({});
+      setSendingChatIds([]);
+      setDiffPanelOpen(false);
+      setSelectedDiffIndex(0);
+      setCurrentScreen("chat");
+      setShowClearCacheConfirm(false);
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot);
+      setGroqApiKeyDraft("");
+      setGeminiApiKeyDraft("");
+      setOpenaiApiKeyDraft("");
+      setAssistantMemoryDraft("");
+      setContextCarryMessagesDraft("5");
+      setSettingsPromptPreset("code");
+      setLiveStatus("Idle");
+    } catch (nextError) {
+      setError(String(nextError));
+      setShowClearCacheConfirm(false);
+    }
+  };
+
+  const handleDeleteSettingsFile = async () => {
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/config/delete", {});
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot || "");
+      setGroqApiKeyDraft("");
+      setGeminiApiKeyDraft("");
+      setOpenaiApiKeyDraft("");
+      setAssistantMemoryDraft("");
+      setContextCarryMessagesDraft(String(nextSnapshot.config.contextCarryMessages ?? 5));
+      setSettingsPromptPreset(nextSnapshot.config.promptPreset || "code");
+      setShowDeleteSettingsConfirm(false);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleTestProvider = async (providerId) => {
+    setError("");
+    setProviderTestState((current) => ({
+      ...current,
+      [providerId]: { status: "running", message: "Testing..." },
+    }));
+    try {
+      const result = await postJson("/api/providers/test", {
+        providerId,
+        apiKey: groqApiKeyDraft,
+        geminiApiKey: geminiApiKeyDraft,
+        openaiApiKey: openaiApiKeyDraft,
+      });
+      setProviderTestState((current) => ({
+        ...current,
+        [providerId]: { status: "ok", message: result.message || "Connection looks good." },
+      }));
+    } catch (nextError) {
+      const message = String(nextError?.message || nextError);
+      setProviderTestState((current) => ({
+        ...current,
+        [providerId]: { status: "error", message },
+      }));
     }
   };
 
@@ -552,6 +718,53 @@ export default function App() {
     } catch (nextError) {
       setError(String(nextError));
       setEditorMenuOpen(false);
+    }
+  };
+
+  const handleOpenDiffFile = async () => {
+    if (!selectedDiff) {
+      return;
+    }
+    const filePath = `${snapshot?.config?.repoRoot || ""}\\${selectedDiff.path.replaceAll("/", "\\")}`;
+    setError("");
+    try {
+      await window.desktopApi?.openFile?.(filePath);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const copyText = async (text, status) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setLiveStatus(status);
+      window.setTimeout(() => setLiveStatus("Idle"), 1200);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleOpenLocalFile = async (filePath) => {
+    setError("");
+    try {
+      await window.desktopApi?.openFile?.(filePath);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleContinueWithPlan = async () => {
+    if (!activePlan) {
+      return;
+    }
+    const prompt = [
+      `Continue by executing the approved plan from: ${activePlan.path}`,
+      "",
+      activePlan.content,
+    ].join("\n");
+    setDraft(prompt);
+    if ((snapshot?.config?.promptPreset || "") !== "code") {
+      await handleConfigUpdate({ promptPreset: "code" });
     }
   };
 
@@ -956,6 +1169,10 @@ export default function App() {
 
             <section className="settings-section-card">
               <div className="settings-block-title">Provider Keys</div>
+              <div className="settings-storage-note">
+                Saved API keys are stored locally in:
+                <code>{snapshot.config.configPath || "Unavailable"}</code>
+              </div>
               <label className="field">
                 <span>Groq API key</span>
                 <input
@@ -983,6 +1200,15 @@ export default function App() {
                   placeholder="sk-..."
                 />
               </label>
+              <div className="settings-inline-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowDeleteSettingsConfirm(true)}
+                >
+                  Delete settings file
+                </button>
+              </div>
             </section>
 
             <section className="settings-section-card settings-section-wide">
@@ -997,12 +1223,111 @@ export default function App() {
                     <span className={provider.connected ? "provider-ok" : "provider-muted"}>
                       {provider.connected ? "ready" : "not ready"}
                     </span>
+                    <div className="provider-card-actions">
+                      <button
+                        type="button"
+                        className="secondary-button provider-test-button"
+                        onClick={() => void handleTestProvider(providerId)}
+                        disabled={providerTestState[providerId]?.status === "running"}
+                      >
+                        {providerTestState[providerId]?.status === "running" ? "Testing..." : "Test connection"}
+                      </button>
+                    </div>
+                    {providerTestState[providerId]?.message && (
+                      <div
+                        className={
+                          providerTestState[providerId]?.status === "ok"
+                            ? "provider-test-result ok"
+                            : providerTestState[providerId]?.status === "error"
+                              ? "provider-test-result error"
+                              : "provider-test-result"
+                        }
+                      >
+                        {providerTestState[providerId].message}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             </section>
+
+            <section className="settings-section-card settings-section-wide">
+              <div className="settings-block-title">Danger Zone</div>
+              <div className="danger-zone-copy">
+                Clear cached local app data, saved project metadata, chat history, accepted diff baselines, and provider session state.
+              </div>
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={() => setShowClearCacheConfirm(true)}
+                >
+                  Clear cache
+                </button>
+              </div>
+            </section>
           </div>
         </div>
+
+        {showClearCacheConfirm && (
+          <div className="confirm-overlay" onClick={() => setShowClearCacheConfirm(false)}>
+            <div className="confirm-dialog" onClick={(event) => event.stopPropagation()}>
+              <div className="confirm-badge">Danger</div>
+              <div className="confirm-title">Clear local app data?</div>
+              <div className="confirm-copy">
+                This will remove saved chats, workspace diff baselines, cached project metadata, provider sessions, and local settings for known projects.
+              </div>
+              <div className="confirm-actions">
+                <button type="button" className="secondary-button" onClick={() => setShowClearCacheConfirm(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="danger-button" onClick={handleClearCache}>
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showDeleteSettingsConfirm && (
+          <div className="confirm-overlay" onClick={() => setShowDeleteSettingsConfirm(false)}>
+            <div className="confirm-dialog" onClick={(event) => event.stopPropagation()}>
+              <div className="confirm-badge">Danger</div>
+              <div className="confirm-title">Delete the local settings file?</div>
+              <div className="confirm-copy">
+                This removes the config file that stores saved API keys and local app settings.
+                Project chat data and accepted workspace baselines are not deleted.
+              </div>
+              <div className="confirm-path">{snapshot?.config?.configPath || "Unavailable"}</div>
+              <div className="confirm-actions">
+                <button type="button" className="secondary-button" onClick={() => setShowDeleteSettingsConfirm(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="danger-button" onClick={handleDeleteSettingsFile}>
+                  Delete file
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showRevertDiffConfirm && (
+          <div className="confirm-overlay" onClick={() => setShowRevertDiffConfirm(false)}>
+            <div className="confirm-dialog" onClick={(event) => event.stopPropagation()}>
+              <div className="confirm-badge">Danger</div>
+              <div className="confirm-title">Revert pending workspace changes?</div>
+              <div className="confirm-copy">
+                This restores the current project to the last accepted workspace baseline and removes all pending diff changes.
+              </div>
+              <div className="confirm-actions">
+                <button type="button" className="secondary-button" onClick={() => setShowRevertDiffConfirm(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="danger-button" onClick={handleRevertWorkspaceChanges}>
+                  Revert
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1010,11 +1335,13 @@ export default function App() {
   return (
     <>
       <div
-        className="workspace-shell"
+        className={`workspace-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
         onClick={() => {
           setProjectMenuPath("");
           setModelMenuOpen(false);
           setEditorMenuOpen(false);
+          setHeaderMoreOpen(false);
+          setHeaderInfoOpen(false);
         }}
       >
         <aside className="sidebar">
@@ -1127,6 +1454,17 @@ export default function App() {
         <main className="chat-area">
           <header className="chat-topbar">
             <div className="topbar-left">
+              <button
+                type="button"
+                className="sidebar-toggle-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSidebarCollapsed((prev) => !prev);
+                }}
+                title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+              >
+                {sidebarCollapsed ? "»" : "«"}
+              </button>
               <select
                 className="header-thread-select"
                 value={snapshot.config.activeChatId || ""}
@@ -1144,50 +1482,201 @@ export default function App() {
                 ))}
               </select>
               <span className="project-badge">{projectLabel(snapshot.config.repoRoot)}</span>
+              <span className="provider-badge">{snapshot.providerName}</span>
+              <span className="model-badge" title={activeModelId}>{activeModelShort}</span>
+
+              <div className="header-info-wrap" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className="header-info-trigger"
+                  onClick={() => {
+                    setHeaderMoreOpen(false);
+                    setHeaderInfoOpen((current) => !current);
+                  }}
+                  title="Context info"
+                >
+                  <span className="info-icon">i</span>
+                </button>
+                {headerInfoOpen && (
+                  <div className="header-menu header-info-menu">
+                    <div className="info-section">
+                      <div className="info-label">Project</div>
+                      <div className="info-value">{snapshot.config.repoRoot}</div>
+                    </div>
+                    <div className="info-section">
+                      <div className="info-label">Provider</div>
+                      <div className="info-value">{snapshot.providerName}</div>
+                    </div>
+                    <div className="info-section">
+                      <div className="info-label">Model</div>
+                      <div className="info-value">{activeModelShort}</div>
+                      <div className="info-detail">{activeModelId}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="topbar-right">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setDiffPanelOpen((current) => !current)}
-                disabled={activeChanges.length === 0}
-              >
-                {diffPanelOpen ? `Hide diff (${activeChanges.length})` : `Show diff (${activeChanges.length})`}
-              </button>
-              {activeChatRunning && (
-                <button type="button" className="secondary-button" onClick={handleInterruptChat}>
-                  Stop
-                </button>
-              )}
-              <div className="header-menu-wrap" onClick={(event) => event.stopPropagation()}>
+              <div className="topbar-actions-primary">
                 <button
                   type="button"
-                  className="secondary-button header-menu-trigger"
-                  onClick={() => setEditorMenuOpen((current) => !current)}
+                  className="secondary-button"
+                  onClick={() => setDiffPanelOpen((current) => !current)}
+                  disabled={activeChanges.length === 0}
                 >
-                  Open in
+                  {diffPanelOpen ? `Hide diff (${activeChanges.length})` : `Show diff (${activeChanges.length})`}
                 </button>
-                {editorMenuOpen && (
-                  <div className="header-menu">
+                {activeChanges.length > 0 && (
+                  <button type="button" className="secondary-button" onClick={handleAcceptWorkspaceChanges}>
+                    Accept
+                  </button>
+                )}
+                {activeChanges.length > 0 && (
+                  <button type="button" className="secondary-button" onClick={() => setShowRevertDiffConfirm(true)}>
+                    Revert
+                  </button>
+                )}
+                {activeChatRunning && (
+                  <button type="button" className="secondary-button" onClick={handleInterruptChat}>
+                    Stop
+                  </button>
+                )}
+              </div>
+              <div className="topbar-actions-secondary">
+                <div className="header-menu-wrap" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="secondary-button header-menu-trigger"
+                    onClick={() => {
+                      setHeaderMoreOpen(false);
+                      setEditorMenuOpen((current) => !current);
+                    }}
+                  >
+                    Open in
+                  </button>
+                  {editorMenuOpen && (
+                    <div className="header-menu">
+                      {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
+                        <button
+                          key={editor.id}
+                          type="button"
+                          onClick={() => void handleOpenInEditor(editor.id)}
+                        >
+                          <span className="header-menu-item-icon">
+                            <EditorIcon editorId={editor.id} />
+                          </span>
+                          <span>{editor.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button type="button" className="secondary-button" onClick={handleNewChat}>
+                  New chat
+                </button>
+                <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
+                  Settings
+                </button>
+              </div>
+              <div className="header-more-wrap" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className="secondary-button header-more-trigger"
+                  onClick={() => {
+                    setEditorMenuOpen(false);
+                    setHeaderMoreOpen((current) => !current);
+                  }}
+                >
+                  More
+                </button>
+                {headerMoreOpen && (
+                  <div className="header-menu header-more-menu">
+                    {/* Primary actions in More menu for smaller screens */}
+                    <div className="header-menu-section mobile-only-actions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHeaderMoreOpen(false);
+                          setDiffPanelOpen((current) => !current);
+                        }}
+                        disabled={activeChanges.length === 0}
+                      >
+                        <span>{diffPanelOpen ? "Hide diff" : `Show diff (${activeChanges.length})`}</span>
+                      </button>
+                      {activeChanges.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHeaderMoreOpen(false);
+                            handleAcceptWorkspaceChanges();
+                          }}
+                        >
+                          <span>Accept changes</span>
+                        </button>
+                      )}
+                      {activeChanges.length > 0 && (
+                        <button
+                          type="button"
+                          className="danger-action"
+                          onClick={() => {
+                            setHeaderMoreOpen(false);
+                            setShowRevertDiffConfirm(true);
+                          }}
+                        >
+                          <span>Revert changes</span>
+                        </button>
+                      )}
+                      {activeChatRunning && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHeaderMoreOpen(false);
+                            handleInterruptChat();
+                          }}
+                        >
+                          <span>Stop</span>
+                        </button>
+                      )}
+                      <div className="header-menu-divider"></div>
+                    </div>
+
                     {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
                       <button
                         key={editor.id}
                         type="button"
-                        onClick={() => void handleOpenInEditor(editor.id)}
+                        onClick={() => {
+                          setHeaderMoreOpen(false);
+                          void handleOpenInEditor(editor.id);
+                        }}
                       >
-                        {editor.label}
+                        <span className="header-menu-item-icon">
+                          <EditorIcon editorId={editor.id} />
+                        </span>
+                        <span>Open in {editor.label}</span>
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        void handleNewChat();
+                      }}
+                    >
+                      <span>New chat</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        setCurrentScreen("settings");
+                      }}
+                    >
+                      <span>Settings</span>
+                    </button>
                   </div>
                 )}
               </div>
-              <button type="button" className="secondary-button" onClick={handleNewChat}>
-                New chat
-              </button>
-              <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
-                Settings
-              </button>
             </div>
           </header>
 
@@ -1219,6 +1708,14 @@ export default function App() {
                       <span className={`change-action ${selectedDiff.action}`}>{selectedDiff.action}</span>
                       <span className="change-path">{selectedDiff.path}</span>
                     </div>
+                    <div className="diff-viewer-actions">
+                      <button type="button" className="secondary-button" onClick={() => void copyText(selectedDiff.diff || "", "Diff copied")}>
+                        Copy diff
+                      </button>
+                      <button type="button" className="secondary-button" onClick={handleOpenDiffFile}>
+                        Open file
+                      </button>
+                    </div>
                     {(selectedDiff.oldPath || selectedDiff.newPath) &&
                       selectedDiff.oldPath !== selectedDiff.newPath && (
                         <div className="change-rename-row">
@@ -1227,10 +1724,40 @@ export default function App() {
                           {selectedDiff.newPath || selectedDiff.path}
                         </div>
                       )}
-                    <pre className="change-diff-preview">{selectedDiff.diff || "No diff available."}</pre>
+                    <div className="change-diff-preview">
+                      {(selectedDiff.diff || "No diff available.").split("\n").map((line, index) => (
+                        <div key={`${index}-${line}`} className={`diff-line ${diffLineClass(line)}`}>
+                          {line || " "}
+                        </div>
+                      ))}
+                    </div>
                   </>
                 )}
               </div>
+            </section>
+          )}
+
+          {activePlan && (
+            <section className="plan-card">
+              <div className="plan-card-header">
+                <div>
+                  <div className="plan-card-label">Plan</div>
+                  <div className="plan-card-title">{activePlan.title || "Implementation Plan"}</div>
+                </div>
+                <div className="plan-card-actions">
+                  <button type="button" className="secondary-button" onClick={() => void copyText(activePlan.content || "", "Plan copied")}>
+                    Copy
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => void handleOpenLocalFile(activePlan.path)}>
+                    Open file
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => void handleContinueWithPlan()}>
+                    Continue with plan
+                  </button>
+                </div>
+              </div>
+              <div className="plan-card-path">{activePlan.path}</div>
+              <pre className="plan-card-preview">{String(activePlan.content || "")}</pre>
             </section>
           )}
 
@@ -1247,6 +1774,17 @@ export default function App() {
                   className={`message-row ${message.role}${message.pending ? " pending" : ""}`}
                 >
                   <div className="message-bubble">
+                    {message.role === "assistant" && (
+                      <div className="message-actions">
+                        <button
+                          type="button"
+                          className="message-copy-btn"
+                          onClick={() => void copyText(String(message.content || ""), "Response copied")}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    )}
                     <div className="message-content">
                       <pre>{String(message.content || "")}</pre>
                     </div>
@@ -1279,6 +1817,17 @@ export default function App() {
             />
             <div className="composer-footer">
               <div className="composer-controls">
+                <select
+                  value={snapshot.config.promptPreset || "code"}
+                  onChange={(event) => void handlePromptPresetChange(event.target.value)}
+                  title="Prompt mode"
+                >
+                  {PROMPT_PRESETS.map((preset) => (
+                    <option key={preset.value} value={preset.value}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
                 <select
                   value={snapshot.config.toolSafetyMode || "write"}
                   onChange={(event) => void handleToolSafetyChange(event.target.value)}
