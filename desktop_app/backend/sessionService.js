@@ -1,16 +1,21 @@
+const fs = require("node:fs");
 const path = require("node:path");
 const {
   DEFAULT_MODEL,
   PRESET_PROMPTS,
   BASE_ASSISTANT_SYSTEM_PROMPT,
+  GROQ_MODELS,
+  GEMINI_MODELS,
+  GEMINI_CLI_MODELS,
+  CODEX_MODELS,
 } = require("./constants");
 const { AppConfigStore, normalizeContextCarryMessages } = require("./configStore");
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
-const { CodexProvider, GeminiCliProvider, GroqProvider, GeminiApiProvider } = require("./providers");
+const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, GroqProvider, GeminiApiProvider } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
-const { normalizeMessages, normalizeChanges } = require("./sessionShared");
+const { normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
 const {
   buildSnapshot,
   modelFamily,
@@ -37,6 +42,7 @@ class DesktopSessionService {
     this.groqProvider = overrides.groqProvider || new GroqProvider(this.config.apiKey || process.env.GROQ_API_KEY || "");
     this.geminiProvider = overrides.geminiProvider || new GeminiApiProvider(this.config.geminiApiKey || process.env.GEMINI_API_KEY || "");
     this.geminiCliProvider = overrides.geminiCliProvider || new GeminiCliProvider(this.repoRoot);
+    this.claudeProvider = overrides.claudeProvider || new ClaudeCliProvider(this.repoRoot);
     this.codexProvider = overrides.codexProvider || new CodexProvider(this.repoRoot, this.config.openaiApiKey || process.env.OPENAI_API_KEY || "");
     this.geminiCliProvider.sessionId = this.config.geminiSessionId || "";
     this.geminiCliProvider.sessionMode = this.geminiCliProvider.sessionId ? "resume_id" : "fresh";
@@ -47,9 +53,11 @@ class DesktopSessionService {
     this.toolReadOnly = this.config.toolSafetyMode === "read";
     this.messages = [];
     this.changes = [];
+    this.activePlan = null;
     this.activeChatId = "";
     this.activeChatModel = "";
     this.interruptedRuns = new Map();
+    this.suppressWorkspaceBaselineInit = false;
     this.requestRegistry = new RequestRegistry();
     recoverInterruptedRuns(this);
     restoreActiveChat(this);
@@ -89,11 +97,13 @@ class DesktopSessionService {
     this.chatStore.setRepoRoot(this.repoRoot);
     this.toolExecutor.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.setRepoRoot(this.repoRoot);
+    this.claudeProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
     this.activeChatId = "";
     this.activeChatModel = "";
     this.messages = [];
     this.changes = [];
+    this.activePlan = null;
     this.persistConfig();
   }
 
@@ -119,10 +129,13 @@ class DesktopSessionService {
     }
     this.messages = [];
     this.changes = [];
+    this.activePlan = null;
     this.activeChatId = "";
     this.activeChatModel = "";
     this.geminiCliProvider.sessionId = "";
     this.geminiCliProvider.sessionMode = "fresh";
+    this.claudeProvider.sessionId = "";
+    this.claudeProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
     this.codexProvider.sessionMode = "fresh";
     this.persistConfig();
@@ -141,6 +154,7 @@ class DesktopSessionService {
     this.activeChatModel = String(payload.model || "");
     this.messages = normalizeMessages(payload.messages);
     this.changes = normalizeChanges(payload.changes);
+    this.activePlan = normalizePlan(payload.plan);
     this.toolReadOnly = String(payload.tool_safety_mode || "write") === "read";
     this.toolExecutor.readOnly = this.toolReadOnly;
     this.persistConfig();
@@ -160,6 +174,7 @@ class DesktopSessionService {
       this.activeChatModel = "";
       this.messages = [];
       this.changes = [];
+      this.activePlan = null;
     }
     this.interruptedRuns.delete(chatId);
     this.persistConfig();
@@ -173,6 +188,104 @@ class DesktopSessionService {
     if (!this.requestRegistry.interrupt(chatId)) {
       throw new Error("Chat is not currently running.");
     }
+    return this.snapshot();
+  }
+
+  clearLocalData(repoRoots = []) {
+    if (this.requestRegistry.ids().length > 0) {
+      throw new Error("Stop running chats before clearing local data.");
+    }
+
+    const uniqueRoots = [...new Set(
+      [this.repoRoot, ...repoRoots]
+        .map((repoRoot) => String(repoRoot || "").trim())
+        .filter(Boolean)
+        .map((repoRoot) => path.resolve(repoRoot)),
+    )];
+
+    for (const repoRoot of uniqueRoots) {
+      const target = path.join(repoRoot, ".gpt-tui");
+      try {
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, { recursive: true, force: true });
+        }
+      } catch {
+        // Ignore individual project cleanup failures and continue.
+      }
+    }
+
+    this.config.reset();
+    this.config.deleteFile();
+    this.repoRoot = uniqueRoots[0] || process.cwd();
+    this.files.setRepoRoot(this.repoRoot);
+    this.chatStore.setRepoRoot(this.repoRoot);
+    this.toolExecutor.setRepoRoot(this.repoRoot);
+    this.geminiCliProvider.setRepoRoot(this.repoRoot);
+    this.claudeProvider.setRepoRoot(this.repoRoot);
+    this.codexProvider.setRepoRoot(this.repoRoot);
+    this.geminiCliProvider.sessionId = "";
+    this.geminiCliProvider.sessionMode = "fresh";
+    this.claudeProvider.sessionId = "";
+    this.claudeProvider.sessionMode = "fresh";
+    this.codexProvider.sessionId = "";
+    this.codexProvider.sessionMode = "fresh";
+    this.groqProvider.setApiKey("");
+    this.geminiProvider.setApiKey("");
+    this.codexProvider.setApiKey("");
+    this.model = DEFAULT_MODEL;
+    this.promptPreset = "code";
+    this.toolReadOnly = false;
+    this.messages = [];
+    this.changes = [];
+    this.activePlan = null;
+    this.activeChatId = "";
+    this.activeChatModel = "";
+    this.interruptedRuns.clear();
+    this.suppressWorkspaceBaselineInit = true;
+    try {
+      const snapshot = this.snapshot();
+      for (const repoRoot of uniqueRoots) {
+        const target = path.join(repoRoot, ".gpt-tui");
+        try {
+          if (fs.existsSync(target)) {
+            fs.rmSync(target, { recursive: true, force: true });
+          }
+        } catch {
+          // Ignore cleanup failures after snapshot generation.
+        }
+      }
+      return snapshot;
+    } finally {
+      this.suppressWorkspaceBaselineInit = false;
+    }
+  }
+
+  deleteSettingsFile() {
+    if (this.requestRegistry.ids().length > 0) {
+      throw new Error("Stop running chats before deleting the settings file.");
+    }
+
+    this.config.reset();
+    this.config.deleteFile();
+    this.groqProvider.setApiKey("");
+    this.geminiProvider.setApiKey("");
+    this.codexProvider.setApiKey("");
+    this.geminiCliProvider.sessionId = "";
+    this.geminiCliProvider.sessionMode = "fresh";
+    this.claudeProvider.sessionId = "";
+    this.claudeProvider.sessionMode = "fresh";
+    this.codexProvider.sessionId = "";
+    this.codexProvider.sessionMode = "fresh";
+    this.model = DEFAULT_MODEL;
+    this.promptPreset = "code";
+    this.toolReadOnly = false;
+    this.activeChatId = "";
+    this.activeChatModel = "";
+    this.messages = [];
+    this.changes = [];
+    this.activePlan = null;
+    this.interruptedRuns.clear();
+
     return this.snapshot();
   }
 
@@ -248,6 +361,7 @@ class DesktopSessionService {
   }
 
   providerForRequest(model) {
+    if (String(model).startsWith("claude:")) return this.claudeProvider;
     if (String(model).startsWith("gemini-cli:")) return this.geminiCliProvider;
     if (String(model).startsWith("gemini")) return this.geminiProvider;
     if (String(model).startsWith("codex:")) return this.codexProvider;
@@ -255,7 +369,7 @@ class DesktopSessionService {
   }
 
   requestUsesTools(model, message, preset) {
-    if (String(model).startsWith("gemini-cli:") || String(model).startsWith("codex:")) {
+    if (String(model).startsWith("gemini-cli:") || String(model).startsWith("codex:") || String(model).startsWith("claude:")) {
       return false;
     }
     if (preset === "chat") {
@@ -294,6 +408,182 @@ class DesktopSessionService {
   finalRepoChanges(repoRoot, beforeState) {
     const fileService = new RepoFileService(repoRoot);
     return normalizeChanges(fileService.diffRepoState(beforeState, fileService.snapshotRepoState(repoRoot)));
+  }
+
+  workspaceChanges(repoRoot = this.repoRoot, { initialize = true } = {}) {
+    const store = path.resolve(repoRoot) === this.repoRoot
+      ? this.chatStore
+      : new ProjectChatStore(path.resolve(repoRoot));
+    let acceptedState = store.loadAcceptedRepoState();
+    if (!acceptedState) {
+      if (!initialize) {
+        return [];
+      }
+      acceptedState = this.captureRepoState(path.resolve(repoRoot));
+      store.saveAcceptedRepoState(acceptedState);
+      return [];
+    }
+    return normalizeChanges(
+      new RepoFileService(path.resolve(repoRoot)).diffRepoState(
+        acceptedState,
+        this.captureRepoState(path.resolve(repoRoot)),
+      ),
+    );
+  }
+
+  acceptWorkspaceChanges(repoRoot = null) {
+    const targetRoot = path.resolve(repoRoot || this.repoRoot);
+    const store = targetRoot === this.repoRoot ? this.chatStore : new ProjectChatStore(targetRoot);
+    store.saveAcceptedRepoState(this.captureRepoState(targetRoot));
+    return this.snapshot();
+  }
+
+  revertWorkspaceChanges(repoRoot = null) {
+    const targetRoot = path.resolve(repoRoot || this.repoRoot);
+    const store = targetRoot === this.repoRoot ? this.chatStore : new ProjectChatStore(targetRoot);
+    const acceptedState = store.loadAcceptedRepoState();
+    if (!acceptedState) {
+      throw new Error("No accepted workspace baseline exists for this project.");
+    }
+
+    const currentState = this.captureRepoState(targetRoot);
+    const allPaths = new Set([...Object.keys(currentState), ...Object.keys(acceptedState)]);
+    for (const relativePath of [...allPaths].sort()) {
+      const baseline = acceptedState[relativePath];
+      const current = currentState[relativePath];
+      const fullPath = path.join(targetRoot, relativePath);
+
+      if (!baseline && current) {
+        if (fs.existsSync(fullPath)) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        }
+        continue;
+      }
+
+      if (!baseline) {
+        continue;
+      }
+
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      if (baseline.text == null) {
+        continue;
+      }
+      fs.writeFileSync(fullPath, baseline.text, "utf8");
+    }
+
+    return this.snapshot();
+  }
+
+  async testProviderConnection({
+    providerId,
+    apiKey = null,
+    geminiApiKey = null,
+    openaiApiKey = null,
+  } = {}) {
+    const normalized = String(providerId || "").trim();
+    const messages = [{ role: "user", content: "Reply with exactly: OK" }];
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+
+    try {
+      if (normalized === "groq") {
+        const previous = this.groqProvider.apiKey;
+        if (apiKey != null) {
+          this.groqProvider.setApiKey(apiKey);
+        }
+        try {
+          if (!this.groqProvider.connected) {
+            throw new Error("Groq API key is missing.");
+          }
+          const reply = await this.groqProvider.chatCompletion(messages, GROQ_MODELS[0][0], {
+            signal: controller.signal,
+          });
+          return {
+            ok: true,
+            providerId: normalized,
+            message: String(reply || "OK").trim().slice(0, 120),
+          };
+        } finally {
+          this.groqProvider.setApiKey(previous);
+        }
+      }
+
+      if (normalized === "gemini") {
+        const previous = this.geminiProvider.apiKey;
+        if (geminiApiKey != null) {
+          this.geminiProvider.setApiKey(geminiApiKey);
+        }
+        try {
+          if (!this.geminiProvider.connected) {
+            throw new Error("Gemini API key is missing.");
+          }
+          const reply = await this.geminiProvider.chatCompletion(messages, GEMINI_MODELS[0][0], {
+            signal: controller.signal,
+          });
+          return {
+            ok: true,
+            providerId: normalized,
+            message: String(reply || "OK").trim().slice(0, 120),
+          };
+        } finally {
+          this.geminiProvider.setApiKey(previous);
+        }
+      }
+
+      if (normalized === "geminiCli") {
+        if (!this.geminiCliProvider.available) {
+          throw new Error("Gemini CLI is not available in PATH.");
+        }
+        const reply = await this.geminiCliProvider.chatCompletion(messages, GEMINI_CLI_MODELS[0][0], {
+          signal: controller.signal,
+        });
+        return {
+          ok: true,
+          providerId: normalized,
+          message: String(reply || "OK").trim().slice(0, 120),
+        };
+      }
+
+      if (normalized === "claude") {
+        if (!this.claudeProvider.available) {
+          throw new Error("Claude CLI is not available in PATH.");
+        }
+        const reply = await this.claudeProvider.chatCompletion(messages, "claude:sonnet", {
+          signal: controller.signal,
+        });
+        return {
+          ok: true,
+          providerId: normalized,
+          message: String(reply || "OK").trim().slice(0, 120),
+        };
+      }
+
+      if (normalized === "codex") {
+        const previous = this.codexProvider.apiKey;
+        if (openaiApiKey != null) {
+          this.codexProvider.setApiKey(openaiApiKey);
+        }
+        try {
+          if (!this.codexProvider.available) {
+            throw new Error("Codex is not available. Install the CLI or configure access.");
+          }
+          const reply = await this.codexProvider.chatCompletion(messages, CODEX_MODELS[0][0], {
+            signal: controller.signal,
+          });
+          return {
+            ok: true,
+            providerId: normalized,
+            message: String(reply || "OK").trim().slice(0, 120),
+          };
+        } finally {
+          this.codexProvider.setApiKey(previous);
+        }
+      }
+
+      throw new Error("Unsupported provider.");
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async *sendMessageEvents(text, options = {}) {
