@@ -119,6 +119,7 @@ function createWindow() {
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
     dialog.showErrorBox("Cortex — Load Error", `Renderer failed to load (${errorCode}):\n${errorDescription}`);
   });
+
 }
 
 if (ipcMain) {
