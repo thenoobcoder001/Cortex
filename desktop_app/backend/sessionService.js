@@ -204,7 +204,7 @@ class DesktopSessionService {
     )];
 
     for (const repoRoot of uniqueRoots) {
-      const target = path.join(repoRoot, ".gpt-tui");
+      const target = path.join(repoRoot, ".cortex");
       try {
         if (fs.existsSync(target)) {
           fs.rmSync(target, { recursive: true, force: true });
@@ -245,7 +245,7 @@ class DesktopSessionService {
     try {
       const snapshot = this.snapshot();
       for (const repoRoot of uniqueRoots) {
-        const target = path.join(repoRoot, ".gpt-tui");
+        const target = path.join(repoRoot, ".cortex");
         try {
           if (fs.existsSync(target)) {
             fs.rmSync(target, { recursive: true, force: true });

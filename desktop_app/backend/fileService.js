@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const SKIP_NAMES = new Set([".git", ".gpt-tui", ".venv", "__pycache__", "node_modules", "out"]);
+const SKIP_NAMES = new Set([".git", ".cortex", ".venv", "__pycache__", "node_modules", "out"]);
 
 function walkFiles(root, limit = 200) {
   const found = [];

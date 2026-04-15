@@ -20,7 +20,7 @@ class ProjectChatStore {
   }
 
   get storeDir() {
-    return path.join(this.repoRoot, ".gpt-tui", "chats");
+    return path.join(this.repoRoot, ".cortex", "chats");
   }
 
   get indexFile() {
@@ -32,7 +32,7 @@ class ProjectChatStore {
   }
 
   get plansDir() {
-    return path.join(this.repoRoot, ".gpt-tui", "plans");
+    return path.join(this.repoRoot, ".cortex", "plans");
   }
 
   chatFile(chatId) {

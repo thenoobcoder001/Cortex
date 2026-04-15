@@ -1,4 +1,4 @@
-const APP_NAME = "GPT TUI";
+const APP_NAME = "Cortex";
 const VERSION = "0.2.0";
 
 const DEFAULT_MODEL = "gemini-cli:auto-gemini-2.5";

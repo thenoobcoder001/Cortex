@@ -26,21 +26,17 @@ function providerNameForModel(model) {
 
 function models() {
   return [
-    ...GEMINI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini" })),
-    ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI" })),
-    ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
-    ...GROQ_MODELS.map(([id, label]) => ({ id, label, group: "Groq" })),
     ...CODEX_MODELS.map(([id, label]) => ({ id, label, group: "Codex" })),
+    ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
+    ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI" })),
   ];
 }
 
 function providersSnapshot(service) {
   return {
-    groq: { available: service.groqProvider.available, connected: service.groqProvider.connected },
-    gemini: { available: service.geminiProvider.available, connected: service.geminiProvider.connected },
-    geminiCli: { available: service.geminiCliProvider.available, connected: service.geminiCliProvider.connected },
     claude: { available: service.claudeProvider.available, connected: service.claudeProvider.connected },
     codex: { available: service.codexProvider.available, connected: service.codexProvider.connected },
+    geminiCli: { available: service.geminiCliProvider.available, connected: service.geminiCliProvider.connected },
   };
 }
 

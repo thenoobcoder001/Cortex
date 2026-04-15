@@ -1,9 +1,9 @@
 {
-  "name": "gpt-tui-desktop",
+  "name": "cortex",
   "version": "0.1.0",
   "private": true,
   "main": "electron/main.js",
-  "description": "Electron + React shell for gpt-tui",
+  "description": "Unified AI coding assistant desktop app",
   "author": "CHIRAG",
   "scripts": {
     "dev:web": "vite --config web/vite.config.js",
@@ -15,10 +15,11 @@
     "start": "electron electron/main.js"
   },
   "build": {
-    "appId": "com.chirag.gpttui.desktop",
-    "productName": "GPT TUI Desktop",
+    "appId": "com.chirag.cortex",
+    "productName": "Cortex",
     "files": [
       "backend/**/*",
+      "!backend/**/*.test.js",
       "electron/**/*",
       "web/dist/**/*",
       "package.json"
