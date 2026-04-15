@@ -92,6 +92,7 @@ function saveCompletedChat(service, { chatStore, chatId, messages, model, provid
   service.requestRegistry.finish(chatId);
   clearActiveRun(service, chatId);
   service.interruptedRuns.delete(chatId);
+  service.invalidateSnapshotCaches(repoRoot);
   return service.snapshot();
 }
 

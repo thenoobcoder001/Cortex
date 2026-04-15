@@ -59,6 +59,11 @@ class DesktopSessionService {
     this.interruptedRuns = new Map();
     this.suppressWorkspaceBaselineInit = false;
     this.requestRegistry = new RequestRegistry();
+    this.snapshotCacheTtlMs = 1500;
+    this.snapshotCache = {
+      workspaceChanges: new Map(),
+      fileLists: new Map(),
+    };
     recoverInterruptedRuns(this);
     restoreActiveChat(this);
   }
@@ -87,6 +92,63 @@ class DesktopSessionService {
     return saveCompletedChat(this, payload);
   }
 
+  snapshotCacheKey(repoRoot, extra = "") {
+    return `${path.resolve(repoRoot)}::${extra}`;
+  }
+
+  getCachedValue(cache, key) {
+    const entry = cache.get(key);
+    if (!entry) {
+      return null;
+    }
+    if (Date.now() - entry.timestamp > this.snapshotCacheTtlMs) {
+      cache.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  setCachedValue(cache, key, value) {
+    cache.set(key, {
+      timestamp: Date.now(),
+      value,
+    });
+    return value;
+  }
+
+  invalidateSnapshotCaches(repoRoot = null) {
+    if (!repoRoot) {
+      this.snapshotCache.workspaceChanges.clear();
+      this.snapshotCache.fileLists.clear();
+      return;
+    }
+    const prefix = `${path.resolve(repoRoot)}::`;
+    for (const key of [...this.snapshotCache.workspaceChanges.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.snapshotCache.workspaceChanges.delete(key);
+      }
+    }
+    for (const key of [...this.snapshotCache.fileLists.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.snapshotCache.fileLists.delete(key);
+      }
+    }
+  }
+
+  listFilesCached(repoRoot = this.repoRoot, limit = 200) {
+    const targetRoot = path.resolve(repoRoot);
+    const cacheKey = this.snapshotCacheKey(targetRoot, `files:${limit}`);
+    const cached = this.getCachedValue(this.snapshotCache.fileLists, cacheKey);
+    if (cached) {
+      return cached;
+    }
+    return this.setCachedValue(
+      this.snapshotCache.fileLists,
+      cacheKey,
+      this.files.listFiles(targetRoot, limit),
+    );
+  }
+
   setRepoRoot(repoRoot) {
     const resolved = path.resolve(repoRoot);
     const [ok, message] = this.files.setRepoRoot(resolved);
@@ -104,6 +166,7 @@ class DesktopSessionService {
     this.messages = [];
     this.changes = [];
     this.activePlan = null;
+    this.invalidateSnapshotCaches();
     this.persistConfig();
   }
 
@@ -138,6 +201,7 @@ class DesktopSessionService {
     this.claudeProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
     this.codexProvider.sessionMode = "fresh";
+    this.invalidateSnapshotCaches(this.repoRoot);
     this.persistConfig();
     return this.snapshot();
   }
@@ -176,6 +240,7 @@ class DesktopSessionService {
       this.changes = [];
       this.activePlan = null;
     }
+    this.invalidateSnapshotCaches(repoRoot ? path.resolve(repoRoot) : this.repoRoot);
     this.interruptedRuns.delete(chatId);
     this.persistConfig();
     return this.snapshot();
@@ -241,6 +306,7 @@ class DesktopSessionService {
     this.activeChatId = "";
     this.activeChatModel = "";
     this.interruptedRuns.clear();
+    this.invalidateSnapshotCaches();
     this.suppressWorkspaceBaselineInit = true;
     try {
       const snapshot = this.snapshot();
@@ -285,6 +351,7 @@ class DesktopSessionService {
     this.changes = [];
     this.activePlan = null;
     this.interruptedRuns.clear();
+    this.invalidateSnapshotCaches();
 
     return this.snapshot();
   }
@@ -411,23 +478,31 @@ class DesktopSessionService {
   }
 
   workspaceChanges(repoRoot = this.repoRoot, { initialize = true } = {}) {
-    const store = path.resolve(repoRoot) === this.repoRoot
+    const targetRoot = path.resolve(repoRoot);
+    const cacheKey = this.snapshotCacheKey(targetRoot, `workspace:${initialize ? "init" : "noinit"}`);
+    const cached = this.getCachedValue(this.snapshotCache.workspaceChanges, cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const store = targetRoot === this.repoRoot
       ? this.chatStore
-      : new ProjectChatStore(path.resolve(repoRoot));
+      : new ProjectChatStore(targetRoot);
     let acceptedState = store.loadAcceptedRepoState();
     if (!acceptedState) {
       if (!initialize) {
         return [];
       }
-      acceptedState = this.captureRepoState(path.resolve(repoRoot));
+      acceptedState = this.captureRepoState(targetRoot);
       store.saveAcceptedRepoState(acceptedState);
-      return [];
+      return this.setCachedValue(this.snapshotCache.workspaceChanges, cacheKey, []);
     }
-    return normalizeChanges(
-      new RepoFileService(path.resolve(repoRoot)).diffRepoState(
+    return this.setCachedValue(
+      this.snapshotCache.workspaceChanges,
+      cacheKey,
+      normalizeChanges(new RepoFileService(targetRoot).diffRepoState(
         acceptedState,
-        this.captureRepoState(path.resolve(repoRoot)),
-      ),
+        this.captureRepoState(targetRoot),
+      )),
     );
   }
 
@@ -435,6 +510,7 @@ class DesktopSessionService {
     const targetRoot = path.resolve(repoRoot || this.repoRoot);
     const store = targetRoot === this.repoRoot ? this.chatStore : new ProjectChatStore(targetRoot);
     store.saveAcceptedRepoState(this.captureRepoState(targetRoot));
+    this.invalidateSnapshotCaches(targetRoot);
     return this.snapshot();
   }
 
@@ -471,6 +547,7 @@ class DesktopSessionService {
       fs.writeFileSync(fullPath, baseline.text, "utf8");
     }
 
+    this.invalidateSnapshotCaches(targetRoot);
     return this.snapshot();
   }
 
