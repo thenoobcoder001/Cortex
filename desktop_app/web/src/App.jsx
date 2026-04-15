@@ -1808,11 +1808,6 @@ export default function App() {
                 </select>
                 <div
                   className="model-picker"
-                  onMouseLeave={() => {
-                    if (modelMenuOpen) {
-                      setHoveredModelGroup(activeModelParent);
-                    }
-                  }}
                 >
                   <button
                     ref={modelPickerRef}
