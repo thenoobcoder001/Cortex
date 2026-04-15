@@ -120,6 +120,7 @@ function createWindow() {
     dialog.showErrorBox("Cortex — Load Error", `Renderer failed to load (${errorCode}):\n${errorDescription}`);
   });
 
+
 }
 
 if (ipcMain) {
