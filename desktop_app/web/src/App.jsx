@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const PROMPT_PRESETS = [
   { value: "chat", label: "Chat" },
@@ -226,6 +227,8 @@ export default function App() {
   const [projectMenuPath, setProjectMenuPath] = useState("");
   const [projectMenuPos, setProjectMenuPos] = useState({ top: 0, left: 0 });
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelMenuPos, setModelMenuPos] = useState({ bottom: 0, left: 0 });
+  const modelPickerRef = useRef(null);
   const [hoveredModelGroup, setHoveredModelGroup] = useState("");
   const [editorMenuOpen, setEditorMenuOpen] = useState(false);
   const [groqApiKeyDraft, setGroqApiKeyDraft] = useState("");
@@ -367,6 +370,10 @@ export default function App() {
     if (!nextOpen) {
       setHoveredModelGroup("");
       return;
+    }
+    if (modelPickerRef.current) {
+      const rect = modelPickerRef.current.getBoundingClientRect();
+      setModelMenuPos({ bottom: window.innerHeight - rect.top + 8, left: rect.left });
     }
     const preferredGroup = modelGroupStates.get(activeModelParent)?.connected
       ? activeModelParent
@@ -1170,49 +1177,6 @@ export default function App() {
               </label>
             </section>
 
-            <section className="settings-section-card">
-              <div className="settings-block-title">Provider Keys</div>
-              <div className="settings-storage-note">
-                Saved API keys are stored locally in:
-                <code>{snapshot.config.configPath || "Unavailable"}</code>
-              </div>
-              <label className="field">
-                <span>Groq API key</span>
-                <input
-                  type="password"
-                  value={groqApiKeyDraft}
-                  onChange={(event) => setGroqApiKeyDraft(event.target.value)}
-                  placeholder="gsk_..."
-                />
-              </label>
-              <label className="field">
-                <span>Gemini API key</span>
-                <input
-                  type="password"
-                  value={geminiApiKeyDraft}
-                  onChange={(event) => setGeminiApiKeyDraft(event.target.value)}
-                  placeholder="AIza..."
-                />
-              </label>
-              <label className="field">
-                <span>OpenAI API key</span>
-                <input
-                  type="password"
-                  value={openaiApiKeyDraft}
-                  onChange={(event) => setOpenaiApiKeyDraft(event.target.value)}
-                  placeholder="sk-..."
-                />
-              </label>
-              <div className="settings-inline-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setShowDeleteSettingsConfirm(true)}
-                >
-                  Delete settings file
-                </button>
-              </div>
-            </section>
 
             <section className="settings-section-card settings-section-wide">
               <div className="settings-block-title">Providers</div>
@@ -1851,6 +1815,7 @@ export default function App() {
                   }}
                 >
                   <button
+                    ref={modelPickerRef}
                     type="button"
                     className="model-picker-trigger"
                     title={snapshot.config.model}
@@ -1859,9 +1824,9 @@ export default function App() {
                     <span>{activeModelParent}</span>
                     <span className={modelMenuOpen ? "model-picker-caret open" : "model-picker-caret"}>{">"}</span>
                   </button>
-                  {modelMenuOpen && (
+                  {modelMenuOpen && createPortal(
                     <>
-                    <div className="model-picker-menu" onClick={(event) => event.stopPropagation()}>
+                    <div className="model-picker-menu" onClick={(event) => event.stopPropagation()} style={{ position: "fixed", bottom: modelMenuPos.bottom, left: modelMenuPos.left, top: "auto" }}>
                       <div className="model-group-list">
                         {modelGroups.map(([group, items]) => (
                           <button
@@ -1891,7 +1856,7 @@ export default function App() {
                         ))}
                       </div>
                     </div>
-                    <div className="model-submenu-flyout" onClick={(event) => event.stopPropagation()}>
+                    <div className="model-submenu-flyout" onClick={(event) => event.stopPropagation()} style={{ position: "fixed", bottom: modelMenuPos.bottom, left: modelMenuPos.left + 188, top: "auto" }}>
                       <div className="model-submenu">
                         {(
                           modelGroups.find(([group]) => group === hoveredModelGroup) ||
@@ -1915,7 +1880,8 @@ export default function App() {
                         ))}
                       </div>
                     </div>
-                    </>
+                    </>,
+                    document.body
                   )}
                 </div>
               </div>

@@ -78,8 +78,8 @@ function latestUserMessage(messages) {
 function buildCodexInitializeParams() {
   return {
     clientInfo: {
-      name: "gpt_tui_desktop",
-      title: "GPT TUI Desktop",
+      name: "cortex",
+      title: "Cortex",
       version: "0.1.0",
     },
     capabilities: {

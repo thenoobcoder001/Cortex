@@ -38,4 +38,6 @@ htmlcov/
 *.err.log
 
 .gpt-tui/
+.cortex/
 local-notes/
+images/

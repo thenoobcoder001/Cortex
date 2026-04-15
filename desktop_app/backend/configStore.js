@@ -13,9 +13,9 @@ function normalizeContextCarryMessages(value, fallback = 5) {
 
 function configDir() {
   if (process.platform === "win32") {
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "gpt-tui");
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "cortex");
   }
-  return path.join(os.homedir(), ".config", "gpt-tui");
+  return path.join(os.homedir(), ".config", "cortex");
 }
 
 function configFile() {
