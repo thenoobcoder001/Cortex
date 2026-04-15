@@ -115,6 +115,10 @@ function createWindow() {
   } else {
     mainWindow.loadFile(entry.value);
   }
+
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+    dialog.showErrorBox("Cortex — Load Error", `Renderer failed to load (${errorCode}):\n${errorDescription}`);
+  });
 }
 
 if (ipcMain) {
@@ -176,8 +180,16 @@ if (ipcMain) {
 }
 
 if (app) {
+  app.disableHardwareAcceleration();
+
   app.whenReady().then(async () => {
-    await startBackend();
+    try {
+      await startBackend();
+    } catch (err) {
+      dialog.showErrorBox("Cortex — Startup Error", `Backend failed to start:\n\n${err?.message || err}`);
+      app.quit();
+      return;
+    }
     createWindow();
   });
 
