@@ -66,7 +66,7 @@ function buildSnapshot(service) {
     changes: workspaceChanges,
     activeChatChanges: service.changes,
     activePlan: service.activePlan,
-    files: service.files.listFiles(service.repoRoot, 200),
+    files: service.listFilesCached(service.repoRoot, 200),
     providerName: providerNameForModel(service.model),
     runningChatIds: service.requestRegistry.ids(),
     interruptedChatIds: [...service.interruptedRuns.keys()].sort(),
