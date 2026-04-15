@@ -118,7 +118,7 @@ class FakeApiProvider {
 }
 
 function makeTempRepo() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "gpt-tui-node-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cortex-node-"));
   fs.writeFileSync(path.join(root, "seed.txt"), "seed\n", "utf8");
   return root;
 }
@@ -276,7 +276,7 @@ test("clear local data removes project metadata and resets service state", async
   });
   service.acceptWorkspaceChanges(repoRoot);
 
-  const metadataDir = path.join(repoRoot, ".gpt-tui");
+  const metadataDir = path.join(repoRoot, ".cortex");
   assert.ok(fs.existsSync(metadataDir));
 
   const snapshot = service.clearLocalData([repoRoot]);
@@ -314,7 +314,7 @@ test("delete settings file clears saved keys without deleting project metadata",
   assert.equal(snapshot.config.activeChatId, "");
   assert.equal(snapshot.config.configPath, configPath);
   assert.ok(!fs.existsSync(configPath));
-  assert.ok(fs.existsSync(path.join(repoRoot, ".gpt-tui")));
+  assert.ok(fs.existsSync(path.join(repoRoot, ".cortex")));
 });
 
 test("provider connection test uses current draft keys and reports success", async () => {
@@ -341,8 +341,8 @@ test("provider connection test uses current draft keys and reports success", asy
 
 test("context carry can be set to zero and survives snapshot/config reload", () => {
   const repoRoot = makeTempRepo();
-  const localAppDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gpt-tui-config-"));
-  const configPath = path.join(localAppDataDir, "gpt-tui", "config.json");
+  const localAppDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cortex-config-"));
+  const configPath = path.join(localAppDataDir, "cortex", "config.json");
   const config = new AppConfigStore();
   config.path = configPath;
   const service = createService(repoRoot, { config });
@@ -400,7 +400,7 @@ test("plan mode saves a markdown plan file and exposes it on the active snapshot
 
   assert.ok(finalSnapshot);
   assert.ok(finalSnapshot.activePlan);
-  assert.match(finalSnapshot.activePlan.path, /\\.gpt-tui[\\/]plans[\\/].+\.md$/i);
+  assert.match(finalSnapshot.activePlan.path, /\\.cortex[\\/]plans[\\/].+\.md$/i);
   assert.ok(fs.existsSync(finalSnapshot.activePlan.path));
   assert.match(fs.readFileSync(finalSnapshot.activePlan.path, "utf8"), /## Plan/i);
 });

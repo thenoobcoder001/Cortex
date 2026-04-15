@@ -679,7 +679,7 @@ button:disabled {
   gap: 0;
   min-width: 0;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: visible;
   background: var(--bg);
 }
 
@@ -1065,7 +1065,7 @@ button:disabled {
 
 .composer-panel {
   padding: 16px 24px 24px;
-  overflow-x: hidden;
+  overflow: visible;
   max-width: 100%;
 }
 
@@ -1132,9 +1132,7 @@ button:disabled {
 }
 
 .model-picker-menu {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 10px);
+  position: fixed;
   width: 180px;
   border: 1px solid var(--border-strong);
   border-radius: 16px;
@@ -1157,9 +1155,7 @@ button:disabled {
 }
 
 .model-submenu-flyout {
-  position: absolute;
-  left: calc(100% + 8px);
-  bottom: calc(100% + 10px);
+  position: fixed;
   min-width: 300px;
   max-width: 340px;
   border: 1px solid var(--border-strong);
