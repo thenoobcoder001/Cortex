@@ -46,8 +46,14 @@ function findFreePort() {
 }
 
 async function startBackend() {
-  const port = await findFreePort();
-  backendHandle = await startBackendServer({ host: "127.0.0.1", port });
+  // Try to use the default port 8765 first so browser access works consistently.
+  try {
+    backendHandle = await startBackendServer({ host: "127.0.0.1", port: 8765 });
+  } catch (err) {
+    // If 8765 is taken, fall back to a dynamic free port.
+    const port = await findFreePort();
+    backendHandle = await startBackendServer({ host: "127.0.0.1", port });
+  }
   backendUrl = backendHandle.url;
 }
 

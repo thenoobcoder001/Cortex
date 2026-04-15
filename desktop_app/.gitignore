@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+dist-backend/
+*.exe
+*.zip
+*.dmg
+*.AppImage
+
+# Electron
+builder-debug.yml
+builder-effective-config.yaml
+dist_electron/
+
+# Local configuration and logs
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+backend/config.json
+web/dist/

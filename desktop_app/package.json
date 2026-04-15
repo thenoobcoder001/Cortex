@@ -7,8 +7,9 @@
   "author": "CHIRAG",
   "scripts": {
     "dev:web": "vite --config web/vite.config.js",
-    "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron electron/main.js",
-    "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
+    "dev:backend": "node backend/start_standalone.js",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && npx cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 npx electron electron/main.js",
+    "dev": "npx concurrently -k \"npm:dev:web\" \"npm:dev:electron\" \"npm:dev:backend\"",
     "build:web": "vite build --config web/vite.config.js",
     "build": "npm run build:web && electron-builder",
     "start": "electron electron/main.js"
