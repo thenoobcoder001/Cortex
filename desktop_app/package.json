@@ -17,6 +17,7 @@
   "build": {
     "appId": "com.chirag.cortex",
     "productName": "Cortex",
+    "icon": "build/icon.png",
     "files": [
       "backend/**/*",
       "!backend/**/*.test.js",

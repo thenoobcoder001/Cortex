@@ -344,7 +344,12 @@ class CodexProvider {
         model: this.cliModelName(model),
       });
 
-      const result = await finishTurn;
+      const result = await Promise.race([
+        finishTurn,
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new InterruptError("Request timed out after abort.")), aborted ? 6000 : 120000)
+        ),
+      ]);
       this.sessionId = String(result.threadId || threadId || "").trim();
       this.sessionMode = this.sessionId ? "resume_id" : "fresh";
       return String(result.assistantText || "(No response from codex.)");
@@ -494,7 +499,11 @@ class GeminiCliProvider {
           }
         }
       }
-      const exitCode = await new Promise((resolve) => child.once("close", resolve));
+      const exitCode = await Promise.race([
+        new Promise((resolve) => child.once("close", resolve)),
+        // If aborted, don't wait forever for the process to close
+        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? 6000 : 120000)),
+      ]);
       if (aborted) {
         throw new InterruptError("Request interrupted.", assistantText);
       }
@@ -687,7 +696,11 @@ class ClaudeCliProvider {
           onOutput?.(content);
         }
       }
-      const exitCode = await new Promise((resolve) => child.once("close", resolve));
+      const exitCode = await Promise.race([
+        new Promise((resolve) => child.once("close", resolve)),
+        // If aborted, don't wait forever for the process to close
+        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? 6000 : 120000)),
+      ]);
       if (aborted) {
         throw new InterruptError("Request interrupted.", assistantText);
       }
