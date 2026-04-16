@@ -57,7 +57,6 @@ class DesktopSessionService {
     this.activeChatId = "";
     this.activeChatModel = "";
     this.interruptedRuns = new Map();
-    this.suppressWorkspaceBaselineInit = true;
     this.requestRegistry = new RequestRegistry();
     this.snapshotCacheTtlMs = 1500;
     this.snapshotCache = {
@@ -67,14 +66,6 @@ class DesktopSessionService {
     this.rememberRepoRoot(this.repoRoot);
     recoverInterruptedRuns(this);
     restoreActiveChat(this);
-    // Defer workspace baseline capture so the first snapshot returns immediately
-    // and doesn't block the Node.js event loop (causing "Not Responding" on startup).
-    setImmediate(() => {
-      this.suppressWorkspaceBaselineInit = false;
-      if (this.repoRoot) {
-        this.workspaceChanges(this.repoRoot, { initialize: true });
-      }
-    });
   }
 
   modelFamily(model) {

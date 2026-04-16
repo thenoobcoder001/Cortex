@@ -1,6 +1,69 @@
 const http = require("node:http");
+const fs = require("node:fs");
+const path = require("node:path");
+const { exec } = require("node:child_process");
 const { URL } = require("node:url");
 const { DesktopSessionService } = require("./sessionService");
+
+function runGit(args, cwd) {
+  return new Promise((resolve) => {
+    exec(`git ${args}`, { cwd, encoding: "utf8", timeout: 10000 }, (_error, stdout) => {
+      resolve(stdout || "");
+    });
+  });
+}
+
+function parseDiffByFile(diffText) {
+  const files = {};
+  if (!diffText) return files;
+  const chunks = diffText.split(/^(?=diff --git )/m).filter(Boolean);
+  for (const chunk of chunks) {
+    const match = chunk.match(/^diff --git a\/.+ b\/(.+)\n/);
+    if (match) files[match[1]] = chunk.trimEnd();
+  }
+  return files;
+}
+
+async function gitChanges(repoRoot) {
+  if (!repoRoot) return [];
+  try {
+    const [statusOut, diffOut] = await Promise.all([
+      runGit("status --porcelain=v1 -u", repoRoot),
+      runGit("diff HEAD", repoRoot),
+    ]);
+    if (!statusOut.trim()) return [];
+    const diffByFile = parseDiffByFile(diffOut);
+    const changes = [];
+    for (const line of statusOut.split("\n").filter(Boolean)) {
+      const xy = line.slice(0, 2);
+      const rest = line.slice(3).trim();
+      let filePath = rest;
+      let oldPath = null;
+      let newPath = null;
+      if ((xy[0] === "R" || xy[1] === "R") && rest.includes(" -> ")) {
+        [oldPath, newPath] = rest.split(" -> ").map((s) => s.trim());
+        filePath = newPath;
+      }
+      let action = "edit";
+      if (xy[0] === "?" && xy[1] === "?") action = "add";
+      else if (xy[0] === "D" || xy[1] === "D") action = "delete";
+      else if (xy[0] === "A" || xy[1] === "A") action = "add";
+      else if (xy[0] === "R" || xy[1] === "R") action = "rename";
+      let diff = diffByFile[filePath] || (oldPath ? diffByFile[oldPath] : "") || "";
+      if (action === "add" && !diff) {
+        try {
+          const content = fs.readFileSync(path.join(repoRoot, filePath), "utf8");
+          diff = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${content.split("\n").length} @@\n` +
+            content.split("\n").map((l) => `+${l}`).join("\n");
+        } catch { diff = ""; }
+      }
+      changes.push({ action, path: filePath, diff, oldPath: oldPath || undefined, newPath: newPath || undefined });
+    }
+    return changes;
+  } catch {
+    return [];
+  }
+}
 
 function readJsonBody(request) {
   return new Promise((resolve, reject) => {
@@ -79,6 +142,11 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
         sendJson(response, 200, effectiveService.readFile(url.searchParams.get("path") || ""));
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/workspace/git-status") {
+        const repoRoot = url.searchParams.get("repoRoot") || effectiveService.repoRoot || "";
+        sendJson(response, 200, { changes: await gitChanges(repoRoot) });
+        return;
+      }
 
       const body = request.method === "POST" ? await readJsonBody(request) : {};
 
@@ -108,14 +176,6 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
           chatId: body.chatId || null,
           repoRoot: body.repoRoot || null,
         }));
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/api/workspace/accept") {
-        sendJson(response, 200, effectiveService.acceptWorkspaceChanges(body.repoRoot || null));
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/api/workspace/revert") {
-        sendJson(response, 200, effectiveService.revertWorkspaceChanges(body.repoRoot || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/cache/clear") {

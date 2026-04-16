@@ -249,9 +249,9 @@ export default function App() {
   const [bootDismissed, setBootDismissed] = useState(false);
   const [diffPanelOpen, setDiffPanelOpen] = useState(false);
   const [selectedDiffIndex, setSelectedDiffIndex] = useState(0);
+  const [gitChanges, setGitChanges] = useState([]);
   const [showClearCacheConfirm, setShowClearCacheConfirm] = useState(false);
   const [showDeleteSettingsConfirm, setShowDeleteSettingsConfirm] = useState(false);
-  const [showRevertDiffConfirm, setShowRevertDiffConfirm] = useState(false);
   const [providerTestState, setProviderTestState] = useState({});
   const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
   const [headerInfoOpen, setHeaderInfoOpen] = useState(false);
@@ -259,7 +259,7 @@ export default function App() {
 
   const runningChatIds = snapshot?.runningChatIds || [];
   const interruptedRuns = snapshot?.interruptedRuns || [];
-  const activeChanges = snapshot?.changes || [];
+  const activeChanges = gitChanges;
   const activeRepoRoot = normalizeProject(snapshot?.config?.repoRoot || "");
   const splashVisible = !bootDismissed || !snapshot;
   const appVersion = snapshot?.app?.version || FALLBACK_APP_VERSION;
@@ -324,6 +324,26 @@ export default function App() {
     setSettingsPromptPreset(snapshot.config.promptPreset || "code");
     setRemoteAccessEnabledDraft(Boolean(snapshot.config.remoteAccessEnabled));
   }, [snapshot?.config]);
+
+  const fetchGitChanges = async (repoRoot) => {
+    const root = repoRoot || snapshot?.config?.repoRoot || "";
+    if (!root) return;
+    try {
+      const response = await fetch(`${backendUrl}/api/workspace/git-status?repoRoot=${encodeURIComponent(root)}`);
+      const data = await response.json();
+      setGitChanges(data.changes || []);
+    } catch {
+      setGitChanges([]);
+    }
+  };
+
+  // Fetch git changes when diff panel opens or repo changes
+  useEffect(() => {
+    if (diffPanelOpen) {
+      void fetchGitChanges();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffPanelOpen, snapshot?.config?.repoRoot]);
 
   const toggleRepo = (repoPath) => {
     setExpandedRepos((prev) => {
@@ -618,39 +638,6 @@ export default function App() {
     }
   };
 
-  const handleAcceptWorkspaceChanges = async () => {
-    setError("");
-    try {
-      const nextSnapshot = await postJson("/api/workspace/accept", {
-        repoRoot: snapshot?.config?.repoRoot || "",
-      });
-      setSnapshot(nextSnapshot);
-      setRepoDraft(nextSnapshot.config.repoRoot);
-      setDiffPanelOpen(false);
-      setSelectedDiffIndex(0);
-    } catch (nextError) {
-      setError(String(nextError));
-    }
-  };
-
-  const handleRevertWorkspaceChanges = async () => {
-    setError("");
-    try {
-      const nextSnapshot = await postJson("/api/workspace/revert", {
-        repoRoot: snapshot?.config?.repoRoot || "",
-      });
-      setSnapshot(nextSnapshot);
-      setRepoDraft(nextSnapshot.config.repoRoot);
-      setShowRevertDiffConfirm(false);
-      setSelectedDiffIndex(0);
-      if (nextSnapshot.changes.length === 0) {
-        setDiffPanelOpen(false);
-      }
-    } catch (nextError) {
-      setError(String(nextError));
-    }
-  };
-
   const handleClearCache = async () => {
     setError("");
     try {
@@ -903,6 +890,7 @@ export default function App() {
               setRepoDraft(event.snapshot.config.repoRoot);
               syncSavedProjects(event.snapshot.config.repoRoot);
               void fetchProjectChats(event.snapshot.config.repoRoot).catch(() => {});
+              void fetchGitChanges(event.snapshot.config.repoRoot);
             }
             setPendingTurns((current) => {
               const next = { ...current };
@@ -1060,12 +1048,7 @@ export default function App() {
   const selectedDiff = activeChanges[selectedDiffIndex] || null;
 
   useEffect(() => {
-    if (activeChanges.length === 0) {
-      setDiffPanelOpen(false);
-      setSelectedDiffIndex(0);
-      return;
-    }
-    setSelectedDiffIndex((current) => Math.min(current, activeChanges.length - 1));
+    setSelectedDiffIndex((current) => Math.min(current, Math.max(0, activeChanges.length - 1)));
   }, [activeChanges]);
 
   if (!snapshot) {
@@ -1313,25 +1296,6 @@ export default function App() {
             </div>
           </div>
         )}
-        {showRevertDiffConfirm && (
-          <div className="confirm-overlay" onClick={() => setShowRevertDiffConfirm(false)}>
-            <div className="confirm-dialog" onClick={(event) => event.stopPropagation()}>
-              <div className="confirm-badge">Danger</div>
-              <div className="confirm-title">Revert pending workspace changes?</div>
-              <div className="confirm-copy">
-                This restores the current project to the last accepted workspace baseline and removes all pending diff changes.
-              </div>
-              <div className="confirm-actions">
-                <button type="button" className="secondary-button" onClick={() => setShowRevertDiffConfirm(false)}>
-                  Cancel
-                </button>
-                <button type="button" className="danger-button" onClick={handleRevertWorkspaceChanges}>
-                  Revert
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -1526,21 +1490,14 @@ export default function App() {
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setDiffPanelOpen((current) => !current)}
-                  disabled={activeChanges.length === 0}
+                  onClick={() => {
+                    const next = !diffPanelOpen;
+                    setDiffPanelOpen(next);
+                    if (next) void fetchGitChanges();
+                  }}
                 >
                   {diffPanelOpen ? `Hide diff (${activeChanges.length})` : `Show diff (${activeChanges.length})`}
                 </button>
-                {activeChanges.length > 0 && (
-                  <button type="button" className="secondary-button" onClick={handleAcceptWorkspaceChanges}>
-                    Accept
-                  </button>
-                )}
-                {activeChanges.length > 0 && (
-                  <button type="button" className="secondary-button" onClick={() => setShowRevertDiffConfirm(true)}>
-                    Revert
-                  </button>
-                )}
                 {activeChatRunning && (
                   <button type="button" className="secondary-button" onClick={handleInterruptChat}>
                     Stop
@@ -1602,35 +1559,13 @@ export default function App() {
                         type="button"
                         onClick={() => {
                           setHeaderMoreOpen(false);
-                          setDiffPanelOpen((current) => !current);
+                          const next = !diffPanelOpen;
+                          setDiffPanelOpen(next);
+                          if (next) void fetchGitChanges();
                         }}
-                        disabled={activeChanges.length === 0}
                       >
                         <span>{diffPanelOpen ? "Hide diff" : `Show diff (${activeChanges.length})`}</span>
                       </button>
-                      {activeChanges.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHeaderMoreOpen(false);
-                            handleAcceptWorkspaceChanges();
-                          }}
-                        >
-                          <span>Accept changes</span>
-                        </button>
-                      )}
-                      {activeChanges.length > 0 && (
-                        <button
-                          type="button"
-                          className="danger-action"
-                          onClick={() => {
-                            setHeaderMoreOpen(false);
-                            setShowRevertDiffConfirm(true);
-                          }}
-                        >
-                          <span>Revert changes</span>
-                        </button>
-                      )}
                       {activeChatRunning && (
                         <button
                           type="button"
@@ -1690,9 +1625,13 @@ export default function App() {
               Previous response was interrupted during restart or shutdown. Open this chat and continue from the last saved turn.
             </div>
           )}
-          {diffPanelOpen && activeChanges.length > 0 && (
+          {diffPanelOpen && (
             <section className="diff-panel">
               <div className="diff-file-list">
+                <div className="diff-file-list-header">
+                  <span className="diff-file-list-title">Git changes ({activeChanges.length})</span>
+                  <button type="button" className="secondary-button" onClick={() => void fetchGitChanges()}>Refresh</button>
+                </div>
                 {activeChanges.map((change, index) => (
                   <button
                     key={`${change.path}-${index}`}
