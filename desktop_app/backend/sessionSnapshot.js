@@ -1,10 +1,8 @@
 const {
   APP_NAME,
   VERSION,
-  GEMINI_MODELS,
   GEMINI_CLI_MODELS,
   CLAUDE_MODELS,
-  GROQ_MODELS,
   CODEX_MODELS,
 } = require("./constants");
 
@@ -41,9 +39,6 @@ function providersSnapshot(service) {
 }
 
 function buildSnapshot(service) {
-  const workspaceChanges = service.workspaceChanges(service.repoRoot, {
-    initialize: !service.suppressWorkspaceBaselineInit,
-  });
   return {
     app: { name: APP_NAME, version: VERSION },
     config: {
@@ -65,8 +60,7 @@ function buildSnapshot(service) {
     models: models(),
     chats: service.chatItems(),
     messages: service.messages,
-    changes: workspaceChanges,
-    activeChatChanges: service.changes,
+    changes: [],
     activePlan: service.activePlan,
     files: service.listFilesCached(service.repoRoot, 200),
     providerName: providerNameForModel(service.model),
