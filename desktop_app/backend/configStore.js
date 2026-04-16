@@ -11,6 +11,21 @@ function normalizeContextCarryMessages(value, fallback = 5) {
   return Math.max(0, Math.min(Math.trunc(parsed), 20));
 }
 
+function normalizeRecentRepoRoots(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const unique = [];
+  for (const entry of value) {
+    const normalized = String(entry || "").trim();
+    if (!normalized || unique.includes(normalized)) {
+      continue;
+    }
+    unique.push(normalized);
+  }
+  return unique.slice(0, 20);
+}
+
 function configDir() {
   if (process.platform === "win32") {
     return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "cortex");
@@ -35,6 +50,8 @@ class AppConfigStore {
     this.toolSafetyMode = "write";
     this.assistantMemory = "";
     this.contextCarryMessages = 5;
+    this.remoteAccessEnabled = false;
+    this.recentRepoRoots = [];
     this.geminiSessionId = "";
     this.codexSessionId = "";
     this.activeRuns = [];
@@ -59,6 +76,8 @@ class AppConfigStore {
           raw.context_carry_messages ?? raw.contextCarryMessages,
           5,
         );
+        config.remoteAccessEnabled = Boolean(raw.remote_access_enabled ?? raw.remoteAccessEnabled);
+        config.recentRepoRoots = normalizeRecentRepoRoots(raw.recent_repo_roots ?? raw.recentRepoRoots);
         config.geminiSessionId = String(raw.gemini_session_id || raw.geminiSessionId || "");
         config.codexSessionId = String(raw.codex_session_id || raw.codexSessionId || "");
         config.activeRuns = Array.isArray(raw.active_runs || raw.activeRuns) ? raw.active_runs || raw.activeRuns : [];
@@ -88,6 +107,8 @@ class AppConfigStore {
           tool_safety_mode: this.toolSafetyMode,
           assistant_memory: this.assistantMemory,
           context_carry_messages: this.contextCarryMessages,
+          remote_access_enabled: this.remoteAccessEnabled,
+          recent_repo_roots: normalizeRecentRepoRoots(this.recentRepoRoots),
           gemini_session_id: this.geminiSessionId,
           codex_session_id: this.codexSessionId,
           active_runs: this.activeRuns,
@@ -111,6 +132,8 @@ class AppConfigStore {
     this.toolSafetyMode = "write";
     this.assistantMemory = "";
     this.contextCarryMessages = 5;
+    this.remoteAccessEnabled = false;
+    this.recentRepoRoots = [];
     this.geminiSessionId = "";
     this.codexSessionId = "";
     this.activeRuns = [];
@@ -131,4 +154,5 @@ class AppConfigStore {
 module.exports = {
   AppConfigStore,
   normalizeContextCarryMessages,
+  normalizeRecentRepoRoots,
 };

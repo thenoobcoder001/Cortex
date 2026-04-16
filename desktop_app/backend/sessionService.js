@@ -9,7 +9,7 @@ const {
   GEMINI_CLI_MODELS,
   CODEX_MODELS,
 } = require("./constants");
-const { AppConfigStore, normalizeContextCarryMessages } = require("./configStore");
+const { AppConfigStore, normalizeContextCarryMessages, normalizeRecentRepoRoots } = require("./configStore");
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
@@ -57,15 +57,24 @@ class DesktopSessionService {
     this.activeChatId = "";
     this.activeChatModel = "";
     this.interruptedRuns = new Map();
-    this.suppressWorkspaceBaselineInit = false;
+    this.suppressWorkspaceBaselineInit = true;
     this.requestRegistry = new RequestRegistry();
     this.snapshotCacheTtlMs = 1500;
     this.snapshotCache = {
       workspaceChanges: new Map(),
       fileLists: new Map(),
     };
+    this.rememberRepoRoot(this.repoRoot);
     recoverInterruptedRuns(this);
     restoreActiveChat(this);
+    // Defer workspace baseline capture so the first snapshot returns immediately
+    // and doesn't block the Node.js event loop (causing "Not Responding" on startup).
+    setImmediate(() => {
+      this.suppressWorkspaceBaselineInit = false;
+      if (this.repoRoot) {
+        this.workspaceChanges(this.repoRoot, { initialize: true });
+      }
+    });
   }
 
   modelFamily(model) {
@@ -114,6 +123,14 @@ class DesktopSessionService {
       value,
     });
     return value;
+  }
+
+  rememberRepoRoot(repoRoot) {
+    const normalized = path.resolve(repoRoot);
+    this.config.recentRepoRoots = normalizeRecentRepoRoots([
+      normalized,
+      ...(Array.isArray(this.config.recentRepoRoots) ? this.config.recentRepoRoots : []),
+    ]);
   }
 
   invalidateSnapshotCaches(repoRoot = null) {
@@ -167,6 +184,7 @@ class DesktopSessionService {
     this.changes = [];
     this.activePlan = null;
     this.invalidateSnapshotCaches();
+    this.rememberRepoRoot(this.repoRoot);
     this.persistConfig();
   }
 
@@ -184,6 +202,32 @@ class DesktopSessionService {
   listChats(repoRoot = null) {
     const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
     return this.chatItems(store);
+  }
+
+  getChatMessages(chatId, repoRoot = null, { before = null, limit = 40 } = {}) {
+    if (!chatId) {
+      throw new Error("Chat id is required.");
+    }
+    const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
+    const payload = store.loadChat(chatId);
+    if (!payload) {
+      throw new Error(`Chat not found: ${chatId}`);
+    }
+
+    const messages = normalizeMessages(payload.messages);
+    const total = messages.length;
+    const normalizedLimit = Math.min(Math.max(Number(limit) || 40, 1), 200);
+    const normalizedBefore = before == null ? total : Math.min(Math.max(Number(before) || 0, 0), total);
+    const start = Math.max(0, normalizedBefore - normalizedLimit);
+    const page = messages.slice(start, normalizedBefore);
+
+    return {
+      chatId,
+      messages: page,
+      total,
+      hasMore: start > 0,
+      nextBefore: start > 0 ? start : null,
+    };
   }
 
   newChat(repoRoot = null) {
@@ -356,7 +400,7 @@ class DesktopSessionService {
     return this.snapshot();
   }
 
-  updateConfig({ model = null, repoRoot = null, apiKey = null, geminiApiKey = null, openaiApiKey = null, promptPreset = null, assistantMemory = null, contextCarryMessages = null } = {}) {
+  updateConfig({ model = null, repoRoot = null, apiKey = null, geminiApiKey = null, openaiApiKey = null, promptPreset = null, assistantMemory = null, contextCarryMessages = null, remoteAccessEnabled = null } = {}) {
     if (repoRoot) {
       this.setRepoRoot(repoRoot);
     }
@@ -383,6 +427,9 @@ class DesktopSessionService {
     }
     if (contextCarryMessages != null) {
       this.config.contextCarryMessages = normalizeContextCarryMessages(contextCarryMessages, 0);
+    }
+    if (remoteAccessEnabled != null) {
+      this.config.remoteAccessEnabled = Boolean(remoteAccessEnabled);
     }
     this.persistConfig();
     return this.snapshot();

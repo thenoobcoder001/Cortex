@@ -367,6 +367,54 @@ test("context carry can be set to zero and survives snapshot/config reload", () 
   }
 });
 
+test("chat messages page returns most recent history with pagination", () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  const chatId = service.chatStore.createChat([
+    { role: "user", content: "one" },
+    { role: "assistant", content: "two" },
+    { role: "user", content: "three" },
+    { role: "assistant", content: "four" },
+    { role: "user", content: "five" },
+  ], { model: "codex:gpt-5.4" });
+
+  const latestPage = service.getChatMessages(chatId, repoRoot, { limit: 2 });
+  assert.equal(latestPage.chatId, chatId);
+  assert.equal(latestPage.total, 5);
+  assert.equal(latestPage.hasMore, true);
+  assert.equal(latestPage.nextBefore, 3);
+  assert.deepEqual(latestPage.messages.map((message) => message.content), ["four", "five"]);
+
+  const olderPage = service.getChatMessages(chatId, repoRoot, { before: latestPage.nextBefore, limit: 3 });
+  assert.equal(olderPage.hasMore, false);
+  assert.equal(olderPage.nextBefore, null);
+  assert.deepEqual(olderPage.messages.map((message) => message.content), ["one", "two", "three"]);
+});
+
+test("chat messages endpoint returns paginated chat history", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  const chatId = service.chatStore.createChat([
+    { role: "user", content: "hello" },
+    { role: "assistant", content: "world" },
+    { role: "user", content: "again" },
+  ], { model: "codex:gpt-5.4" });
+  const backend = await startBackendServer({ host: "127.0.0.1", port: 8893, service });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:8893/api/chats/messages?chatId=${encodeURIComponent(chatId)}&repoRoot=${encodeURIComponent(repoRoot)}&limit=2`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.chatId, chatId);
+    assert.equal(payload.total, 3);
+    assert.equal(payload.hasMore, true);
+    assert.equal(payload.nextBefore, 1);
+    assert.deepEqual(payload.messages.map((message) => message.content), ["world", "again"]);
+  } finally {
+    await backend.close();
+  }
+});
+
 test("claude provider connection test reports success", async () => {
   const repoRoot = makeTempRepo();
   const service = createService(repoRoot, {

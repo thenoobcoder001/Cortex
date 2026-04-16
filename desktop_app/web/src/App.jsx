@@ -21,6 +21,8 @@ const EXTERNAL_EDITOR_OPTIONS = [
   { id: "cursor", label: "Cursor" },
 ];
 
+const FALLBACK_APP_VERSION = "0.0.1";
+
 function EditorIcon({ editorId }) {
   if (editorId === "vscode") {
     return (
@@ -175,7 +177,11 @@ async function readDesktopConfig() {
   if (window.desktopApi?.getConfig) {
     return window.desktopApi.getConfig();
   }
-  return { backendUrl: import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8765" };
+  return {
+    backendUrl: import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8765",
+    remoteAccessEnabled: false,
+    remoteAccessUrls: [],
+  };
 }
 
 async function readNdjsonStream(response, onEvent) {
@@ -237,8 +243,9 @@ export default function App() {
   const [assistantMemoryDraft, setAssistantMemoryDraft] = useState("");
   const [contextCarryMessagesDraft, setContextCarryMessagesDraft] = useState("5");
   const [settingsPromptPreset, setSettingsPromptPreset] = useState("code");
-  const [bootPhase, setBootPhase] = useState(0);
-  const [bootMinElapsed, setBootMinElapsed] = useState(false);
+  const [remoteAccessEnabledDraft, setRemoteAccessEnabledDraft] = useState(false);
+  const [remoteAccessUrls, setRemoteAccessUrls] = useState([]);
+  const [networkSettingsSaving, setNetworkSettingsSaving] = useState(false);
   const [bootDismissed, setBootDismissed] = useState(false);
   const [diffPanelOpen, setDiffPanelOpen] = useState(false);
   const [selectedDiffIndex, setSelectedDiffIndex] = useState(0);
@@ -254,56 +261,40 @@ export default function App() {
   const interruptedRuns = snapshot?.interruptedRuns || [];
   const activeChanges = snapshot?.changes || [];
   const activeRepoRoot = normalizeProject(snapshot?.config?.repoRoot || "");
-  const bootSteps = [
-    "Prime the local runtime",
-    "Attach provider bridges",
-    "Index project memory",
-    "Open the operator console",
-  ];
   const splashVisible = !bootDismissed || !snapshot;
-  const completedBootSteps = snapshot
-    ? bootSteps.length
-    : Math.min(bootSteps.length - 1, Math.max(1, bootPhase + 1));
+  const appVersion = snapshot?.app?.version || FALLBACK_APP_VERSION;
   const bootHeadline = error
     ? "Startup interrupted"
-    : snapshot && bootMinElapsed
+    : snapshot
       ? "Workspace synchronized"
       : "Activating your local AI workstation";
   const bootMessage = error
     ? error
-    : snapshot && bootMinElapsed
+    : snapshot
       ? "Session state restored. Opening the workspace shell."
       : "Bringing up the local backend, rehydrating project state, and staging the desktop shell.";
+  const bootStatusText = error
+    ? "Error"
+    : snapshot
+      ? "Ready"
+      : "Starting backend";
 
   useEffect(() => {
     activeChatIdRef.current = snapshot?.config?.activeChatId || "";
   }, [snapshot?.config?.activeChatId]);
 
   useEffect(() => {
-    const stepTimer = window.setInterval(() => {
-      setBootPhase((current) => Math.min(current + 1, bootSteps.length - 1));
-    }, 480);
-    const minTimer = window.setTimeout(() => {
-      setBootMinElapsed(true);
-    }, 2200);
-    return () => {
-      window.clearInterval(stepTimer);
-      window.clearTimeout(minTimer);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!snapshot || !bootMinElapsed || error) {
+    if (!snapshot || error) {
       return;
     }
-    const remaining = Math.max(0, 2600 - (Date.now() - bootStartedAtRef.current));
+    const remaining = Math.max(0, 400 - (Date.now() - bootStartedAtRef.current));
     const dismissTimer = window.setTimeout(() => {
       setBootDismissed(true);
     }, remaining);
     return () => {
       window.clearTimeout(dismissTimer);
     };
-  }, [bootMinElapsed, error, snapshot]);
+  }, [error, snapshot]);
 
   useEffect(() => {
     if (!activeRepoRoot || !snapshot?.chats) {
@@ -331,6 +322,7 @@ export default function App() {
     setAssistantMemoryDraft(snapshot.config.assistantMemory || "");
     setContextCarryMessagesDraft(String(snapshot.config.contextCarryMessages ?? 5));
     setSettingsPromptPreset(snapshot.config.promptPreset || "code");
+    setRemoteAccessEnabledDraft(Boolean(snapshot.config.remoteAccessEnabled));
   }, [snapshot?.config]);
 
   const toggleRepo = (repoPath) => {
@@ -460,6 +452,12 @@ export default function App() {
     });
   };
 
+  const applyDesktopConfig = (config) => {
+    setBackendUrl(config?.backendUrl || "");
+    setRemoteAccessEnabledDraft(Boolean(config?.remoteAccessEnabled));
+    setRemoteAccessUrls(Array.isArray(config?.remoteAccessUrls) ? config.remoteAccessUrls : []);
+  };
+
   const fetchProjectChats = async (repoRoot, urlOverride) => {
     const normalizedRepoRoot = normalizeProject(repoRoot);
     const targetUrl = urlOverride || backendUrl;
@@ -500,7 +498,7 @@ export default function App() {
     readDesktopConfig()
       .then(async (config) => {
         if (!alive) return;
-        setBackendUrl(config.backendUrl);
+        applyDesktopConfig(config);
         await refreshStatus(config.backendUrl);
         const initialProjects = loadSavedProjects();
         await Promise.all(
@@ -553,21 +551,37 @@ export default function App() {
       setRepoDraft(nextSnapshot.config.repoRoot);
       syncSavedProjects(nextSnapshot.config.repoRoot);
       void fetchProjectChats(nextSnapshot.config.repoRoot).catch(() => {});
+      return nextSnapshot;
     } catch (nextError) {
       setError(String(nextError));
+      throw nextError;
     }
   };
 
   const handleSaveSettings = async () => {
-    await handleConfigUpdate({
-      repoRoot: repoDraft,
-      apiKey: groqApiKeyDraft,
-      geminiApiKey: geminiApiKeyDraft,
-      openaiApiKey: openaiApiKeyDraft,
-      promptPreset: settingsPromptPreset,
-      assistantMemory: assistantMemoryDraft,
-      contextCarryMessages: Number.parseInt(contextCarryMessagesDraft || "5", 10) || 0,
-    });
+    setError("");
+    setNetworkSettingsSaving(true);
+    try {
+      await handleConfigUpdate({
+        repoRoot: repoDraft,
+        apiKey: groqApiKeyDraft,
+        geminiApiKey: geminiApiKeyDraft,
+        openaiApiKey: openaiApiKeyDraft,
+        promptPreset: settingsPromptPreset,
+        assistantMemory: assistantMemoryDraft,
+        contextCarryMessages: Number.parseInt(contextCarryMessagesDraft || "5", 10) || 0,
+        remoteAccessEnabled: remoteAccessEnabledDraft,
+      });
+      if (window.desktopApi?.setRemoteAccess) {
+        const nextDesktopConfig = await window.desktopApi.setRemoteAccess(remoteAccessEnabledDraft);
+        applyDesktopConfig(nextDesktopConfig);
+        await refreshStatus(nextDesktopConfig?.backendUrl || backendUrl);
+      }
+    } catch (nextError) {
+      setError(String(nextError));
+    } finally {
+      setNetworkSettingsSaving(false);
+    }
   };
 
   const handleToolSafetyChange = async (toolSafetyMode) => {
@@ -663,6 +677,8 @@ export default function App() {
       setAssistantMemoryDraft("");
       setContextCarryMessagesDraft("5");
       setSettingsPromptPreset("code");
+      setRemoteAccessEnabledDraft(false);
+      setRemoteAccessUrls([]);
       setLiveStatus("Idle");
     } catch (nextError) {
       setError(String(nextError));
@@ -682,6 +698,7 @@ export default function App() {
       setAssistantMemoryDraft("");
       setContextCarryMessagesDraft(String(nextSnapshot.config.contextCarryMessages ?? 5));
       setSettingsPromptPreset(nextSnapshot.config.promptPreset || "code");
+      setRemoteAccessEnabledDraft(Boolean(nextSnapshot.config.remoteAccessEnabled));
       setShowDeleteSettingsConfirm(false);
     } catch (nextError) {
       setError(String(nextError));
@@ -1074,32 +1091,28 @@ export default function App() {
               <div className="boot-progress-track">
                 <div 
                   className="boot-progress-fill" 
-                  style={{ width: `${(completedBootSteps / bootSteps.length) * 100}%` }}
+                  style={{ width: snapshot ? "100%" : "72%" }}
                 ></div>
               </div>
               <div className="boot-progress-labels">
-                <span className="boot-status-text">
-                  {error ? "Error" : bootSteps[completedBootSteps - 1] || "Initializing..."}
-                </span>
-                <span className="boot-percent">
-                  {Math.round((completedBootSteps / bootSteps.length) * 100)}%
-                </span>
+                <span className="boot-status-text">{bootStatusText}</span>
+                <span className="boot-percent">{snapshot ? "Ready" : "Loading"}</span>
               </div>
             </div>
           </div>
           
           <div className="boot-footer">
             <div className="boot-footer-item">
-              <span className="label">RUNTIME</span>
-              <span className="value">v1.2.4-STABLE</span>
+              <span className="label">APP</span>
+              <span className="value">Cortex</span>
             </div>
             <div className="boot-footer-item">
               <span className="label">ENVIRONMENT</span>
-              <span className="value">WDMX_CORE</span>
+              <span className="value">Desktop</span>
             </div>
             <div className="boot-footer-item">
               <span className="label">VERSION</span>
-              <span className="value">0.9.2-BETA</span>
+              <span className="value">v{appVersion}</span>
             </div>
           </div>
         </div>
@@ -1122,7 +1135,7 @@ export default function App() {
               </div>
             </div>
             <button type="button" className="primary-button" onClick={handleSaveSettings}>
-              Save settings
+              {networkSettingsSaving ? "Saving..." : "Save settings"}
             </button>
           </header>
 
@@ -1175,6 +1188,30 @@ export default function App() {
                   placeholder="5"
                 />
               </label>
+            </section>
+
+            <section className="settings-section-card">
+              <div className="settings-block-title">Remote Access</div>
+              <label className="field">
+                <span>Network exposure</span>
+                <select
+                  value={remoteAccessEnabledDraft ? "enabled" : "disabled"}
+                  onChange={(event) => setRemoteAccessEnabledDraft(event.target.value === "enabled")}
+                >
+                  <option value="disabled">Disabled</option>
+                  <option value="enabled">Enabled</option>
+                </select>
+              </label>
+              <div className="danger-zone-copy">
+                Enable this to let the installed app accept connections from Tailscale or your local network.
+              </div>
+              {remoteAccessEnabledDraft && (
+                <div className="provider-test-result ok">
+                  {remoteAccessUrls.length
+                    ? remoteAccessUrls.map((entry) => `${entry.label}: ${entry.url}`).join("\n")
+                    : "Save settings to restart the backend and generate reachable URLs."}
+                </div>
+              )}
             </section>
 
 
@@ -1947,32 +1984,28 @@ export default function App() {
                 <div className="boot-progress-track">
                   <div 
                     className="boot-progress-fill" 
-                    style={{ width: `${(completedBootSteps / bootSteps.length) * 100}%` }}
+                    style={{ width: snapshot ? "100%" : "72%" }}
                   ></div>
                 </div>
                 <div className="boot-progress-labels">
-                  <span className="boot-status-text">
-                    {error ? "Error" : bootSteps[completedBootSteps - 1] || "Finalizing..."}
-                  </span>
-                  <span className="boot-percent">
-                    {Math.round((completedBootSteps / bootSteps.length) * 100)}%
-                  </span>
+                  <span className="boot-status-text">{bootStatusText}</span>
+                  <span className="boot-percent">{snapshot ? "Ready" : "Loading"}</span>
                 </div>
               </div>
             </div>
             
             <div className="boot-footer">
               <div className="boot-footer-item">
-                <span className="label">RUNTIME</span>
-                <span className="value">v1.2.4-STABLE</span>
+                <span className="label">APP</span>
+                <span className="value">Cortex</span>
               </div>
               <div className="boot-footer-item">
                 <span className="label">WORKSPACE</span>
                 <span className="value">{snapshot?.config?.repoRoot ? projectLabel(snapshot.config.repoRoot) : "PENDING"}</span>
               </div>
               <div className="boot-footer-item">
-                <span className="label">ACCESS</span>
-                <span className="value">W-CLASS</span>
+                <span className="label">VERSION</span>
+                <span className="value">v{appVersion}</span>
               </div>
             </div>
           </div>

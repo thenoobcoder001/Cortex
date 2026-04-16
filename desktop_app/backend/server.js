@@ -64,6 +64,17 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
         sendJson(response, 200, { chats: effectiveService.listChats(url.searchParams.get("repoRoot")) });
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/chats/messages") {
+        sendJson(response, 200, effectiveService.getChatMessages(
+          url.searchParams.get("chatId") || "",
+          url.searchParams.get("repoRoot"),
+          {
+            before: url.searchParams.get("before"),
+            limit: url.searchParams.get("limit"),
+          },
+        ));
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/file") {
         sendJson(response, 200, effectiveService.readFile(url.searchParams.get("path") || ""));
         return;
