@@ -1,5 +1,5 @@
 const APP_NAME = "Cortex";
-const VERSION = "0.2.0";
+const VERSION = "0.0.1";
 
 const DEFAULT_MODEL = "gemini-cli:auto-gemini-2.5";
 const MAX_TOOL_ROUNDS = 8;
