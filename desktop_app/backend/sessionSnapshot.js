@@ -58,6 +58,8 @@ function buildSnapshot(service) {
       toolSafetyMode: service.toolReadOnly ? "read" : "write",
       assistantMemory: service.config.assistantMemory || "",
       contextCarryMessages: service.config.contextCarryMessages ?? 5,
+      remoteAccessEnabled: Boolean(service.config.remoteAccessEnabled),
+      recentRepoRoots: Array.isArray(service.config.recentRepoRoots) ? service.config.recentRepoRoots : [],
     },
     providers: providersSnapshot(service),
     models: models(),

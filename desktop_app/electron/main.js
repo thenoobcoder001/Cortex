@@ -1,13 +1,17 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const fs = require("node:fs");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { AppConfigStore } = require("../backend/configStore");
 const { startBackendServer } = require("../backend/server");
 
 let backendHandle = null;
 let backendUrl = null;
 let mainWindow = null;
+let backendPort = 8765;
+let remoteAccessEnabled = false;
 const EXTERNAL_EDITORS = {
   vscode: { command: "code", label: "VS Code" },
   antigravity: { command: "antigravity", label: "Antigravity" },
@@ -28,12 +32,12 @@ function resolveRendererEntry() {
   };
 }
 
-function findFreePort() {
+function findFreePort(host = "127.0.0.1") {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.unref();
     server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, host, () => {
       const address = server.address();
       if (!address || typeof address === "string") {
         server.close();
@@ -45,24 +49,75 @@ function findFreePort() {
   });
 }
 
-async function startBackend() {
-  // Try to use the default port 8765 first so browser access works consistently.
-  try {
-    backendHandle = await startBackendServer({ host: "127.0.0.1", port: 8765 });
-  } catch (err) {
-    // If 8765 is taken, fall back to a dynamic free port.
-    const port = await findFreePort();
-    backendHandle = await startBackendServer({ host: "127.0.0.1", port });
-  }
-  backendUrl = backendHandle.url;
+function loadRemoteAccessPreference() {
+  return Boolean(AppConfigStore.load().remoteAccessEnabled);
 }
 
-function stopBackend() {
+function listRemoteAccessUrls() {
+  if (!remoteAccessEnabled || !backendPort) {
+    return [];
+  }
+  const interfaces = os.networkInterfaces();
+  const urls = [];
+  for (const [name, addresses] of Object.entries(interfaces)) {
+    for (const address of addresses || []) {
+      if (address.internal || address.family !== "IPv4") {
+        continue;
+      }
+      urls.push({
+        label: /^tailscale/i.test(name) || String(address.address).startsWith("100.")
+          ? `Tailscale (${address.address})`
+          : `${name} (${address.address})`,
+        url: `http://${address.address}:${backendPort}`,
+      });
+    }
+  }
+  return urls;
+}
+
+function desktopConfigPayload() {
+  return {
+    backendUrl,
+    remoteAccessEnabled,
+    remoteAccessUrls: listRemoteAccessUrls(),
+  };
+}
+
+async function startBackend() {
+  remoteAccessEnabled = loadRemoteAccessPreference();
+  const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
+  // Try to use the default port 8765 first so browser access works consistently.
+  try {
+    backendHandle = await startBackendServer({ host, port: 8765 });
+  } catch (err) {
+    // If 8765 is taken, fall back to a dynamic free port.
+    const port = await findFreePort(host);
+    backendHandle = await startBackendServer({ host, port });
+  }
+  backendPort = Number(new URL(backendHandle.url).port || 8765);
+  backendUrl = `http://127.0.0.1:${backendPort}`;
+}
+
+async function stopBackend() {
   if (!backendHandle) {
     return;
   }
-  void backendHandle.close();
+  await backendHandle.close();
   backendHandle = null;
+  backendUrl = null;
+  backendPort = 0;
+}
+
+async function restartBackend() {
+  await stopBackend();
+  await startBackend();
+  return desktopConfigPayload();
+}
+
+function saveRemoteAccessPreference(enabled) {
+  const config = AppConfigStore.load();
+  config.remoteAccessEnabled = Boolean(enabled);
+  config.save();
 }
 
 function launchDetached(command, args, cwd) {
@@ -124,9 +179,19 @@ function createWindow() {
 }
 
 if (ipcMain) {
-  ipcMain.handle("desktop:get-config", () => ({
-    backendUrl,
-  }));
+  ipcMain.handle("desktop:get-config", () => desktopConfigPayload());
+
+  ipcMain.handle("desktop:set-remote-access", async (_event, payload) => {
+    const enabled = Boolean(payload?.enabled);
+    saveRemoteAccessPreference(enabled);
+    try {
+      return await restartBackend();
+    } catch (error) {
+      saveRemoteAccessPreference(!enabled);
+      await restartBackend();
+      throw error;
+    }
+  });
 
   ipcMain.handle("desktop:pick-repo", async () => {
     const result = await dialog.showOpenDialog({
@@ -202,7 +267,7 @@ if (app) {
   });
 
   app.on("before-quit", () => {
-    stopBackend();
+    void stopBackend();
   });
 } else {
   // Fallback testing local backend if electron fails to load
