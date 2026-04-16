@@ -250,6 +250,7 @@ export default function App() {
   const [diffPanelOpen, setDiffPanelOpen] = useState(false);
   const [selectedDiffIndex, setSelectedDiffIndex] = useState(0);
   const [gitChanges, setGitChanges] = useState([]);
+  const [gitChangesError, setGitChangesError] = useState(null);
   const [showClearCacheConfirm, setShowClearCacheConfirm] = useState(false);
   const [showDeleteSettingsConfirm, setShowDeleteSettingsConfirm] = useState(false);
   const [providerTestState, setProviderTestState] = useState({});
@@ -332,8 +333,10 @@ export default function App() {
       const response = await fetch(`${backendUrl}/api/workspace/git-status?repoRoot=${encodeURIComponent(root)}`);
       const data = await response.json();
       setGitChanges(data.changes || []);
-    } catch {
+      setGitChangesError(data.error || null);
+    } catch (err) {
       setGitChanges([]);
+      setGitChangesError(String(err));
     }
   };
 
@@ -1632,6 +1635,9 @@ export default function App() {
                   <span className="diff-file-list-title">Git changes ({activeChanges.length})</span>
                   <button type="button" className="secondary-button" onClick={() => void fetchGitChanges()}>Refresh</button>
                 </div>
+                {gitChangesError && (
+                  <div className="diff-git-error">{gitChangesError}</div>
+                )}
                 {activeChanges.map((change, index) => (
                   <button
                     key={`${change.path}-${index}`}

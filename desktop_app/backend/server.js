@@ -6,9 +6,15 @@ const { URL } = require("node:url");
 const { DesktopSessionService } = require("./sessionService");
 
 function runGit(args, cwd) {
-  return new Promise((resolve) => {
-    exec(`git ${args}`, { cwd, encoding: "utf8", timeout: 10000 }, (_error, stdout) => {
-      resolve(stdout || "");
+  return new Promise((resolve, reject) => {
+    // -c safe.directory=* bypasses the dubious-ownership check that fires when
+    // files were created by a different OS user (e.g. the Codex sandbox account).
+    exec(`git -c safe.directory=* ${args}`, { cwd, encoding: "utf8", timeout: 10000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || error.message || String(error)));
+      } else {
+        resolve(stdout || "");
+      }
     });
   });
 }
@@ -25,14 +31,23 @@ function parseDiffByFile(diffText) {
 }
 
 async function gitChanges(repoRoot) {
-  if (!repoRoot) return [];
+  if (!repoRoot) return { changes: [], error: "No repo root provided" };
   try {
-    const [statusOut, diffOut] = await Promise.all([
-      runGit("status --porcelain=v1 -u", repoRoot),
-      runGit("diff HEAD", repoRoot),
+    // -uall lists every individual untracked file (not just directories)
+    let statusOut;
+    try {
+      statusOut = await runGit("status --porcelain=v1 -uall", repoRoot);
+    } catch (gitError) {
+      return { changes: [], error: `git status failed: ${gitError.message}` };
+    }
+    if (!statusOut.trim()) return { changes: [], error: null };
+
+    const [diffTracked, diffStaged] = await Promise.all([
+      runGit("diff HEAD", repoRoot).catch(() => ""),
+      runGit("diff --cached", repoRoot).catch(() => ""),
     ]);
-    if (!statusOut.trim()) return [];
-    const diffByFile = parseDiffByFile(diffOut);
+    // Merge both diffs; prefer the HEAD diff when both exist for a file
+    const diffByFile = { ...parseDiffByFile(diffStaged), ...parseDiffByFile(diffTracked) };
     const changes = [];
     for (const line of statusOut.split("\n").filter(Boolean)) {
       const xy = line.slice(0, 2);
@@ -50,18 +65,23 @@ async function gitChanges(repoRoot) {
       else if (xy[0] === "A" || xy[1] === "A") action = "add";
       else if (xy[0] === "R" || xy[1] === "R") action = "rename";
       let diff = diffByFile[filePath] || (oldPath ? diffByFile[oldPath] : "") || "";
-      if (action === "add" && !diff) {
+      // For untracked files git diff won't have them — read content directly
+      if (!diff) {
         try {
-          const content = fs.readFileSync(path.join(repoRoot, filePath), "utf8");
-          diff = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${content.split("\n").length} @@\n` +
-            content.split("\n").map((l) => `+${l}`).join("\n");
+          const fullPath = path.join(repoRoot, filePath);
+          const stat = fs.statSync(fullPath);
+          if (stat.isFile()) {
+            const content = fs.readFileSync(fullPath, "utf8");
+            diff = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${content.split("\n").length} @@\n` +
+              content.split("\n").map((l) => `+${l}`).join("\n");
+          }
         } catch { diff = ""; }
       }
       changes.push({ action, path: filePath, diff, oldPath: oldPath || undefined, newPath: newPath || undefined });
     }
-    return changes;
-  } catch {
-    return [];
+    return { changes, error: null };
+  } catch (err) {
+    return { changes: [], error: String(err.message || err) };
   }
 }
 
@@ -144,7 +164,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
       }
       if (request.method === "GET" && url.pathname === "/api/workspace/git-status") {
         const repoRoot = url.searchParams.get("repoRoot") || effectiveService.repoRoot || "";
-        sendJson(response, 200, { changes: await gitChanges(repoRoot) });
+        sendJson(response, 200, await gitChanges(repoRoot));
         return;
       }
 
