@@ -340,13 +340,14 @@ export default function App() {
     }
   };
 
-  // Fetch git changes when diff panel opens or repo changes
+  // Poll git changes every 5s so the button count stays current
   useEffect(() => {
-    if (diffPanelOpen) {
-      void fetchGitChanges();
-    }
+    if (!snapshot?.config?.repoRoot) return;
+    void fetchGitChanges();
+    const interval = setInterval(() => void fetchGitChanges(), 30000);
+    return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diffPanelOpen, snapshot?.config?.repoRoot]);
+  }, [snapshot?.config?.repoRoot]);
 
   const toggleRepo = (repoPath) => {
     setExpandedRepos((prev) => {
@@ -633,6 +634,16 @@ export default function App() {
     }
     setError("");
     setLiveStatus("Stopping request...");
+    // Optimistically clear all loading indicators immediately
+    setPendingTurns((current) => {
+      if (!current[activeChatId]) return current;
+      return { ...current, [activeChatId]: { ...current[activeChatId], running: false } };
+    });
+    setSendingChatIds((current) => current.filter((id) => id !== activeChatId));
+    setSnapshot((current) => {
+      if (!current) return current;
+      return { ...current, runningChatIds: (current.runningChatIds || []).filter((id) => id !== activeChatId) };
+    });
     try {
       await postJson("/api/chats/interrupt", { chatId: activeChatId });
     } catch (nextError) {
@@ -1493,11 +1504,7 @@ export default function App() {
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => {
-                    const next = !diffPanelOpen;
-                    setDiffPanelOpen(next);
-                    if (next) void fetchGitChanges();
-                  }}
+                  onClick={() => setDiffPanelOpen((current) => !current)}
                 >
                   {diffPanelOpen ? `Hide diff (${activeChanges.length})` : `Show diff (${activeChanges.length})`}
                 </button>
@@ -1564,9 +1571,7 @@ export default function App() {
                         type="button"
                         onClick={() => {
                           setHeaderMoreOpen(false);
-                          const next = !diffPanelOpen;
-                          setDiffPanelOpen(next);
-                          if (next) void fetchGitChanges();
+                          setDiffPanelOpen((current) => !current);
                         }}
                       >
                         <span>{diffPanelOpen ? "Hide diff" : `Show diff (${activeChanges.length})`}</span>
@@ -1624,10 +1629,11 @@ export default function App() {
             </div>
           </header>
 
+          <div className="chat-main">
           {error && <div className="error-banner">{error}</div>}
           {!error && activeInterruptedRun && (
             <div className="recovery-banner">
-              Previous response was interrupted during restart or shutdown. Open this chat and continue from the last saved turn.
+              Previous response was interrupted. Continue from the last saved turn.
             </div>
           )}
           {diffPanelOpen && (
@@ -1753,6 +1759,7 @@ export default function App() {
               </div>
             )}
           </section>
+          </div>{/* chat-main */}
 
           <div className="composer-panel">
             <textarea

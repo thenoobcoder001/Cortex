@@ -959,6 +959,17 @@ button:disabled {
   padding: 10px 14px;
 }
 
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-main .conversation-scroll {
+  flex: 1;
+}
+
 .conversation-scroll,
 .settings-dialog {
   border: 1px solid var(--border);
@@ -1245,11 +1256,13 @@ button:disabled {
 }
 
 .recovery-banner {
-  padding: 12px 14px;
-  border-radius: 16px;
+  padding: 8px 16px;
+  border-radius: 0;
   background: rgba(171, 127, 46, 0.16);
-  border: 1px solid rgba(242, 195, 108, 0.28);
+  border-bottom: 1px solid rgba(242, 195, 108, 0.28);
   color: #f3d69a;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .plan-card {
