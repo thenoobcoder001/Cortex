@@ -1508,11 +1508,12 @@ export default function App() {
                 )}
               </div>
               <div className="topbar-actions-secondary">
-                <div className="header-menu-wrap" onClick={(event) => event.stopPropagation()}>
+                <div className="header-menu-wrap">
                   <button
                     type="button"
                     className="secondary-button header-menu-trigger"
-                    onClick={() => {
+                    onClick={(event) => {
+                      event.stopPropagation();
                       setHeaderMoreOpen(false);
                       setEditorMenuOpen((current) => !current);
                     }}
@@ -1525,7 +1526,7 @@ export default function App() {
                         <button
                           key={editor.id}
                           type="button"
-                          onClick={() => void handleOpenInEditor(editor.id)}
+                          onClick={(event) => { event.stopPropagation(); void handleOpenInEditor(editor.id); }}
                         >
                           <span className="header-menu-item-icon">
                             <EditorIcon editorId={editor.id} />
@@ -1536,7 +1537,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                <button type="button" className="secondary-button" onClick={handleNewChat}>
+                <button type="button" className="secondary-button" onClick={() => void handleNewChat()}>
                   New chat
                 </button>
                 <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
@@ -1547,7 +1548,8 @@ export default function App() {
                 <button
                   type="button"
                   className="secondary-button header-more-trigger"
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.stopPropagation();
                     setEditorMenuOpen(false);
                     setHeaderMoreOpen((current) => !current);
                   }}

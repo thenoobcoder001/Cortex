@@ -712,7 +712,7 @@ button:disabled {
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   z-index: 10;
-  overflow: hidden;
+  overflow: visible;
   max-width: 100%;
 }
 
@@ -857,7 +857,7 @@ button:disabled {
   gap: 8px;
   flex: 0 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .topbar-actions-primary,
