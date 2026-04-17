@@ -677,7 +677,7 @@ button:disabled {
   gap: 0;
   min-width: 0;
   max-width: 100%;
-  overflow: visible;
+  overflow-x: hidden;
   background: var(--bg);
 }
 
@@ -858,6 +858,8 @@ button:disabled {
   flex: 0 1 auto;
   min-width: 0;
   overflow: visible;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .topbar-actions-primary,
@@ -1074,7 +1076,7 @@ button:disabled {
 
 .composer-panel {
   padding: 16px 24px 24px;
-  overflow: visible;
+  overflow-x: hidden;
   max-width: 100%;
 }
 
