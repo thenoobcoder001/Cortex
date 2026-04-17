@@ -1016,6 +1016,13 @@ export default function App() {
       } else {
         void fetchProjectChats(repoRoot).catch(() => {});
       }
+      // stopPropagation prevents workspace-shell onClick from clearing open menus/dropdowns.
+      // Explicitly close all of them so nothing can block the textarea after delete.
+      setProjectMenuPath("");
+      setModelMenuOpen(false);
+      setEditorMenuOpen(false);
+      setHeaderMoreOpen(false);
+      setHeaderInfoOpen(false);
     } catch (nextError) {
       setError(String(nextError));
     }
