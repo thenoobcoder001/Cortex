@@ -262,7 +262,15 @@ class DesktopSessionService {
 
   deleteChat(chatId, repoRoot = null) {
     if (this.requestRegistry.has(chatId)) {
-      throw new Error("Cannot delete a chat while it is still running.");
+      // Interrupt the running request and force-remove it from the registry so
+      // the delete can proceed immediately. On Windows, taskkill is async and the
+      // child.close event can take several seconds — waiting for the request
+      // handler to call finish() would make every delete of a live chat fail.
+      // The request handler's catch block will still run but all its cleanup
+      // calls (registry.finish, clearActiveRun, interruptedRuns) are idempotent.
+      this.requestRegistry.interrupt(chatId);
+      this.requestRegistry.finish(chatId);
+      this.config.activeRuns = (this.config.activeRuns || []).filter((r) => r.chat_id !== chatId);
     }
     const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
     if (!store.deleteChat(chatId)) {
