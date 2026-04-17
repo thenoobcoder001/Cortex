@@ -581,13 +581,25 @@ class ClaudeCliProvider {
     return raw;
   }
 
+  extractEventText(event) {
+    const assistantParts = Array.isArray(event?.message?.content)
+      ? event.message.content
+      : Array.isArray(event?.content)
+        ? event.content
+        : [];
+    const assistantText = assistantParts
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && part.type === "text") return String(part.text || "");
+        return "";
+      })
+      .join("");
+    if (assistantText) return assistantText;
+    return String(event?.delta?.text ?? event?.text ?? event?.completion ?? event?.result ?? "");
+  }
+
   buildArgs(model) {
-    const args = [
-      "--print",
-      "--verbose",
-      "--output-format",
-      "stream-json",
-    ];
+    const args = ["--print", "--verbose", "--output-format", "stream-json"];
     if (this.toolReadOnly) {
       args.push("--allowedTools", "Read,Glob,Grep,LS");
     } else {
@@ -601,35 +613,6 @@ class ClaudeCliProvider {
       args.push("--model", cliModel);
     }
     return args;
-  }
-
-  extractEventText(event) {
-    const assistantParts = Array.isArray(event?.message?.content)
-      ? event.message.content
-      : Array.isArray(event?.content)
-        ? event.content
-        : [];
-    const assistantText = assistantParts
-      .map((part) => {
-        if (typeof part === "string") {
-          return part;
-        }
-        if (part && typeof part === "object" && part.type === "text") {
-          return String(part.text || "");
-        }
-        return "";
-      })
-      .join("");
-    if (assistantText) {
-      return assistantText;
-    }
-    return String(
-      event?.delta
-      ?? event?.text
-      ?? event?.completion
-      ?? event?.result
-      ?? "",
-    );
   }
 
   async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
@@ -654,12 +637,10 @@ class ClaudeCliProvider {
     child.stdin.write(prompt);
     child.stdin.end();
     let stderr = "";
-    let assistantText = "";
+    let fullText = "";
     let aborted = false;
     let abortListener = null;
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
     if (signal) {
       abortListener = () => {
         aborted = true;
@@ -679,41 +660,42 @@ class ClaudeCliProvider {
     try {
       for await (const line of stream) {
         const trimmed = String(line || "").trim();
-        if (!trimmed) {
-          continue;
-        }
+        if (!trimmed) continue;
         let event;
         try {
           event = JSON.parse(trimmed);
         } catch {
-          assistantText += trimmed;
-          onOutput?.(trimmed);
+          fullText += trimmed;
           continue;
         }
         if (event.session_id) {
           this.sessionId = String(event.session_id);
           this.sessionMode = "resume_id";
         }
-        const content = event?.type === "result" && assistantText
-          ? ""
-          : this.extractEventText(event);
-        if (content) {
-          assistantText += content;
-          onOutput?.(content);
-        }
+        const content = (event?.type === "result" && fullText) ? "" : this.extractEventText(event);
+        if (content) fullText += content;
       }
       const exitCode = await Promise.race([
         new Promise((resolve) => child.once("close", resolve)),
-        // If aborted, don't wait forever for the process to close
         new Promise((resolve) => setTimeout(() => resolve(null), aborted ? 6000 : 120000)),
       ]);
       if (aborted) {
-        throw new InterruptError("Request interrupted.", assistantText);
+        throw new InterruptError("Request interrupted.", fullText);
       }
       if (exitCode !== 0) {
         throw new Error(`claude CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
       }
-      return assistantText || "(No response from Claude.)";
+      // Simulate streaming: emit word-by-word so the UI doesn't flash the full
+      // response at once. Claude CLI buffers on Windows so we can't get real tokens.
+      if (onOutput && fullText) {
+        const tokens = fullText.match(/\S+\s*/g) || [fullText];
+        for (const token of tokens) {
+          if (signal?.aborted) break;
+          onOutput(token);
+          await new Promise((r) => setTimeout(r, 18));
+        }
+      }
+      return fullText || "(No response from Claude.)";
     } finally {
       if (signal && abortListener) {
         signal.removeEventListener("abort", abortListener);
