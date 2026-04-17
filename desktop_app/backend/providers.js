@@ -534,6 +534,7 @@ class ClaudeCliProvider {
     this.repoRoot = path.resolve(repoRoot);
     this.sessionId = "";
     this.sessionMode = "fresh";
+    this.toolReadOnly = false;
   }
 
   setRepoRoot(repoRoot) {
@@ -587,6 +588,11 @@ class ClaudeCliProvider {
       "--output-format",
       "stream-json",
     ];
+    if (this.toolReadOnly) {
+      args.push("--allowedTools", "Read,Glob,Grep,LS");
+    } else {
+      args.push("--allowedTools", "Bash,Read,Write,Edit,Glob,Grep,LS,WebSearch,WebFetch");
+    }
     if (this.sessionMode === "resume_id" && this.sessionId) {
       args.push("--resume", this.sessionId);
     }

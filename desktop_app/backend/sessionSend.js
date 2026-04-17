@@ -187,6 +187,9 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       signal: service.requestRegistry.get(chatId)?.controller.signal || null,
     };
 
+    if (requestModel.startsWith("claude:")) {
+      service.claudeProvider.toolReadOnly = requestToolReadOnly;
+    }
     if (requestModel.startsWith("codex:")) {
       service.codexProvider.toolReadOnly = requestToolReadOnly;
       let finalText = "";
