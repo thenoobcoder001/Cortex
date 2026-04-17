@@ -62,7 +62,7 @@ function buildSnapshot(service) {
     messages: service.messages,
     changes: [],
     activePlan: service.activePlan,
-    files: service.listFilesCached(service.repoRoot, 200),
+    files: [],
     providerName: providerNameForModel(service.model),
     runningChatIds: service.requestRegistry.ids(),
     interruptedChatIds: [...service.interruptedRuns.keys()].sort(),
