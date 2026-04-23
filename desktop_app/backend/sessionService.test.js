@@ -391,6 +391,26 @@ test("chat messages page returns most recent history with pagination", () => {
   assert.deepEqual(olderPage.messages.map((message) => message.content), ["one", "two", "three"]);
 });
 
+test("chat rename updates title and survives later saves", () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  const chatId = service.chatStore.createChat([
+    { role: "user", content: "original title source" },
+  ], { model: "codex:gpt-5.4" });
+
+  service.renameChat(chatId, "Manual title", repoRoot);
+  assert.equal(service.listChats(repoRoot).find((chat) => chat.chatId === chatId)?.title, "Manual title");
+
+  const payload = service.chatStore.loadChat(chatId);
+  service.chatStore.saveChat(chatId, [
+    ...payload.messages,
+    { role: "assistant", content: "reply" },
+  ], { model: "codex:gpt-5.4" });
+
+  assert.equal(service.listChats(repoRoot).find((chat) => chat.chatId === chatId)?.title, "Manual title");
+  assert.equal(service.chatStore.loadChat(chatId).custom_title, "Manual title");
+});
+
 test("chat messages endpoint returns paginated chat history", async () => {
   const repoRoot = makeTempRepo();
   const service = createService(repoRoot);

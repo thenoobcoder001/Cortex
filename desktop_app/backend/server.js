@@ -186,6 +186,10 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
         sendJson(response, 200, effectiveService.deleteChat(body.chatId, body.repoRoot || null));
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/chats/rename") {
+        sendJson(response, 200, effectiveService.renameChat(body.chatId, body.title, body.repoRoot || null));
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/chats/interrupt") {
         sendJson(response, 200, effectiveService.interruptChat(body.chatId || null));
         return;

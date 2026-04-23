@@ -289,6 +289,16 @@ class DesktopSessionService {
     return this.snapshot();
   }
 
+  renameChat(chatId, title, repoRoot = null) {
+    const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
+    const renamedTitle = store.renameChat(chatId, title);
+    if (!renamedTitle) {
+      throw new Error(`Chat not found: ${chatId}`);
+    }
+    this.invalidateSnapshotCaches(repoRoot ? path.resolve(repoRoot) : this.repoRoot);
+    return this.snapshot();
+  }
+
   interruptChat(chatId) {
     if (!chatId) {
       throw new Error("Chat id is required.");
@@ -525,11 +535,6 @@ class DesktopSessionService {
 
   workspaceChanges(repoRoot = this.repoRoot, { initialize = true } = {}) {
     const targetRoot = path.resolve(repoRoot);
-    const cacheKey = this.snapshotCacheKey(targetRoot, `workspace:${initialize ? "init" : "noinit"}`);
-    const cached = this.getCachedValue(this.snapshotCache.workspaceChanges, cacheKey);
-    if (cached) {
-      return cached;
-    }
     const store = targetRoot === this.repoRoot
       ? this.chatStore
       : new ProjectChatStore(targetRoot);
@@ -540,16 +545,12 @@ class DesktopSessionService {
       }
       acceptedState = this.captureRepoState(targetRoot);
       store.saveAcceptedRepoState(acceptedState);
-      return this.setCachedValue(this.snapshotCache.workspaceChanges, cacheKey, []);
+      return [];
     }
-    return this.setCachedValue(
-      this.snapshotCache.workspaceChanges,
-      cacheKey,
-      normalizeChanges(new RepoFileService(targetRoot).diffRepoState(
+    return normalizeChanges(new RepoFileService(targetRoot).diffRepoState(
         acceptedState,
         this.captureRepoState(targetRoot),
-      )),
-    );
+      ));
   }
 
   acceptWorkspaceChanges(repoRoot = null) {
