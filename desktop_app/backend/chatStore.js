@@ -10,6 +10,14 @@ function cleanUserText(text) {
   return String(text || "").replace(/^\[Mode:[^\]]+\][^\n]*\n\n/, "").trim();
 }
 
+function normalizeCustomTitle(title) {
+  const cleaned = String(title || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return "";
+  }
+  return cleaned.length > 80 ? cleaned.slice(0, 80).trimEnd() : cleaned;
+}
+
 class ProjectChatStore {
   constructor(repoRoot) {
     this.setRepoRoot(repoRoot);
@@ -175,13 +183,17 @@ class ProjectChatStore {
     };
   }
 
-  saveChat(chatId, messages, { model, providerState = null, changes = [], toolSafetyMode = "write", plan = null } = {}) {
+  saveChat(chatId, messages, { model, providerState = null, changes = [], toolSafetyMode = "write", plan = undefined, customTitle = undefined } = {}) {
     if (!chatId) {
       return;
     }
     this.ensureDir();
     const timestamp = nowIso();
-    const title = this.titleFromMessages(messages);
+    const existingPayload = this.loadChat(chatId);
+    const existingCustomTitle = normalizeCustomTitle(existingPayload?.custom_title);
+    const nextCustomTitle = customTitle === undefined ? existingCustomTitle : normalizeCustomTitle(customTitle);
+    const title = nextCustomTitle || this.titleFromMessages(messages);
+    const nextPlan = plan === undefined ? existingPayload?.plan : plan;
     const payload = {
       chat_id: chatId,
       title,
@@ -191,8 +203,11 @@ class ProjectChatStore {
       changes,
       tool_safety_mode: toolSafetyMode || "write",
     };
-    if (plan && typeof plan === "object") {
-      payload.plan = plan;
+    if (nextCustomTitle) {
+      payload.custom_title = nextCustomTitle;
+    }
+    if (nextPlan && typeof nextPlan === "object") {
+      payload.plan = nextPlan;
     }
     if (providerState && Object.keys(providerState).length > 0) {
       payload.provider_state = providerState;
@@ -207,7 +222,7 @@ class ProjectChatStore {
       existing.model = model;
       existing.change_count = Array.isArray(changes) ? changes.length : 0;
       existing.tool_safety_mode = toolSafetyMode || "write";
-      existing.has_plan = Boolean(plan?.path);
+      existing.has_plan = Boolean(nextPlan?.path);
       if (!existing.created_at) {
         existing.created_at = timestamp;
       }
@@ -220,10 +235,46 @@ class ProjectChatStore {
         model,
         change_count: Array.isArray(changes) ? changes.length : 0,
         tool_safety_mode: toolSafetyMode || "write",
-        has_plan: Boolean(plan?.path),
+        has_plan: Boolean(nextPlan?.path),
       });
     }
     this.saveIndex(items);
+  }
+
+  renameChat(chatId, title) {
+    if (!chatId) {
+      return null;
+    }
+    const normalizedTitle = normalizeCustomTitle(title);
+    if (!normalizedTitle) {
+      throw new Error("Chat title is required.");
+    }
+    const payload = this.loadChat(chatId);
+    if (!payload) {
+      return null;
+    }
+    payload.title = normalizedTitle;
+    payload.custom_title = normalizedTitle;
+    fs.writeFileSync(this.chatFile(chatId), JSON.stringify(payload, null, 2), "utf8");
+
+    const items = this.loadIndex();
+    const existing = items.find((item) => String(item.chat_id || "") === chatId);
+    if (existing) {
+      existing.title = normalizedTitle;
+    } else {
+      items.push({
+        chat_id: chatId,
+        title: normalizedTitle,
+        created_at: String(payload.created_at || payload.updated_at || nowIso()),
+        updated_at: String(payload.updated_at || nowIso()),
+        model: String(payload.model || ""),
+        change_count: Array.isArray(payload.changes) ? payload.changes.length : 0,
+        tool_safety_mode: String(payload.tool_safety_mode || "write"),
+        has_plan: Boolean(payload.plan?.path),
+      });
+    }
+    this.saveIndex(items);
+    return normalizedTitle;
   }
 
   deleteChat(chatId) {

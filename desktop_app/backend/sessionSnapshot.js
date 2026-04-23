@@ -60,9 +60,14 @@ function buildSnapshot(service) {
     models: models(),
     chats: service.chatItems(),
     messages: service.messages,
-    changes: [],
+    changes: service.workspaceChanges(service.repoRoot, {
+      initialize: !service.suppressWorkspaceBaselineInit,
+    }),
+    activeChatChanges: service.changes,
     activePlan: service.activePlan,
-    files: [],
+    files: typeof service.listFilesCached === "function"
+      ? service.listFilesCached(service.repoRoot, 200)
+      : service.files.listFiles(service.repoRoot, 200),
     providerName: providerNameForModel(service.model),
     runningChatIds: service.requestRegistry.ids(),
     interruptedChatIds: [...service.interruptedRuns.keys()].sort(),

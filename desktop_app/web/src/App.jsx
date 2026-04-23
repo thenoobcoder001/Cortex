@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const PROMPT_PRESETS = [
@@ -22,6 +22,7 @@ const EXTERNAL_EDITOR_OPTIONS = [
 ];
 
 const FALLBACK_APP_VERSION = "0.0.1";
+const THEME_MODE_STORAGE_KEY = "gpt-tui.theme-mode";
 
 function EditorIcon({ editorId }) {
   if (editorId === "vscode") {
@@ -55,6 +56,26 @@ function EditorIcon({ editorId }) {
 }
 
 const SAVED_PROJECTS_KEY = "gpt-tui.saved-projects";
+
+function loadThemeMode() {
+  try {
+    const stored = window.localStorage.getItem(THEME_MODE_STORAGE_KEY);
+    if (stored === "light" || stored === "dark" || stored === "system") {
+      return stored;
+    }
+  } catch {
+    // ignore
+  }
+  return "system";
+}
+
+function saveThemeMode(mode) {
+  try {
+    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
 
 function groupedModels(models) {
   const grouped = new Map();
@@ -257,11 +278,18 @@ export default function App() {
   const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
   const [headerInfoOpen, setHeaderInfoOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [renamingChat, setRenamingChat] = useState(null);
+  const [renameChatDraft, setRenameChatDraft] = useState("");
+  const [themeMode, setThemeMode] = useState(() => loadThemeMode());
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
+    window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)").matches : true,
+  );
 
   const runningChatIds = snapshot?.runningChatIds || [];
   const interruptedRuns = snapshot?.interruptedRuns || [];
   const activeChanges = gitChanges;
   const activeRepoRoot = normalizeProject(snapshot?.config?.repoRoot || "");
+  const resolvedTheme = themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
   const splashVisible = !bootDismissed || !snapshot;
   const appVersion = snapshot?.app?.version || FALLBACK_APP_VERSION;
   const bootHeadline = error
@@ -296,6 +324,29 @@ export default function App() {
       window.clearTimeout(dismissTimer);
     };
   }, [error, snapshot]);
+
+  useEffect(() => {
+    if (!window.matchMedia) {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (event) => {
+      setSystemPrefersDark(event.matches);
+    };
+    setSystemPrefersDark(mediaQuery.matches);
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
+    saveThemeMode(themeMode);
+  }, [resolvedTheme, themeMode]);
 
   useEffect(() => {
     if (!activeRepoRoot || !snapshot?.chats) {
@@ -1028,6 +1079,64 @@ export default function App() {
     }
   };
 
+  const handleCopyWorkspacePath = async (repoRoot = snapshot?.config?.repoRoot || "") => {
+    const normalizedRepoRoot = normalizeProject(repoRoot);
+    if (!normalizedRepoRoot) {
+      return;
+    }
+    setProjectMenuPath("");
+    setHeaderMoreOpen(false);
+    await copyText(normalizedRepoRoot, "Workspace path copied");
+  };
+
+  const handleStartRenameChat = (event, chat, repoRoot = snapshot?.config?.repoRoot || "") => {
+    event.stopPropagation();
+    setRenamingChat({
+      chatId: chat.chatId,
+      repoRoot: normalizeProject(repoRoot),
+    });
+    setRenameChatDraft(chat?.title || "Untitled chat");
+  };
+
+  const handleCancelRenameChat = () => {
+    setRenamingChat(null);
+    setRenameChatDraft("");
+  };
+
+  const handleSubmitRenameChat = async (chat, repoRoot = snapshot?.config?.repoRoot || "") => {
+    const currentTitle = chat?.title || "Untitled chat";
+    const trimmedTitle = renameChatDraft.replace(/\s+/g, " ").trim();
+    if (!trimmedTitle || trimmedTitle === currentTitle) {
+      handleCancelRenameChat();
+      return;
+    }
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/chats/rename", {
+        chatId: chat.chatId,
+        repoRoot,
+        title: trimmedTitle,
+      });
+      setSnapshot(nextSnapshot);
+      setRepoDraft(nextSnapshot.config.repoRoot);
+
+      const normalizedRepoRoot = normalizeProject(repoRoot);
+      if (normalizedRepoRoot && normalizedRepoRoot !== activeRepoRoot) {
+        setProjectChats((current) => ({
+          ...current,
+          [normalizedRepoRoot]: (current[normalizedRepoRoot] || []).map((item) =>
+            item.chatId === chat.chatId ? { ...item, title: trimmedTitle } : item,
+          ),
+        }));
+      } else {
+        void fetchProjectChats(repoRoot).catch(() => {});
+      }
+      handleCancelRenameChat();
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
   const handlePickRepo = async () => {
     const picked = await window.desktopApi?.pickRepoDirectory?.();
     if (!picked) return;
@@ -1192,6 +1301,21 @@ export default function App() {
                   placeholder="5"
                 />
               </label>
+            </section>
+
+            <section className="settings-section-card">
+              <div className="settings-block-title">Appearance</div>
+              <label className="field">
+                <span>Theme</span>
+                <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)}>
+                  <option value="system">System</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              </label>
+              <div className="theme-hint">
+                Applies instantly. Current theme: {resolvedTheme}.
+              </div>
             </section>
 
             <section className="settings-section-card">
@@ -1363,7 +1487,7 @@ export default function App() {
                       title={project.path}
                     >
                       <span className="project-name">
-                        <span className={expandedRepos.has(project.path) ? "chevron-icon expanded" : "chevron-icon"}>›</span>{" "}
+                        <span className={expandedRepos.has(project.path) ? "chevron-icon expanded" : "chevron-icon"}>â€º</span>{" "}
                         {project.name}
                       </span>
                     </button>
@@ -1395,39 +1519,92 @@ export default function App() {
                         const showChatLoading =
                           runningChatIds.includes(chat.chatId) || sendingChatIds.includes(chat.chatId);
                         const showInterrupted = Boolean(chat.interrupted) && !showChatLoading;
+                        const normalizedProjectPath = normalizeProject(project.path);
+                        const isRenaming =
+                          renamingChat?.chatId === chat.chatId &&
+                          renamingChat?.repoRoot === normalizedProjectPath;
 
                         return (
                           <div
-                            key={`${normalizeProject(project.path)}:${chat.chatId}`}
+                            key={`${normalizedProjectPath}:${chat.chatId}`}
                             className={
                               chat.chatId === snapshot.config.activeChatId &&
-                              normalizeProject(project.path) === activeRepoRoot
+                              normalizedProjectPath === activeRepoRoot
                                 ? "chat-sidebar-row active"
                                 : "chat-sidebar-row"
                             }
-                            onClick={() => handleActivateChat(chat.chatId, project.path)}
+                            onClick={() => {
+                              if (!isRenaming) {
+                                handleActivateChat(chat.chatId, project.path);
+                              }
+                            }}
                           >
-                            <button type="button" className="chat-sidebar-item" title={chat.title}>
-                              <span className="chat-dot"></span>
-                              <span className="chat-truncate">{chat.title || "Untitled chat"}</span>
-                            </button>
-                            {showChatLoading && <span className="chat-loading-spinner" aria-hidden="true"></span>}
-                            {showInterrupted && (
-                              <span
-                                className="chat-recovery-indicator"
-                                title="Previous response was interrupted and can be resumed from this chat."
-                                aria-hidden="true"
+                            {isRenaming ? (
+                              <input
+                                className="chat-rename-input"
+                                value={renameChatDraft}
+                                autoFocus
+                                ref={(input) => {
+                                  if (input) {
+                                    window.requestAnimationFrame(() => {
+                                      input.focus();
+                                      const end = input.value.length;
+                                      input.setSelectionRange(end, end);
+                                    });
+                                  }
+                                }}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => setRenameChatDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    void handleSubmitRenameChat(chat, project.path);
+                                  }
+                                  if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    handleCancelRenameChat();
+                                  }
+                                }}
+                                onBlur={() => void handleSubmitRenameChat(chat, project.path)}
+                              />
+                            ) : (
+                              <>
+                                <button type="button" className="chat-sidebar-item" title={chat.title}>
+                                  <span className="chat-dot"></span>
+                                  <span className="chat-truncate">{chat.title || "Untitled chat"}</span>
+                                </button>
+                                {showChatLoading && <span className="chat-loading-spinner" aria-hidden="true"></span>}
+                                {showInterrupted && (
+                                  <span
+                                    className="chat-recovery-indicator"
+                                    title="Previous response was interrupted and can be resumed from this chat."
+                                    aria-hidden="true"
+                                  >
+                                    !
+                                  </span>
+                                )}
+                              </>
+                            )}
+                            {!isRenaming && (
+                              <button
+                                type="button"
+                                className="chat-rename-btn"
+                                onClick={(event) => handleStartRenameChat(event, chat, project.path)}
+                                title="Rename chat"
+                                aria-label="Rename chat"
                               >
-                                !
-                              </span>
+                                Aa
+                              </button>
                             )}
                             <button
                               type="button"
                               className="chat-delete-btn"
                               onClick={(event) => handleDeleteChat(event, chat.chatId, project.path)}
                               title="Delete chat"
+                              aria-label="Delete chat"
                             >
-                              ×
+                              x
                             </button>
                           </div>
                         );
@@ -1452,7 +1629,7 @@ export default function App() {
                 }}
                 title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
               >
-                {sidebarCollapsed ? "»" : "«"}
+                {sidebarCollapsed ? "Â»" : "Â«"}
               </button>
               <select
                 className="header-thread-select"
@@ -1620,6 +1797,15 @@ export default function App() {
                       }}
                     >
                       <span>New chat</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        void handleCopyWorkspacePath();
+                      }}
+                    >
+                      <span>Copy workspace path</span>
                     </button>
                     <button
                       type="button"
@@ -1909,6 +2095,14 @@ export default function App() {
             }}
           >
             Open folder
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleCopyWorkspacePath(projectMenuPath);
+            }}
+          >
+            Copy path
           </button>
           <button
             type="button"
