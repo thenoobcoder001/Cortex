@@ -1,6 +1,10 @@
 const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 const readline = require("node:readline");
+const { resolveAndroidEnv } = require("./androidEnv");
+
+const CLI_ABORT_SETTLE_MS = 6000;
+const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
 function which(command) {
   const checker = process.platform === "win32" ? "where.exe" : "which";
@@ -24,12 +28,16 @@ function quoteWindowsArg(value) {
 }
 
 function spawnCommand(command, args, options = {}) {
+  const effectiveOptions = {
+    ...options,
+    env: resolveAndroidEnv(options.env || process.env),
+  };
   if (process.platform !== "win32") {
-    return spawn(command, args, { ...options, shell: false });
+    return spawn(command, args, { ...effectiveOptions, shell: false });
   }
   const commandLine = [quoteWindowsArg(command), ...args.map(quoteWindowsArg)].join(" ");
   return spawn("cmd.exe", ["/d", "/s", "/c", commandLine], {
-    ...options,
+    ...effectiveOptions,
     shell: false,
     windowsHide: true,
   });
@@ -347,7 +355,10 @@ class CodexProvider {
       const result = await Promise.race([
         finishTurn,
         new Promise((_resolve, reject) =>
-          setTimeout(() => reject(new InterruptError("Request timed out after abort.")), aborted ? 6000 : 120000)
+          setTimeout(
+            () => reject(new InterruptError(aborted ? "Request timed out after abort." : "Request timed out.", assistantText)),
+            aborted ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS,
+          )
         ),
       ]);
       this.sessionId = String(result.threadId || threadId || "").trim();
@@ -502,12 +513,17 @@ class GeminiCliProvider {
       const exitCode = await Promise.race([
         new Promise((resolve) => child.once("close", resolve)),
         // If aborted, don't wait forever for the process to close
-        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? 6000 : 120000)),
+        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS)),
       ]);
       if (aborted) {
         throw new InterruptError("Request interrupted.", assistantText);
       }
       if (exitCode !== 0) {
+        if (this.sessionMode === "resume_id") {
+          this.sessionId = "";
+          this.sessionMode = "fresh";
+          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal });
+        }
         throw new Error(`gemini CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
       }
       return assistantText || "(No response from Gemini CLI.)";
@@ -656,6 +672,7 @@ class ClaudeCliProvider {
       };
       signal.addEventListener("abort", abortListener, { once: true });
     }
+    let cliErrorMessage = "";
     const stream = readline.createInterface({ input: child.stdout });
     try {
       for await (const line of stream) {
@@ -672,18 +689,34 @@ class ClaudeCliProvider {
           this.sessionId = String(event.session_id);
           this.sessionMode = "resume_id";
         }
+        // Capture CLI-level errors reported in the result event (e.g. bad --resume ID)
+        if (event?.type === "result" && event?.is_error === true) {
+          const errDetail = Array.isArray(event.errors) && event.errors.length > 0
+            ? String(event.errors[0])
+            : "";
+          if (errDetail) cliErrorMessage = errDetail;
+        }
         const content = (event?.type === "result" && fullText) ? "" : this.extractEventText(event);
         if (content) fullText += content;
       }
       const exitCode = await Promise.race([
         new Promise((resolve) => child.once("close", resolve)),
-        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? 6000 : 120000)),
+        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS)),
       ]);
       if (aborted) {
         throw new InterruptError("Request interrupted.", fullText);
       }
       if (exitCode !== 0) {
-        throw new Error(`claude CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
+        // If resume failed with a bad session ID, clear the session and retry fresh.
+        if (
+          this.sessionMode === "resume_id"
+          && (cliErrorMessage.includes("--resume") || cliErrorMessage.includes("session"))
+        ) {
+          this.sessionId = "";
+          this.sessionMode = "fresh";
+          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal });
+        }
+        throw new Error(`claude CLI failed: ${(cliErrorMessage || stderr || `exit code ${exitCode}`).trim()}`);
       }
       // Simulate streaming: emit word-by-word so the UI doesn't flash the full
       // response at once. Claude CLI buffers on Windows so we can't get real tokens.

@@ -4,6 +4,7 @@ const path = require("node:path");
 const { exec } = require("node:child_process");
 const { URL } = require("node:url");
 const { DesktopSessionService } = require("./sessionService");
+const { TerminalService } = require("./terminalService");
 
 function runGit(args, cwd) {
   return new Promise((resolve, reject) => {
@@ -120,8 +121,9 @@ function sendError(response, error) {
   sendJson(response, 400, { detail: String(error?.message || error) });
 }
 
-function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } = {}) {
+function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, terminalService = null } = {}) {
   const effectiveService = service || new DesktopSessionService();
+  const effectiveTerminalService = terminalService || new TerminalService();
   const server = http.createServer(async (request, response) => {
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
@@ -165,6 +167,39 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
       if (request.method === "GET" && url.pathname === "/api/workspace/git-status") {
         const repoRoot = url.searchParams.get("repoRoot") || effectiveService.repoRoot || "";
         sendJson(response, 200, await gitChanges(repoRoot));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/android/avds") {
+        exec("emulator -list-avds", { encoding: "utf8", timeout: 8000 }, (error, stdout) => {
+          const avds = (stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+          sendJson(response, 200, { avds });
+        });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/terminal") {
+        sendJson(response, 200, effectiveTerminalService.snapshot(url.searchParams.get("chatId") || ""));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/terminal/stream") {
+        const chatId = url.searchParams.get("chatId") || "";
+        response.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        });
+        // Send full history first
+        const snap = effectiveTerminalService.snapshot(chatId);
+        if (snap.history) {
+          response.write(`data: ${JSON.stringify({ type: "history", data: snap.history })}\n\n`);
+        }
+        const onData = (data) => {
+          response.write(`data: ${JSON.stringify({ type: "data", data })}\n\n`);
+        };
+        effectiveTerminalService.on(`data:${chatId}`, onData);
+        request.on("close", () => {
+          effectiveTerminalService.off(`data:${chatId}`, onData);
+        });
         return;
       }
 
@@ -212,6 +247,43 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
       }
       if (request.method === "POST" && url.pathname === "/api/providers/test") {
         sendJson(response, 200, await effectiveService.testProviderConnection(body));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/terminal/open") {
+        sendJson(response, 200, effectiveTerminalService.open({
+          chatId: body.chatId,
+          repoRoot: body.repoRoot || effectiveService.repoRoot,
+          cols: body.cols,
+          rows: body.rows,
+        }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/terminal/write") {
+        sendJson(response, 200, effectiveTerminalService.write({
+          chatId: body.chatId,
+          command: body.command,
+          repoRoot: body.repoRoot || effectiveService.repoRoot,
+        }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/terminal/input") {
+        sendJson(response, 200, effectiveTerminalService.input({
+          chatId: body.chatId,
+          data: body.data,
+          repoRoot: body.repoRoot || effectiveService.repoRoot,
+        }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/terminal/resize") {
+        sendJson(response, 200, effectiveTerminalService.resize({
+          chatId: body.chatId,
+          cols: body.cols,
+          rows: body.rows,
+        }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/terminal/close") {
+        sendJson(response, 200, effectiveTerminalService.close(body.chatId));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chat/send") {
@@ -264,9 +336,11 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null } 
       resolve({
         server,
         service: effectiveService,
+        terminalService: effectiveTerminalService,
         url: `http://${host}:${port}`,
         close: () =>
           new Promise((closeResolve, closeReject) => {
+            effectiveTerminalService.closeAll();
             server.close((error) => {
               if (error) {
                 closeReject(error);
