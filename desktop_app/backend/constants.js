@@ -21,6 +21,15 @@ const BASE_ASSISTANT_SYSTEM_PROMPT = [
   "When the user asks about the project or codebase, help clearly and pragmatically.",
 ].join(" ");
 
+const ANDROID_EMULATOR_SYSTEM_PROMPT = [
+  "For Android emulator tasks on Windows, prefer deterministic orchestration over retries.",
+  "Use absolute SDK tool paths when available, especially E:\\Android\\Sdk\\emulator\\emulator.exe and E:\\Android\\Sdk\\platform-tools\\adb.exe.",
+  "Before launching an emulator, check adb devices first. If an emulator already exists, reuse it.",
+  "If adb reports an emulator as offline, wait for it to finish booting instead of launching another emulator.",
+  "Wait for adb shell getprop sys.boot_completed to return 1 before install or app launch steps.",
+  "Do not relaunch or kill/restart an emulator while boot is still in progress unless the user explicitly asks for that recovery action.",
+].join(" ");
+
 const GEMINI_MODELS = [
   ["gemini-2.0-flash", "Gemini 2.0 Flash [fast]"],
   ["gemini-2.0-flash-lite-preview", "Gemini 2.0 Flash Lite [preview]"],
@@ -184,6 +193,7 @@ module.exports = {
   MAX_TOOL_ROUNDS,
   PRESET_PROMPTS,
   BASE_ASSISTANT_SYSTEM_PROMPT,
+  ANDROID_EMULATOR_SYSTEM_PROMPT,
   GEMINI_MODELS,
   GEMINI_CLI_MODELS,
   CLAUDE_MODELS,
