@@ -68,6 +68,9 @@ function buildSnapshot(service) {
     files: typeof service.listFilesCached === "function"
       ? service.listFilesCached(service.repoRoot, 200)
       : service.files.listFiles(service.repoRoot, 200),
+    liveTerminalCommand: typeof service.liveTerminalCommand === "function"
+      ? service.liveTerminalCommand()
+      : "",
     providerName: providerNameForModel(service.model),
     runningChatIds: service.requestRegistry.ids(),
     interruptedChatIds: [...service.interruptedRuns.keys()].sort(),

@@ -4,6 +4,7 @@ const {
   DEFAULT_MODEL,
   PRESET_PROMPTS,
   BASE_ASSISTANT_SYSTEM_PROMPT,
+  ANDROID_EMULATOR_SYSTEM_PROMPT,
   GROQ_MODELS,
   GEMINI_MODELS,
   GEMINI_CLI_MODELS,
@@ -31,6 +32,28 @@ const {
   saveCompletedChat,
 } = require("./sessionPersistence");
 const { sendMessageEvents } = require("./sessionSend");
+
+function isAndroidEmulatorRequest(messages) {
+  const latestUser = [...messages]
+    .reverse()
+    .find((message) => String(message?.role || "") === "user");
+  const text = String(latestUser?.content || "").toLowerCase();
+  if (!text) {
+    return false;
+  }
+  return /\b(android|emulator|adb|avd|apk|play console|install the latest build|start the tablet emulator|start on emulator)\b/.test(text);
+}
+
+function quoteShellArg(value) {
+  const text = String(value || "");
+  if (!text) {
+    return "\"\"";
+  }
+  if (!/[\s"]/u.test(text)) {
+    return text;
+  }
+  return `"${text.replace(/"/g, "\"\"")}"`;
+}
 
 class DesktopSessionService {
   constructor(overrides = {}) {
@@ -188,6 +211,35 @@ class DesktopSessionService {
 
   snapshot() {
     return buildSnapshot(this);
+  }
+
+  activeChatPayload() {
+    if (!this.activeChatId) {
+      return null;
+    }
+    return this.chatStore.loadChat(this.activeChatId);
+  }
+
+  liveTerminalCommand() {
+    const payload = this.activeChatPayload();
+    const model = String(this.activeChatModel || payload?.model || this.model || "");
+    const providerState = payload?.provider_state && typeof payload.provider_state === "object"
+      ? payload.provider_state
+      : {};
+
+    if (model.startsWith("codex:")) {
+      const sessionId = String(this.codexProvider.sessionId || providerState.codex_session_id || "").trim();
+      return sessionId ? `codex resume ${quoteShellArg(sessionId)}` : "codex";
+    }
+    if (model.startsWith("claude:")) {
+      const sessionId = String(this.claudeProvider.sessionId || providerState.claude_session_id || "").trim();
+      return sessionId ? `claude --resume ${quoteShellArg(sessionId)}` : "claude";
+    }
+    if (model.startsWith("gemini-cli:")) {
+      const sessionId = String(this.geminiCliProvider.sessionId || providerState.gemini_cli_session_id || "").trim();
+      return sessionId ? `gemini --resume ${quoteShellArg(sessionId)}` : "gemini";
+    }
+    return "";
   }
 
   listChats(repoRoot = null) {
@@ -513,6 +565,9 @@ class DesktopSessionService {
     const presetPrompt = PRESET_PROMPTS[promptPreset] || "";
     if (presetPrompt) {
       systemParts.push(presetPrompt);
+    }
+    if (isAndroidEmulatorRequest(messages)) {
+      systemParts.push(ANDROID_EMULATOR_SYSTEM_PROMPT);
     }
     if (this.config.assistantMemory) {
       systemParts.push(`Assistant memory:\n${this.config.assistantMemory}`);

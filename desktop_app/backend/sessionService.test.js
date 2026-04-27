@@ -160,6 +160,41 @@ test("codex streaming send completes and clears request state", async () => {
   assert.equal(chats[0].toolSafetyMode, "read");
 });
 
+test("android emulator requests add deterministic emulator guidance to system context", () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+
+  const messages = service.messagesWithContext([
+    { role: "user", content: "start the tablet emulator and install the latest build" },
+  ], "code");
+
+  assert.equal(messages[0].role, "system");
+  assert.match(messages[0].content, /Use absolute SDK tool paths when available/i);
+  assert.match(messages[0].content, /If adb reports an emulator as offline, wait/i);
+  assert.match(messages[0].content, /Wait for adb shell getprop sys\.boot_completed to return 1/i);
+});
+
+test("snapshot exposes live terminal resume command for active codex chat", () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  const chatId = service.chatStore.createChat(
+    [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ],
+    {
+      model: "codex:gpt-5.4",
+      providerState: { codex_session_id: "019dc87b-8f5e-7b71-84ae-ffb1ed0bcf2b" },
+      toolSafetyMode: "write",
+    },
+  );
+
+  service.activateChat(chatId, repoRoot);
+
+  const snapshot = service.snapshot();
+  assert.equal(snapshot.liveTerminalCommand, "codex resume 019dc87b-8f5e-7b71-84ae-ffb1ed0bcf2b");
+});
+
 test("interrupt endpoint aborts a running codex chat and emits interrupted event", async () => {
   const repoRoot = makeTempRepo();
   const service = createService(repoRoot, {
