@@ -1093,6 +1093,11 @@ button:disabled {
   padding: 10px 14px;
 }
 
+.terminal-toggle.active {
+  border-color: rgba(126, 210, 162, 0.45);
+  color: var(--success);
+}
+
 .chat-main {
   display: flex;
   flex-direction: column;
@@ -1408,6 +1413,161 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.terminal-panel {
+  margin: 16px 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(126, 210, 162, 0.08), transparent 34%),
+    var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+
+.terminal-panel.terminal-compact {
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 14px;
+}
+
+.terminal-panel.terminal-compact .terminal-command-row {
+  margin-top: 0;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.terminal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.terminal-view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.terminal-view-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.terminal-view-btn:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.terminal-view-btn.active {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.xterm-container {
+  height: 280px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0d0d0d;
+}
+
+.xterm-container .xterm {
+  height: 100%;
+  padding: 8px;
+}
+
+.terminal-expand-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.terminal-expand-btn:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.terminal-kicker {
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.terminal-title {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.terminal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.terminal-output {
+  min-height: 180px;
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #c8f2d6;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-placeholder-inline {
+  color: var(--text-muted);
+}
+
+:root[data-theme="light"] .terminal-output {
+  background: rgba(39, 28, 18, 0.06);
+  color: #245037;
+}
+
+.terminal-command-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.terminal-command-row input {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-family: "IBM Plex Mono", "Consolas", monospace;
 }
 
 .plan-card-header {

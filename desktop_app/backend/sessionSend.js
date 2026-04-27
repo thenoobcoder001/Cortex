@@ -386,7 +386,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       recovered_at: "",
     });
     service.persistConfig();
-    throw error;
+    yield service.event("error", { message: String(error?.message || error), chatId });
+    return;
   }
 }
 
