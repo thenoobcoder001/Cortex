@@ -1,5 +1,64 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import XtermPanel from "./XtermPanel.jsx";
+
+function stripAnsi(str) {
+  return String(str || "")
+    // CSI sequences: ESC [ + any non-final bytes (param/intermediate) + final byte (0x40-0x7E)
+    // Covers standard SGR (\x1b[32m), DEC private (\x1b[?2026h), and all other CSI variants
+    .replace(/\x1b\[[^\x40-\x7e]*[\x40-\x7e]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")  // OSC sequences
+    .replace(/\x1b[^[\]]/g, "")               // other two-char escape sequences
+    .replace(/\r\n/g, "\n")                    // normalize CRLF
+    .replace(/\r/g, "");                       // remove bare CR (cursor-overwrite, meaningless in div)
+}
+
+function providerCliCommand(modelId) {
+  if (!modelId) return "claude";
+  if (modelId.startsWith("gemini-cli:")) return "gemini";
+  if (modelId.startsWith("codex:")) return "codex";
+  return "claude";
+}
+
+function providerCliLaunchCommand(snapshot) {
+  const resumeCommand = String(snapshot?.liveTerminalCommand || "").trim();
+  if (resumeCommand) {
+    return resumeCommand;
+  }
+  return providerCliCommand(snapshot?.config?.model || "");
+}
+
+const QUICK_COMMANDS = [
+  {
+    // "list emulators", "list avds", "show emulators", etc.
+    patterns: [
+      /\b(list|show|what)\s+(emulators?|avds?)\b/i,
+      /\bwhich\s+emulators?\b/i,
+    ],
+    type: "list-avds",
+    buildCommand: () => null,
+  },
+  {
+    // "open emulator", "start emulator tablet10_api35", "launch avd pixel7", etc.
+    patterns: [
+      /\b(open|start|launch)\s+(the\s+)?emulator\b/i,
+      /\b(open|start|launch)\s+avd\b/i,
+    ],
+    buildCommand: (message) => {
+      // Match AVD name after "emulator" or "avd" keyword, but not the trigger words themselves
+      const avdMatch =
+        message.match(/(?:emulator|avd)\s+((?!emulator|avd|the\b)[\w-]+)/i) ||
+        message.match(/([\w-]+(?:_api\d+)?)\s+(?:emulator|avd)/i);
+      const avd = avdMatch?.[1] || "";
+      // Reject if what we captured is just a trigger word
+      const triggerWords = new Set(["open", "start", "launch", "the", "emulator", "avd"]);
+      const resolvedAvd = triggerWords.has(avd.toLowerCase()) ? "" : avd;
+      return resolvedAvd
+        ? `powershell -ExecutionPolicy Bypass -File E:\\codex\\start-emulator.ps1 -avd ${resolvedAvd}`
+        : `powershell -ExecutionPolicy Bypass -File E:\\codex\\start-emulator.ps1`;
+    },
+  },
+];
 
 const PROMPT_PRESETS = [
   { value: "chat", label: "Chat" },
@@ -237,7 +296,12 @@ async function readNdjsonStream(response, onEvent) {
 
 export default function App() {
   const scrollRef = useRef(null);
+  const terminalOutputRef = useRef(null);
   const activeChatIdRef = useRef("");
+  const snapshotRef = useRef(null);
+  const backendUrlRef = useRef("");
+  const liveTermWriteRef = useRef(null);
+  const liveCliLaunchedRef = useRef(new Set());
   const bootStartedAtRef = useRef(Date.now());
   const [backendUrl, setBackendUrl] = useState("");
   const [snapshot, setSnapshot] = useState(null);
@@ -281,6 +345,10 @@ export default function App() {
   const [renamingChat, setRenamingChat] = useState(null);
   const [renameChatDraft, setRenameChatDraft] = useState("");
   const [themeMode, setThemeMode] = useState(() => loadThemeMode());
+  const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
+  const [terminalSnapshot, setTerminalSnapshot] = useState(null);
+  const [terminalDraft, setTerminalDraft] = useState("");
+  const [terminalViewMode, setTerminalViewMode] = useState("chat"); // "chat" | "live"
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
     window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)").matches : true,
   );
@@ -310,7 +378,12 @@ export default function App() {
 
   useEffect(() => {
     activeChatIdRef.current = snapshot?.config?.activeChatId || "";
-  }, [snapshot?.config?.activeChatId]);
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  useEffect(() => {
+    backendUrlRef.current = backendUrl;
+  }, [backendUrl]);
 
   useEffect(() => {
     if (!snapshot || error) {
@@ -489,6 +562,7 @@ export default function App() {
   const activeModelId = snapshot?.config?.model || "";
   const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:/, "");
   const activePlan = snapshot?.activePlan || null;
+  const activeTerminalChatId = snapshot?.config?.activeChatId || "";
 
   const displayMessages = useMemo(() => {
     const visible = (snapshot?.messages || [])
@@ -518,6 +592,76 @@ export default function App() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [displayMessages, pendingTurns]);
+
+  const preservePartialAssistantMessage = (chatId, assistantText) => {
+    const partial = String(assistantText || "");
+    if (!partial.trim()) {
+      return;
+    }
+    setSnapshot((current) => {
+      if (!current || current.config?.activeChatId !== chatId) {
+        return current;
+      }
+      const existingMessages = Array.isArray(current.messages) ? current.messages : [];
+      const lastMessage = existingMessages.at(-1);
+      if (lastMessage?.role === "assistant" && String(lastMessage.content || "") === partial) {
+        return current;
+      }
+      return {
+        ...current,
+        messages: [...existingMessages, { role: "assistant", content: partial, incomplete: true }],
+      };
+    });
+  };
+
+  useEffect(() => {
+    const el = terminalOutputRef.current;
+    if (!el || !terminalPanelOpen) {
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
+  }, [terminalSnapshot?.history, terminalPanelOpen]);
+
+  const refreshTerminal = async (chatId = activeTerminalChatId) => {
+    if (!backendUrl || !chatId) {
+      setTerminalSnapshot(null);
+      return null;
+    }
+    const response = await fetch(`${backendUrl}/api/terminal?chatId=${encodeURIComponent(chatId)}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || `Terminal request failed (${response.status})`);
+    }
+    setTerminalSnapshot(data);
+    return data;
+  };
+
+  useEffect(() => {
+    if (!terminalPanelOpen || !backendUrl || !activeTerminalChatId) {
+      return undefined;
+    }
+    let alive = true;
+    const tick = async () => {
+      try {
+        const data = await refreshTerminal(activeTerminalChatId);
+        if (!alive) {
+          return;
+        }
+        if (data?.status === "closed") {
+          return;
+        }
+      } catch {
+        // The chat UI already has a global error path; avoid noisy polling errors.
+      }
+    };
+    void tick();
+    const interval = window.setInterval(() => void tick(), 1000);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTerminalChatId, backendUrl, terminalPanelOpen]);
 
   const syncSavedProjects = (repoRoot) => {
     setSavedProjects((current) => {
@@ -832,6 +976,87 @@ export default function App() {
     }
   };
 
+  const handleToggleTerminal = async () => {
+    const chatId = activeTerminalChatId;
+    if (!chatId) {
+      setError("Start or select a chat before opening a terminal.");
+      return;
+    }
+    setError("");
+    const nextOpen = !terminalPanelOpen;
+    setTerminalPanelOpen(nextOpen);
+    if (nextOpen) {
+      try {
+        const current = await refreshTerminal(chatId);
+        if (!current || current.status !== "running") {
+          const nextSnapshot = await postJson("/api/terminal/open", {
+            chatId,
+            repoRoot: snapshot?.config?.repoRoot || "",
+            cols: 100,
+            rows: 24,
+          });
+          setTerminalSnapshot(nextSnapshot);
+        }
+      } catch (nextError) {
+        setError(String(nextError));
+      }
+    }
+  };
+
+  const handleOpenTerminal = async () => {
+    if (!activeTerminalChatId) {
+      setError("Start or select a chat before opening a terminal.");
+      return;
+    }
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/terminal/open", {
+        chatId: activeTerminalChatId,
+        repoRoot: snapshot?.config?.repoRoot || "",
+        cols: 100,
+        rows: 24,
+      });
+      setTerminalSnapshot(nextSnapshot);
+      setTerminalPanelOpen(true);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleSendTerminalCommand = async () => {
+    const command = terminalDraft.trim();
+    if (!command || !activeTerminalChatId) {
+      return;
+    }
+    setTerminalDraft("");
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/terminal/write", {
+        chatId: activeTerminalChatId,
+        repoRoot: snapshot?.config?.repoRoot || "",
+        command,
+      });
+      setTerminalSnapshot(nextSnapshot);
+      setTerminalPanelOpen(true);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const handleCloseTerminal = async () => {
+    if (!activeTerminalChatId) {
+      return;
+    }
+    setError("");
+    try {
+      const nextSnapshot = await postJson("/api/terminal/close", { chatId: activeTerminalChatId });
+      liveCliLaunchedRef.current.delete(activeTerminalChatId);
+      setTerminalSnapshot(nextSnapshot);
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
   const handleContinueWithPlan = async () => {
     if (!activePlan) {
       return;
@@ -847,10 +1072,285 @@ export default function App() {
     }
   };
 
+  const sendToAI = async (message) => {
+    const snap = snapshotRef.current;
+    const url = backendUrlRef.current;
+    if (!snap || !url) return;
+    const chatId = snap.config?.activeChatId || "";
+    if (!chatId) return;
+
+    const requestPayload = {
+      message,
+      chatId,
+      repoRoot: snap.config?.repoRoot || "",
+      model: snap.config?.model || "",
+      promptPreset: snap.config?.promptPreset || "",
+      toolSafetyMode: snap.config?.toolSafetyMode || "",
+    };
+
+    setSendingChatIds((current) => (current.includes(chatId) ? current : [...current, chatId]));
+    setPendingTurns((current) => ({
+      ...current,
+      [chatId]: { chatId, userMessage: null, assistantText: "", running: true },
+    }));
+
+    try {
+      const response = await fetch(`${url}/api/chat/send-stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.detail || `Request failed (${response.status})`);
+      }
+      await readNdjsonStream(response, (event) => {
+        const eventChatId = event.chatId || chatId;
+        if (event.type === "cli_output" || event.type === "assistant") {
+          setPendingTurns((current) => ({
+            ...current,
+            [eventChatId]: {
+              chatId: eventChatId,
+              userMessage: null,
+              assistantText: event.type === "assistant"
+                ? (event.text || "")
+                : `${current[eventChatId]?.assistantText || ""}${event.text || ""}`,
+              running: true,
+            },
+          }));
+        } else if (event.type === "completed") {
+          if (event.snapshot) {
+            setSnapshot(event.snapshot);
+            setRepoDraft(event.snapshot.config.repoRoot);
+            syncSavedProjects(event.snapshot.config.repoRoot);
+          }
+          setPendingTurns((current) => { const next = { ...current }; delete next[eventChatId]; return next; });
+          setSendingChatIds((current) => current.filter((id) => id !== eventChatId));
+          setLiveStatus(`Done in ${event.elapsedSeconds}s`);
+        } else if (event.type === "error") {
+          setPendingTurns((current) => { const next = { ...current }; delete next[eventChatId]; return next; });
+          setSendingChatIds((current) => current.filter((id) => id !== eventChatId));
+          setError(event.message || "Stream failed.");
+        }
+      });
+    } catch (err) {
+      setPendingTurns((current) => { const next = { ...current }; delete next[chatId]; return next; });
+      setSendingChatIds((current) => current.filter((id) => id !== chatId));
+      setError(String(err));
+    }
+  };
+
+  const pollTerminalThenNotifyAI = async (userCommand, chatId) => {
+    const maxWaitMs = 120000;
+    const pollMs = 3000;
+    const stableMs = 6000;
+    const start = Date.now();
+    let lastHistory = "";
+    let lastChangedAt = Date.now();
+
+    while (Date.now() - start < maxWaitMs) {
+      await new Promise((r) => window.setTimeout(r, pollMs));
+      try {
+        const snap = await fetch(`${backendUrlRef.current}/api/terminal?chatId=${encodeURIComponent(chatId)}`).then((r) => r.json());
+        const history = snap?.history || "";
+        if (history !== lastHistory) {
+          lastHistory = history;
+          lastChangedAt = Date.now();
+        } else if (lastHistory.length > 0 && Date.now() - lastChangedAt >= stableMs) {
+          break;
+        }
+      } catch {
+        break;
+      }
+    }
+
+    if (!lastHistory.trim()) return;
+
+    // Strip ANSI escape codes before sending to AI
+    const clean = lastHistory.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "").trim();
+    const contextMessage = `Terminal output for \`${userCommand}\`:\n\`\`\`\n${clean}\n\`\`\`\n\nBriefly summarise what happened and flag any issues.`;
+    await sendToAI(contextMessage);
+  };
+
+  const handleSwitchToLive = async () => {
+    setTerminalViewMode("live");
+    setTerminalPanelOpen(true);
+    const chatId = activeTerminalChatId;
+    if (!chatId) return;
+    setError("");
+    try {
+      const current = await refreshTerminal(chatId).catch(() => null);
+      const wasRunning = current && current.status === "running";
+      if (!wasRunning) {
+        // Terminal was closed or never opened — clear any stale launch record
+        liveCliLaunchedRef.current.delete(chatId);
+        await postJson("/api/terminal/open", {
+          chatId,
+          repoRoot: snapshot?.config?.repoRoot || "",
+          cols: 120,
+          rows: 30,
+        });
+        // Small delay so the shell is ready before we send the CLI command
+        await new Promise((r) => window.setTimeout(r, 600));
+      }
+      // Only send the CLI launch command if we haven't already done so for this terminal session
+      if (!liveCliLaunchedRef.current.has(chatId)) {
+        liveCliLaunchedRef.current.add(chatId);
+        const cliCmd = providerCliLaunchCommand(snapshot);
+        await postJson("/api/terminal/write", {
+          chatId,
+          repoRoot: snapshot?.config?.repoRoot || "",
+          command: cliCmd,
+        });
+      }
+      setTerminalSnapshot(await refreshTerminal(chatId).catch(() => null));
+    } catch (nextError) {
+      setError(String(nextError));
+    }
+  };
+
+  const runInTerminal = async (command) => {
+    const chatId = activeTerminalChatId;
+    if (!chatId) {
+      setError("Start or select a chat before running a terminal command.");
+      return;
+    }
+    const current = await refreshTerminal(chatId).catch(() => null);
+    if (!current || current.status !== "running") {
+      const opened = await postJson("/api/terminal/open", {
+        chatId,
+        repoRoot: snapshot?.config?.repoRoot || "",
+        cols: 100,
+        rows: 24,
+      });
+      setTerminalSnapshot(opened);
+    }
+    const next = await postJson("/api/terminal/write", {
+      chatId,
+      repoRoot: snapshot?.config?.repoRoot || "",
+      command,
+    });
+    setTerminalSnapshot(next);
+    setTerminalPanelOpen(true);
+  };
+
   const handleSend = async () => {
     if (!draft.trim()) return;
 
     const outgoingMessage = draft.trim();
+
+    // Live terminal mode — stream AI response directly into xterm
+    if (terminalViewMode === "live" && terminalPanelOpen && liveTermWriteRef.current) {
+      setDraft("");
+      setError("");
+      const write = liveTermWriteRef.current;
+      const currentConfig = snapshot?.config || {};
+      const currentChatId = snapshot?.config?.activeChatId || "";
+
+      // Echo the user input into xterm
+      write(`\r\n\x1b[32m>\x1b[0m ${outgoingMessage}\r\n\r\n`);
+
+      const requestPayload = {
+        message: outgoingMessage,
+        chatId: currentChatId || null,
+        repoRoot: currentConfig.repoRoot || "",
+        model: currentConfig.model || "",
+        promptPreset: currentConfig.promptPreset || "",
+        toolSafetyMode: currentConfig.toolSafetyMode || "",
+      };
+
+      try {
+        const response = await fetch(`${backendUrl}/api/chat/send-stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestPayload),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          throw new Error(data?.detail || `Request failed (${response.status})`);
+        }
+        let hadCliOutput = false;
+        await readNdjsonStream(response, (event) => {
+          if (event.type === "cli_output") {
+            const chunk = event.text || "";
+            if (chunk) {
+              hadCliOutput = true;
+              write(chunk);
+            }
+          } else if (event.type === "assistant") {
+            // CLI providers (claude/codex/gemini-cli) already streamed the full text
+            // via cli_output chunks — writing it again here would double the response.
+            if (!hadCliOutput) {
+              write(event.text || "");
+            }
+          } else if (event.type === "completed") {
+            write("\r\n");
+            if (event.snapshot) {
+              setSnapshot(event.snapshot);
+              setRepoDraft(event.snapshot.config.repoRoot);
+              syncSavedProjects(event.snapshot.config.repoRoot);
+            }
+          } else if (event.type === "error") {
+            write(`\r\n\x1b[31mError: ${event.message || "Stream failed."}\x1b[0m\r\n`);
+          }
+        });
+      } catch (nextError) {
+        write(`\r\n\x1b[31mError: ${String(nextError)}\x1b[0m\r\n`);
+      }
+      return;
+    }
+
+    // Quick terminal commands — run in terminal, show in chat, poll output → AI
+    for (const qc of QUICK_COMMANDS) {
+      if (qc.patterns.some((p) => p.test(outgoingMessage))) {
+        setDraft("");
+        setError("");
+
+        // List AVDs directly in chat — no terminal needed
+        if (qc.type === "list-avds") {
+          try {
+            const data = await fetch(`${backendUrl}/api/android/avds`).then((r) => r.json());
+            const avds = data.avds || [];
+            const listText = avds.length
+              ? `Available emulators:\n${avds.map((a) => `  • ${a}`).join("\n")}\n\nType \`open emulator <name>\` to launch one.`
+              : "No emulators found. Make sure Android SDK is installed and at least one AVD is created.";
+            setSnapshot((current) => {
+              if (!current) return current;
+              return {
+                ...current,
+                messages: [
+                  ...(current.messages || []),
+                  { role: "user", content: outgoingMessage },
+                  { role: "assistant", content: listText },
+                ],
+              };
+            });
+          } catch (nextError) {
+            setError(String(nextError));
+          }
+          return;
+        }
+
+        const cmd = qc.buildCommand(outgoingMessage);
+        const chatId = snapshot?.config?.activeChatId || "";
+        setSnapshot((current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            messages: [
+              ...(current.messages || []),
+              { role: "user", content: outgoingMessage },
+              { role: "assistant", content: `Running in terminal:\n\`${cmd}\`\n\nWaiting for output...` },
+            ],
+          };
+        });
+        void runInTerminal(cmd)
+          .then(() => pollTerminalThenNotifyAI(outgoingMessage, chatId))
+          .catch((nextError) => setError(String(nextError)));
+        return;
+      }
+    }
+
     const currentConfig = snapshot?.config || {};
     const currentChatId = snapshot?.config?.activeChatId || "";
     const requestPayload = {
@@ -866,6 +1366,16 @@ export default function App() {
     }
 
     const requestKey = currentChatId || `draft:${Date.now()}`;
+    let resolvedChatId = requestKey;
+    const previousPendingTurn = currentChatId ? pendingTurns[currentChatId] : null;
+    if (currentChatId && previousPendingTurn?.assistantText && !previousPendingTurn?.running) {
+      preservePartialAssistantMessage(currentChatId, previousPendingTurn.assistantText);
+      setPendingTurns((current) => {
+        const next = { ...current };
+        delete next[currentChatId];
+        return next;
+      });
+    }
     setDraft("");
     setError("");
     setPendingTurns((current) => ({
@@ -893,6 +1403,7 @@ export default function App() {
 
         switch (event.type) {
           case "user_message": {
+            resolvedChatId = eventChatId;
             if (
               event.snapshot &&
               (activeChatIdRef.current === "" || activeChatIdRef.current === event.chatId)
@@ -974,15 +1485,14 @@ export default function App() {
               syncSavedProjects(event.snapshot.config.repoRoot);
               void fetchProjectChats(event.snapshot.config.repoRoot).catch(() => {});
             }
-            setPendingTurns((current) => ({
-              ...current,
-              [eventChatId]: {
-                chatId: eventChatId,
-                userMessage: current[eventChatId]?.userMessage || outgoingMessage,
-                assistantText: event.partialText || current[eventChatId]?.assistantText || "",
-                running: false,
-              },
-            }));
+            setPendingTurns((current) => {
+              const partialText = event.partialText || current[eventChatId]?.assistantText || "";
+              preservePartialAssistantMessage(eventChatId, partialText);
+              const next = { ...current };
+              delete next[eventChatId];
+              delete next[requestKey];
+              return next;
+            });
             setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
             if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
               setLiveStatus("Request interrupted");
@@ -990,6 +1500,8 @@ export default function App() {
             break;
           case "error":
             setPendingTurns((current) => {
+              const partialText = current[eventChatId]?.assistantText || current[requestKey]?.assistantText || "";
+              preservePartialAssistantMessage(eventChatId, partialText);
               const next = { ...current };
               delete next[eventChatId];
               delete next[requestKey];
@@ -1007,11 +1519,14 @@ export default function App() {
       });
     } catch (nextError) {
       setPendingTurns((current) => {
+        const partialText = current[resolvedChatId]?.assistantText || current[requestKey]?.assistantText || "";
+        preservePartialAssistantMessage(resolvedChatId, partialText);
         const next = { ...current };
         delete next[requestKey];
+        delete next[resolvedChatId];
         return next;
       });
-      setSendingChatIds((current) => current.filter((chatId) => chatId !== requestKey));
+      setSendingChatIds((current) => current.filter((chatId) => chatId !== requestKey && chatId !== resolvedChatId));
       setError(String(nextError));
       setLiveStatus("Request failed");
     }
@@ -1487,7 +2002,7 @@ export default function App() {
                       title={project.path}
                     >
                       <span className="project-name">
-                        <span className={expandedRepos.has(project.path) ? "chevron-icon expanded" : "chevron-icon"}>â€º</span>{" "}
+                        <span className={expandedRepos.has(project.path) ? "chevron-icon expanded" : "chevron-icon"}>&gt;</span>{" "}
                         {project.name}
                       </span>
                     </button>
@@ -1629,7 +2144,7 @@ export default function App() {
                 }}
                 title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
               >
-                {sidebarCollapsed ? "Â»" : "Â«"}
+                {sidebarCollapsed ? ">" : "<"}
               </button>
               <select
                 className="header-thread-select"
@@ -1829,6 +2344,95 @@ export default function App() {
               Previous response was interrupted. Continue from the last saved turn.
             </div>
           )}
+          <section className={`terminal-panel${terminalPanelOpen ? "" : " terminal-compact"}`}>
+            <div className="terminal-header">
+              <div className="terminal-header-left">
+                <div className="terminal-kicker">Terminal</div>
+                {terminalPanelOpen && (
+                  <div className="terminal-title">
+                    {terminalSnapshot?.status === "running" ? "Running" : "Ready"} · {projectLabel(snapshot.config.repoRoot)}
+                  </div>
+                )}
+              </div>
+              <div className="terminal-actions">
+                {terminalPanelOpen && (
+                  <>
+                    <div className="terminal-view-toggle">
+                      <button
+                        type="button"
+                        className={terminalViewMode === "chat" ? "terminal-view-btn active" : "terminal-view-btn"}
+                        onClick={() => setTerminalViewMode("chat")}
+                      >
+                        Chat
+                      </button>
+                      <button
+                        type="button"
+                        className={terminalViewMode === "live" ? "terminal-view-btn active" : "terminal-view-btn"}
+                        onClick={() => void handleSwitchToLive()}
+                      >
+                        Live
+                      </button>
+                    </div>
+                    {terminalViewMode === "chat" && (
+                      <button type="button" className="secondary-button" onClick={() => void refreshTerminal().catch((nextError) => setError(String(nextError)))}>
+                        Refresh
+                      </button>
+                    )}
+                    <button type="button" className="secondary-button" onClick={() => void handleCloseTerminal()}>
+                      Close
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="terminal-expand-btn"
+                  onClick={() => void handleToggleTerminal()}
+                  title={terminalPanelOpen ? "Collapse terminal" : "Expand terminal"}
+                >
+                  {terminalPanelOpen ? "▲" : "▼"}
+                </button>
+              </div>
+            </div>
+            {/* Keep XtermPanel mounted whenever the panel is open so switching to Chat
+                tab and back doesn't wipe content that was streamed directly into xterm. */}
+            {terminalPanelOpen && activeTerminalChatId && (
+              <div style={terminalViewMode !== "live" ? { position: "absolute", visibility: "hidden", pointerEvents: "none", width: "1px", height: "1px", overflow: "hidden" } : {}}>
+                <XtermPanel
+                  backendUrl={backendUrl}
+                  chatId={activeTerminalChatId}
+                  repoRoot={snapshot.config.repoRoot || ""}
+                  onReady={(writeFn) => { liveTermWriteRef.current = writeFn; }}
+                  onUnmount={() => { liveTermWriteRef.current = null; }}
+                />
+              </div>
+            )}
+            {terminalPanelOpen && terminalViewMode === "chat" && (
+              <div className="terminal-output" ref={terminalOutputRef}>
+                {terminalSnapshot?.history
+                  ? stripAnsi(terminalSnapshot.history)
+                  : <span className="terminal-placeholder-inline">Open this thread terminal, then run commands in the selected workspace.</span>
+                }
+              </div>
+            )}
+            {terminalViewMode === "chat" && (
+              <div className="terminal-command-row">
+                <input
+                  value={terminalDraft}
+                  onChange={(event) => setTerminalDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void handleSendTerminalCommand();
+                    }
+                  }}
+                  placeholder="Run a command in the workspace..."
+                />
+                <button type="button" className="primary-button" onClick={() => void handleSendTerminalCommand()}>
+                  Run
+                </button>
+              </div>
+            )}
+          </section>
           {diffPanelOpen && (
             <section className="diff-panel">
               <div className="diff-file-list">
@@ -1954,9 +2558,15 @@ export default function App() {
           </section>
           </div>{/* chat-main */}
 
-          <div className="composer-panel">
+          <div
+            className="composer-panel"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
             <textarea
               value={draft}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -1964,7 +2574,7 @@ export default function App() {
                   void handleSend();
                 }
               }}
-              placeholder="Ask for changes, inspect the repo, or debug a file..."
+              placeholder={terminalViewMode === "live" && terminalPanelOpen ? `Talking to ${providerCliCommand(snapshot?.config?.model || "")} — type anything...` : "Ask for changes, inspect the repo, or debug a file..."}
             />
             <div className="composer-footer">
               <div className="composer-controls">
@@ -2068,9 +2678,9 @@ export default function App() {
                 type="button"
                 className="primary-button"
                 onClick={handleSend}
-                disabled={Boolean(snapshot.config.activeChatId) && sendingChatIds.includes(snapshot.config.activeChatId)}
+                disabled={terminalViewMode === "chat" && Boolean(snapshot.config.activeChatId) && sendingChatIds.includes(snapshot.config.activeChatId)}
               >
-                Send
+                {terminalViewMode === "live" && terminalPanelOpen ? "Run" : "Send"}
               </button>
             </div>
           </div>
