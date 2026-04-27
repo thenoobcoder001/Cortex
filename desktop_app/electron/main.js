@@ -12,6 +12,8 @@ let backendUrl = null;
 let mainWindow = null;
 let backendPort = 8765;
 let remoteAccessEnabled = false;
+const desktopLogDir = path.join(os.homedir(), ".cortex", "logs");
+const desktopLaunchLogPath = path.join(desktopLogDir, "desktop-launch.log");
 const EXTERNAL_EDITORS = {
   vscode: { command: "code", label: "VS Code" },
   antigravity: { command: "antigravity", label: "Antigravity" },
@@ -120,7 +122,56 @@ function saveRemoteAccessPreference(enabled) {
   config.save();
 }
 
+function logDesktopLaunch(event, payload = {}) {
+  try {
+    fs.mkdirSync(desktopLogDir, { recursive: true });
+    const line = JSON.stringify({
+      time: new Date().toISOString(),
+      event,
+      ...payload,
+    });
+    fs.appendFileSync(desktopLaunchLogPath, `${line}\n`, "utf8");
+  } catch {
+    // Ignore logging failures.
+  }
+}
+
+function serializeError(error) {
+  if (!error) {
+    return null;
+  }
+  return {
+    name: String(error.name || ""),
+    message: String(error.message || error),
+    stack: String(error.stack || ""),
+  };
+}
+
+function attachWindowDiagnostics(window) {
+  if (!window?.webContents) {
+    return;
+  }
+  window.webContents.on("render-process-gone", (_event, details) => {
+    logDesktopLaunch("webcontents.render-process-gone", details || {});
+  });
+  window.webContents.on("unresponsive", () => {
+    logDesktopLaunch("webcontents.unresponsive", {});
+  });
+  window.webContents.on("responsive", () => {
+    logDesktopLaunch("webcontents.responsive", {});
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    logDesktopLaunch("webcontents.did-fail-load", {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    });
+  });
+}
+
 function launchDetached(command, args, cwd) {
+  logDesktopLaunch("detached.spawn.requested", { command, args, cwd });
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -135,6 +186,12 @@ function launchDetached(command, args, cwd) {
         return;
       }
       settled = true;
+      logDesktopLaunch("detached.spawn.error", {
+        command,
+        args,
+        cwd,
+        message: String(error?.message || error),
+      });
       reject(error);
     });
     child.once("spawn", () => {
@@ -142,6 +199,12 @@ function launchDetached(command, args, cwd) {
         return;
       }
       settled = true;
+      logDesktopLaunch("detached.spawn.started", {
+        command,
+        args,
+        cwd,
+        pid: child.pid || null,
+      });
       child.unref();
       resolve();
     });
@@ -174,7 +237,7 @@ function createWindow() {
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
     dialog.showErrorBox("Cortex — Load Error", `Renderer failed to load (${errorCode}):\n${errorDescription}`);
   });
-
+  attachWindowDiagnostics(mainWindow);
 
 }
 
@@ -238,16 +301,39 @@ if (ipcMain) {
       throw new Error("Selected file does not exist.");
     }
 
+    logDesktopLaunch("shell.openPath.requested", { path: resolved });
     const error = await shell.openPath(resolved);
     if (error) {
+      logDesktopLaunch("shell.openPath.error", { path: resolved, message: error });
       throw new Error(error);
     }
+    logDesktopLaunch("shell.openPath.started", { path: resolved });
     return { ok: true };
   });
 }
 
 if (app) {
   app.disableHardwareAcceleration();
+  process.on("uncaughtException", (error) => {
+    logDesktopLaunch("process.uncaughtException", { error: serializeError(error) });
+  });
+  process.on("unhandledRejection", (reason) => {
+    logDesktopLaunch("process.unhandledRejection", {
+      error: serializeError(reason instanceof Error ? reason : new Error(String(reason))),
+    });
+  });
+  app.on("render-process-gone", (_event, webContents, details) => {
+    logDesktopLaunch("app.render-process-gone", {
+      details: details || {},
+      url: webContents?.getURL?.() || "",
+    });
+  });
+  app.on("child-process-gone", (_event, details) => {
+    logDesktopLaunch("app.child-process-gone", details || {});
+  });
+  app.on("gpu-process-crashed", (_event, killed) => {
+    logDesktopLaunch("app.gpu-process-crashed", { killed: Boolean(killed) });
+  });
 
   app.whenReady().then(async () => {
     try {
