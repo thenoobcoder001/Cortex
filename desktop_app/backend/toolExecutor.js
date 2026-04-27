@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { exec } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { buildUnifiedDiff } = require("./fileService");
+const { resolveAndroidEnv } = require("./androidEnv");
 
 class ToolExecutor {
   constructor(fileService, repoRoot) {
@@ -207,10 +208,44 @@ class ToolExecutor {
     if (!command) {
       return Promise.resolve("ERROR: no command provided");
     }
+
     return new Promise((resolve) => {
-      exec(command, { cwd: this.repoRoot, windowsHide: true }, (error, stdout, stderr) => {
-        const exitCode = typeof error?.code === "number" ? error.code : 0;
-        resolve(`STDOUT:\n${stdout || ""}\nSTDERR:\n${stderr || ""}\n(Exit ${exitCode})`);
+      const child = process.platform === "win32"
+        ? spawn("cmd.exe", ["/d", "/s", "/c", command], {
+            cwd: this.repoRoot,
+            env: resolveAndroidEnv(process.env),
+            windowsHide: true,
+            shell: false,
+          })
+        : spawn(process.env.SHELL || "/bin/bash", ["-lc", command], {
+            cwd: this.repoRoot,
+            env: resolveAndroidEnv(process.env),
+            shell: false,
+          });
+
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString("utf8");
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.on("error", (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(`STDOUT:\n${stdout}\nSTDERR:\n${stderr}${stderr ? "\n" : ""}${String(error?.message || error)}\n(Exit 1)`);
+      });
+      child.on("close", (exitCode) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(`STDOUT:\n${stdout || ""}\nSTDERR:\n${stderr || ""}\n(Exit ${typeof exitCode === "number" ? exitCode : 0})`);
       });
     });
   }
