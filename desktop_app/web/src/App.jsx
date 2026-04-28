@@ -214,14 +214,6 @@ function normalizeProject(repoRoot) {
   return String(repoRoot || "").trim().replaceAll("/", "\\");
 }
 
-function diffLineClass(line) {
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("---") || line.startsWith("+++")) return "meta";
-  if (line.startsWith("+")) return "add";
-  if (line.startsWith("-")) return "remove";
-  return "context";
-}
-
 function loadSavedProjects() {
   try {
     const raw = window.localStorage.getItem(SAVED_PROJECTS_KEY);
@@ -332,10 +324,6 @@ export default function App() {
   const [remoteAccessUrls, setRemoteAccessUrls] = useState([]);
   const [networkSettingsSaving, setNetworkSettingsSaving] = useState(false);
   const [bootDismissed, setBootDismissed] = useState(false);
-  const [diffPanelOpen, setDiffPanelOpen] = useState(false);
-  const [selectedDiffIndex, setSelectedDiffIndex] = useState(0);
-  const [gitChanges, setGitChanges] = useState([]);
-  const [gitChangesError, setGitChangesError] = useState(null);
   const [showClearCacheConfirm, setShowClearCacheConfirm] = useState(false);
   const [showDeleteSettingsConfirm, setShowDeleteSettingsConfirm] = useState(false);
   const [providerTestState, setProviderTestState] = useState({});
@@ -355,7 +343,6 @@ export default function App() {
 
   const runningChatIds = snapshot?.runningChatIds || [];
   const interruptedRuns = snapshot?.interruptedRuns || [];
-  const activeChanges = gitChanges;
   const activeRepoRoot = normalizeProject(snapshot?.config?.repoRoot || "");
   const resolvedTheme = themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
   const splashVisible = !bootDismissed || !snapshot;
@@ -449,29 +436,6 @@ export default function App() {
     setSettingsPromptPreset(snapshot.config.promptPreset || "code");
     setRemoteAccessEnabledDraft(Boolean(snapshot.config.remoteAccessEnabled));
   }, [snapshot?.config]);
-
-  const fetchGitChanges = async (repoRoot) => {
-    const root = repoRoot || snapshot?.config?.repoRoot || "";
-    if (!root) return;
-    try {
-      const response = await fetch(`${backendUrl}/api/workspace/git-status?repoRoot=${encodeURIComponent(root)}`);
-      const data = await response.json();
-      setGitChanges(data.changes || []);
-      setGitChangesError(data.error || null);
-    } catch (err) {
-      setGitChanges([]);
-      setGitChangesError(String(err));
-    }
-  };
-
-  // Poll git changes every 5s so the button count stays current
-  useEffect(() => {
-    if (!snapshot?.config?.repoRoot) return;
-    void fetchGitChanges();
-    const interval = setInterval(() => void fetchGitChanges(), 30000);
-    return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot?.config?.repoRoot]);
 
   const toggleRepo = (repoPath) => {
     setExpandedRepos((prev) => {
@@ -941,19 +905,6 @@ export default function App() {
     } catch (nextError) {
       setError(String(nextError));
       setEditorMenuOpen(false);
-    }
-  };
-
-  const handleOpenDiffFile = async () => {
-    if (!selectedDiff) {
-      return;
-    }
-    const filePath = `${snapshot?.config?.repoRoot || ""}\\${selectedDiff.path.replaceAll("/", "\\")}`;
-    setError("");
-    try {
-      await window.desktopApi?.openFile?.(filePath);
-    } catch (nextError) {
-      setError(String(nextError));
     }
   };
 
@@ -1466,7 +1417,6 @@ export default function App() {
               setRepoDraft(event.snapshot.config.repoRoot);
               syncSavedProjects(event.snapshot.config.repoRoot);
               void fetchProjectChats(event.snapshot.config.repoRoot).catch(() => {});
-              void fetchGitChanges(event.snapshot.config.repoRoot);
             }
             setPendingTurns((current) => {
               const next = { ...current };
@@ -1689,12 +1639,6 @@ export default function App() {
     }
     return projectChats[projectPath] || [];
   };
-
-  const selectedDiff = activeChanges[selectedDiffIndex] || null;
-
-  useEffect(() => {
-    setSelectedDiffIndex((current) => Math.min(current, Math.max(0, activeChanges.length - 1)));
-  }, [activeChanges]);
 
   if (!snapshot) {
     return (
@@ -2202,10 +2146,10 @@ export default function App() {
               <div className="topbar-actions-primary">
                 <button
                   type="button"
-                  className="secondary-button"
-                  onClick={() => setDiffPanelOpen((current) => !current)}
+                  className={terminalPanelOpen ? "secondary-button terminal-toggle active" : "secondary-button terminal-toggle"}
+                  onClick={() => void handleToggleTerminal()}
                 >
-                  {diffPanelOpen ? `Hide diff (${activeChanges.length})` : `Show diff (${activeChanges.length})`}
+                  {terminalPanelOpen ? "Hide terminal" : "Show terminal"}
                 </button>
                 {activeChatRunning && (
                   <button type="button" className="secondary-button" onClick={handleInterruptChat}>
@@ -2270,10 +2214,10 @@ export default function App() {
                         type="button"
                         onClick={() => {
                           setHeaderMoreOpen(false);
-                          setDiffPanelOpen((current) => !current);
+                          void handleToggleTerminal();
                         }}
                       >
-                        <span>{diffPanelOpen ? "Hide diff" : `Show diff (${activeChanges.length})`}</span>
+                        <span>{terminalPanelOpen ? "Hide terminal" : "Show terminal"}</span>
                       </button>
                       {activeChatRunning && (
                         <button
@@ -2344,45 +2288,40 @@ export default function App() {
               Previous response was interrupted. Continue from the last saved turn.
             </div>
           )}
-          <section className={`terminal-panel${terminalPanelOpen ? "" : " terminal-compact"}`}>
+          {terminalPanelOpen && (
+          <section className="terminal-panel">
             <div className="terminal-header">
               <div className="terminal-header-left">
                 <div className="terminal-kicker">Terminal</div>
-                {terminalPanelOpen && (
-                  <div className="terminal-title">
-                    {terminalSnapshot?.status === "running" ? "Running" : "Ready"} · {projectLabel(snapshot.config.repoRoot)}
-                  </div>
-                )}
+                <div className="terminal-title">
+                  {terminalSnapshot?.status === "running" ? "Running" : "Ready"} · {projectLabel(snapshot.config.repoRoot)}
+                </div>
               </div>
               <div className="terminal-actions">
-                {terminalPanelOpen && (
-                  <>
-                    <div className="terminal-view-toggle">
-                      <button
-                        type="button"
-                        className={terminalViewMode === "chat" ? "terminal-view-btn active" : "terminal-view-btn"}
-                        onClick={() => setTerminalViewMode("chat")}
-                      >
-                        Chat
-                      </button>
-                      <button
-                        type="button"
-                        className={terminalViewMode === "live" ? "terminal-view-btn active" : "terminal-view-btn"}
-                        onClick={() => void handleSwitchToLive()}
-                      >
-                        Live
-                      </button>
-                    </div>
-                    {terminalViewMode === "chat" && (
-                      <button type="button" className="secondary-button" onClick={() => void refreshTerminal().catch((nextError) => setError(String(nextError)))}>
-                        Refresh
-                      </button>
-                    )}
-                    <button type="button" className="secondary-button" onClick={() => void handleCloseTerminal()}>
-                      Close
-                    </button>
-                  </>
+                <div className="terminal-view-toggle">
+                  <button
+                    type="button"
+                    className={terminalViewMode === "chat" ? "terminal-view-btn active" : "terminal-view-btn"}
+                    onClick={() => setTerminalViewMode("chat")}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    type="button"
+                    className={terminalViewMode === "live" ? "terminal-view-btn active" : "terminal-view-btn"}
+                    onClick={() => void handleSwitchToLive()}
+                  >
+                    Live
+                  </button>
+                </div>
+                {terminalViewMode === "chat" && (
+                  <button type="button" className="secondary-button" onClick={() => void refreshTerminal().catch((nextError) => setError(String(nextError)))}>
+                    Refresh
+                  </button>
                 )}
+                <button type="button" className="secondary-button" onClick={() => void handleCloseTerminal()}>
+                  Close
+                </button>
                 <button
                   type="button"
                   className="terminal-expand-btn"
@@ -2433,64 +2372,7 @@ export default function App() {
               </div>
             )}
           </section>
-          {diffPanelOpen && (
-            <section className="diff-panel">
-              <div className="diff-file-list">
-                <div className="diff-file-list-header">
-                  <span className="diff-file-list-title">Git changes ({activeChanges.length})</span>
-                  <button type="button" className="secondary-button" onClick={() => void fetchGitChanges()}>Refresh</button>
-                </div>
-                {gitChangesError && (
-                  <div className="diff-git-error">{gitChangesError}</div>
-                )}
-                {activeChanges.map((change, index) => (
-                  <button
-                    key={`${change.path}-${index}`}
-                    type="button"
-                    className={selectedDiffIndex === index ? "diff-file-item active" : "diff-file-item"}
-                    onClick={() => setSelectedDiffIndex(index)}
-                  >
-                    <span className={`change-action ${change.action}`}>{change.action}</span>
-                    <span className="diff-file-name">{change.path}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="diff-viewer">
-                {selectedDiff && (
-                  <>
-                    <div className="diff-viewer-header">
-                      <span className={`change-action ${selectedDiff.action}`}>{selectedDiff.action}</span>
-                      <span className="change-path">{selectedDiff.path}</span>
-                    </div>
-                    <div className="diff-viewer-actions">
-                      <button type="button" className="secondary-button" onClick={() => void copyText(selectedDiff.diff || "", "Diff copied")}>
-                        Copy diff
-                      </button>
-                      <button type="button" className="secondary-button" onClick={handleOpenDiffFile}>
-                        Open file
-                      </button>
-                    </div>
-                    {(selectedDiff.oldPath || selectedDiff.newPath) &&
-                      selectedDiff.oldPath !== selectedDiff.newPath && (
-                        <div className="change-rename-row">
-                          {selectedDiff.oldPath || selectedDiff.path}
-                          {" -> "}
-                          {selectedDiff.newPath || selectedDiff.path}
-                        </div>
-                      )}
-                    <div className="change-diff-preview">
-                      {(selectedDiff.diff || "No diff available.").split("\n").map((line, index) => (
-                        <div key={`${index}-${line}`} className={`diff-line ${diffLineClass(line)}`}>
-                          {line || " "}
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            </section>
           )}
-
           {activePlan && (
             <section className="plan-card">
               <div className="plan-card-header">
