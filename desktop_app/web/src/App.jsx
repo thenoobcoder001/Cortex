@@ -1,5 +1,8 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import SettingsPage from "./SettingsPage.jsx";
 import XtermPanel from "./XtermPanel.jsx";
 
 function stripAnsi(str) {
@@ -245,6 +248,23 @@ function upsertProject(projects, repoRoot) {
   return [...projects, { path, name: projectLabel(path) }];
 }
 
+function MarkdownMessage({ content }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children, ...props }) => (
+          <a href={href} target="_blank" rel="noreferrer" {...props}>
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {String(content || "")}
+    </ReactMarkdown>
+  );
+}
+
 async function readDesktopConfig() {
   if (window.desktopApi?.getConfig) {
     return window.desktopApi.getConfig();
@@ -305,6 +325,7 @@ export default function App() {
   const [liveStatus, setLiveStatus] = useState("Idle");
   const [pendingTurns, setPendingTurns] = useState({});
   const [sendingChatIds, setSendingChatIds] = useState([]);
+  const [messageQueue, setMessageQueue] = useState({});
   const [currentScreen, setCurrentScreen] = useState("chat");
   const [savedProjects, setSavedProjects] = useState(() => loadSavedProjects());
   const [projectMenuPath, setProjectMenuPath] = useState("");
@@ -1694,213 +1715,38 @@ export default function App() {
 
   if (currentScreen === "settings") {
     return (
-      <div className="settings-screen">
-        <div className="settings-page">
-          <header className="settings-page-header">
-            <div className="settings-page-heading">
-              <button type="button" className="secondary-button settings-back" onClick={() => setCurrentScreen("chat")}>
-                Back
-              </button>
-              <div>
-                <div className="settings-title">Settings</div>
-                <div className="settings-subtitle">Provider access, memory, and workspace behavior</div>
-              </div>
-            </div>
-            <button type="button" className="primary-button" onClick={handleSaveSettings}>
-              {networkSettingsSaving ? "Saving..." : "Save settings"}
-            </button>
-          </header>
-
-          {error && <div className="error-banner">{error}</div>}
-
-          <div className="settings-page-grid">
-            <section className="settings-section-card">
-              <div className="settings-block-title">Workspace</div>
-              <label className="field">
-                <span>Repo root</span>
-                <div className="field-row">
-                  <input
-                    value={repoDraft}
-                    onChange={(event) => setRepoDraft(event.target.value)}
-                    placeholder="E:\\path\\to\\repo"
-                  />
-                  <button type="button" onClick={handlePickRepo}>
-                    Browse
-                  </button>
-                </div>
-              </label>
-              <label className="field">
-                <span>Default mode</span>
-                <select value={settingsPromptPreset} onChange={(event) => setSettingsPromptPreset(event.target.value)}>
-                  {PROMPT_PRESETS.map((preset) => (
-                    <option key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </section>
-
-            <section className="settings-section-card">
-              <div className="settings-block-title">Memory</div>
-              <label className="field">
-                <span>Assistant memory</span>
-                <textarea
-                  className="settings-textarea"
-                  value={assistantMemoryDraft}
-                  onChange={(event) => setAssistantMemoryDraft(event.target.value)}
-                  placeholder="Add stable preferences, project conventions, names, or behavior notes to pass as persistent context."
-                />
-              </label>
-              <label className="field">
-                <span>Cross-model context carry</span>
-                <input
-                  value={contextCarryMessagesDraft}
-                  onChange={(event) => setContextCarryMessagesDraft(event.target.value.replace(/[^\d]/g, ""))}
-                  placeholder="5"
-                />
-              </label>
-            </section>
-
-            <section className="settings-section-card">
-              <div className="settings-block-title">Appearance</div>
-              <label className="field">
-                <span>Theme</span>
-                <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)}>
-                  <option value="system">System</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </label>
-              <div className="theme-hint">
-                Applies instantly. Current theme: {resolvedTheme}.
-              </div>
-            </section>
-
-            <section className="settings-section-card">
-              <div className="settings-block-title">Remote Access</div>
-              <label className="field">
-                <span>Network exposure</span>
-                <select
-                  value={remoteAccessEnabledDraft ? "enabled" : "disabled"}
-                  onChange={(event) => setRemoteAccessEnabledDraft(event.target.value === "enabled")}
-                >
-                  <option value="disabled">Disabled</option>
-                  <option value="enabled">Enabled</option>
-                </select>
-              </label>
-              <div className="danger-zone-copy">
-                Enable this to let the installed app accept connections from Tailscale or your local network.
-              </div>
-              {remoteAccessEnabledDraft && (
-                <div className="provider-test-result ok">
-                  {remoteAccessUrls.length
-                    ? remoteAccessUrls.map((entry) => `${entry.label}: ${entry.url}`).join("\n")
-                    : "Save settings to restart the backend and generate reachable URLs."}
-                </div>
-              )}
-            </section>
-
-
-            <section className="settings-section-card settings-section-wide">
-              <div className="settings-block-title">Providers</div>
-              <div className="provider-grid">
-                {Object.entries(snapshot.providers).map(([providerId, provider]) => (
-                  <div key={providerId} className="provider-card">
-                    <span className="provider-name">{providerId}</span>
-                    <span className={provider.available ? "provider-ok" : "provider-muted"}>
-                      {provider.available ? "available" : "missing"}
-                    </span>
-                    <span className={provider.connected ? "provider-ok" : "provider-muted"}>
-                      {provider.connected ? "ready" : "not ready"}
-                    </span>
-                    <div className="provider-card-actions">
-                      <button
-                        type="button"
-                        className="secondary-button provider-test-button"
-                        onClick={() => void handleTestProvider(providerId)}
-                        disabled={providerTestState[providerId]?.status === "running"}
-                      >
-                        {providerTestState[providerId]?.status === "running" ? "Testing..." : "Test connection"}
-                      </button>
-                    </div>
-                    {providerTestState[providerId]?.message && (
-                      <div
-                        className={
-                          providerTestState[providerId]?.status === "ok"
-                            ? "provider-test-result ok"
-                            : providerTestState[providerId]?.status === "error"
-                              ? "provider-test-result error"
-                              : "provider-test-result"
-                        }
-                      >
-                        {providerTestState[providerId].message}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="settings-section-card settings-section-wide">
-              <div className="settings-block-title">Danger Zone</div>
-              <div className="danger-zone-copy">
-                Clear cached local app data, saved project metadata, chat history, accepted diff baselines, and provider session state.
-              </div>
-              <div className="settings-actions">
-                <button
-                  type="button"
-                  className="danger-button"
-                  onClick={() => setShowClearCacheConfirm(true)}
-                >
-                  Clear cache
-                </button>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        {showClearCacheConfirm && (
-          <div className="confirm-overlay" onClick={() => setShowClearCacheConfirm(false)}>
-            <div className="confirm-dialog" onClick={(event) => event.stopPropagation()}>
-              <div className="confirm-badge">Danger</div>
-              <div className="confirm-title">Clear local app data?</div>
-              <div className="confirm-copy">
-                This will remove saved chats, workspace diff baselines, cached project metadata, provider sessions, and local settings for known projects.
-              </div>
-              <div className="confirm-actions">
-                <button type="button" className="secondary-button" onClick={() => setShowClearCacheConfirm(false)}>
-                  Cancel
-                </button>
-                <button type="button" className="danger-button" onClick={handleClearCache}>
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        {showDeleteSettingsConfirm && (
-          <div className="confirm-overlay" onClick={() => setShowDeleteSettingsConfirm(false)}>
-            <div className="confirm-dialog" onClick={(event) => event.stopPropagation()}>
-              <div className="confirm-badge">Danger</div>
-              <div className="confirm-title">Delete the local settings file?</div>
-              <div className="confirm-copy">
-                This removes the config file that stores saved API keys and local app settings.
-                Project chat data and accepted workspace baselines are not deleted.
-              </div>
-              <div className="confirm-path">{snapshot?.config?.configPath || "Unavailable"}</div>
-              <div className="confirm-actions">
-                <button type="button" className="secondary-button" onClick={() => setShowDeleteSettingsConfirm(false)}>
-                  Cancel
-                </button>
-                <button type="button" className="danger-button" onClick={handleDeleteSettingsFile}>
-                  Delete file
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      <SettingsPage
+        error={error}
+        networkSettingsSaving={networkSettingsSaving}
+        onBack={() => setCurrentScreen("chat")}
+        onSave={handleSaveSettings}
+        repoDraft={repoDraft}
+        setRepoDraft={setRepoDraft}
+        onPickRepo={handlePickRepo}
+        promptPresets={PROMPT_PRESETS}
+        settingsPromptPreset={settingsPromptPreset}
+        setSettingsPromptPreset={setSettingsPromptPreset}
+        assistantMemoryDraft={assistantMemoryDraft}
+        setAssistantMemoryDraft={setAssistantMemoryDraft}
+        contextCarryMessagesDraft={contextCarryMessagesDraft}
+        setContextCarryMessagesDraft={setContextCarryMessagesDraft}
+        themeMode={themeMode}
+        setThemeMode={setThemeMode}
+        resolvedTheme={resolvedTheme}
+        remoteAccessEnabledDraft={remoteAccessEnabledDraft}
+        setRemoteAccessEnabledDraft={setRemoteAccessEnabledDraft}
+        remoteAccessUrls={remoteAccessUrls}
+        providers={snapshot.providers}
+        providerTestState={providerTestState}
+        onTestProvider={handleTestProvider}
+        showClearCacheConfirm={showClearCacheConfirm}
+        setShowClearCacheConfirm={setShowClearCacheConfirm}
+        onClearCache={handleClearCache}
+        showDeleteSettingsConfirm={showDeleteSettingsConfirm}
+        setShowDeleteSettingsConfirm={setShowDeleteSettingsConfirm}
+        onDeleteSettingsFile={handleDeleteSettingsFile}
+        configPath={snapshot?.config?.configPath || ""}
+      />
     );
   }
 
@@ -2422,7 +2268,11 @@ export default function App() {
                       </div>
                     )}
                     <div className="message-content">
-                      <pre>{String(message.content || "")}</pre>
+                      {message.role === "assistant" ? (
+                        <MarkdownMessage content={message.content} />
+                      ) : (
+                        <pre>{String(message.content || "")}</pre>
+                      )}
                     </div>
                   </div>
                 </div>

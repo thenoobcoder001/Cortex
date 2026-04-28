@@ -41,3 +41,4 @@ htmlcov/
 .cortex/
 local-notes/
 images/
+*.md
