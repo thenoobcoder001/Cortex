@@ -36,10 +36,11 @@ function spawnCommand(command, args, options = {}) {
     return spawn(command, args, { ...effectiveOptions, shell: false });
   }
   const commandLine = [quoteWindowsArg(command), ...args.map(quoteWindowsArg)].join(" ");
-  return spawn("cmd.exe", ["/d", "/s", "/c", commandLine], {
+  return spawn("cmd.exe", ["/d", "/s", "/c", `"${commandLine}"`], {
     ...effectiveOptions,
     shell: false,
     windowsHide: true,
+    windowsVerbatimArguments: true,
   });
 }
 
