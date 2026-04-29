@@ -315,6 +315,7 @@ export default function App() {
   const liveTermWriteRef = useRef(null);
   const liveCliLaunchedRef = useRef(new Set());
   const bootStartedAtRef = useRef(Date.now());
+  const [updateBanner, setUpdateBanner] = useState(null); // { version }
   const [backendUrl, setBackendUrl] = useState("");
   const [snapshot, setSnapshot] = useState(null);
   const [projectChats, setProjectChats] = useState({});
@@ -388,6 +389,18 @@ export default function App() {
     activeChatIdRef.current = snapshot?.config?.activeChatId || "";
     snapshotRef.current = snapshot;
   }, [snapshot]);
+
+  // ── update listener ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (s) => {
+      if (s.state === "available" || s.state === "ready") {
+        setUpdateBanner({ version: s.version, state: s.state });
+      } else if (s.state === "up-to-date") {
+        setUpdateBanner(null);
+      }
+    };
+    window.desktopApi?.onUpdateStatus?.(handler);
+  }, []);
 
   useEffect(() => {
     backendUrlRef.current = backendUrl;
@@ -1752,8 +1765,42 @@ export default function App() {
 
   return (
     <>
+      {updateBanner && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+          background: updateBanner.state === "ready" ? "#16a34a" : "#2563eb",
+          color: "#fff", padding: "10px 20px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          fontSize: 13, fontWeight: 600,
+        }}>
+          <span>
+            {updateBanner.state === "ready"
+              ? `✓ Cortex v${updateBanner.version} downloaded — restart to install`
+              : `↑ Cortex v${updateBanner.version} is available`}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            {updateBanner.state === "available" && (
+              <button onClick={() => window.desktopApi?.updaterDownload?.()}
+                style={{ background: "#fff", color: "#2563eb", border: "none", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 700 }}>
+                Download
+              </button>
+            )}
+            {updateBanner.state === "ready" && (
+              <button onClick={() => window.desktopApi?.updaterInstall?.()}
+                style={{ background: "#fff", color: "#16a34a", border: "none", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 700 }}>
+                Restart & Install
+              </button>
+            )}
+            <button onClick={() => setUpdateBanner(null)}
+              style={{ background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       <div
         className={`workspace-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+        style={updateBanner ? { paddingTop: 40 } : undefined}
         onClick={() => {
           setProjectMenuPath("");
           setModelMenuOpen(false);

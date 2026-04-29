@@ -1,4 +1,281 @@
-import React from "react";
+import React, { useEffect, useReducer, useRef, useState } from "react";
+
+function UpdateSection() {
+  const [status, setStatus] = useState(null); // { state, version, error, currentVersion }
+  const [feedUrl, setFeedUrl] = useState("");
+  const [showFeedInput, setShowFeedInput] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    window.desktopApi?.updaterGetStatus?.().then(setStatus).catch(() => {});
+    window.desktopApi?.onUpdateStatus?.((s) => setStatus((prev) => ({ ...prev, ...s })));
+  }, []);
+
+  async function handleCheck() {
+    setLoading(true);
+    try { const s = await window.desktopApi?.updaterCheck?.(); if (s) setStatus(s); }
+    catch { /* ignore */ } finally { setLoading(false); }
+  }
+
+  async function handleDownload() {
+    setLoading(true);
+    try { await window.desktopApi?.updaterDownload?.(); }
+    catch { /* ignore */ } finally { setLoading(false); }
+  }
+
+  async function handleInstall() {
+    await window.desktopApi?.updaterInstall?.();
+  }
+
+  async function handleSaveFeedUrl() {
+    if (!feedUrl.trim()) return;
+    await window.desktopApi?.updaterSetFeedUrl?.(feedUrl.trim());
+    setShowFeedInput(false);
+  }
+
+  const state = status?.state || "idle";
+  const stateLabel = {
+    idle: "Not checked yet",
+    checking: "Checking for updates…",
+    "up-to-date": "You're on the latest version",
+    available: `Update available — v${status?.version}`,
+    downloading: `Downloading… ${status?.version}`,
+    ready: `Ready to install — v${status?.version}`,
+    error: `Error: ${status?.error}`,
+  }[state] || state;
+
+  return (
+    <section className="settings-section-card">
+      <div className="settings-block-title">Updates</div>
+      <div className="danger-zone-copy">
+        Current version: <strong>{status?.currentVersion || "—"}</strong>
+      </div>
+
+      <div className={`provider-test-result ${state === "available" || state === "ready" ? "ok" : state === "error" ? "error" : ""}`}
+        style={{ marginBottom: 8 }}>
+        {stateLabel}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" className="secondary-button" disabled={loading || state === "checking"} onClick={handleCheck}>
+          {state === "checking" ? "Checking…" : "Check for Updates"}
+        </button>
+        {state === "available" && (
+          <button type="button" className="primary-button" disabled={loading} onClick={handleDownload}>
+            Download Update
+          </button>
+        )}
+        {state === "downloading" && (
+          <button type="button" className="primary-button" disabled>Downloading…</button>
+        )}
+        {state === "ready" && (
+          <button type="button" className="primary-button" onClick={handleInstall}>
+            Restart & Install
+          </button>
+        )}
+      </div>
+
+      <button type="button" className="secondary-button" style={{ marginTop: 4, alignSelf: "flex-start" }}
+        onClick={() => setShowFeedInput(!showFeedInput)}>
+        {showFeedInput ? "Hide" : "Set Update Server URL"}
+      </button>
+      {showFeedInput && (
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <input value={feedUrl} placeholder="https://your-update-server.com/updates"
+            onChange={(e) => setFeedUrl(e.target.value)}
+            style={{ flex: 1 }} />
+          <button type="button" className="primary-button" onClick={handleSaveFeedUrl}>Save</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CortexRelaySection() {
+  const [status, setStatus] = useState(null);
+  const [tab, setTab] = useState("signin"); // "signin" | "register"
+  const [step, setStep] = useState("form"); // "form" | "verify"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const pollRef = useRef(null);
+
+  async function fetchStatus() {
+    try {
+      const res = await fetch("http://127.0.0.1:8765/api/cortex/status");
+      const s = await res.json();
+      if (s.state !== "connected" && s.hasSavedSession) {
+        // WS dropped but we have saved credentials — reconnect silently
+        fetch("http://127.0.0.1:8765/api/cortex/reconnect", { method: "POST" })
+          .then(r => r.json())
+          .then(d => { if (d.connected) setStatus({ state: "connected", deviceId: d.deviceId, socketId: d.socketId }); })
+          .catch(() => {});
+        // Keep showing connected while reconnecting
+        setStatus(prev => prev?.state === "connected" ? prev : { state: "reconnecting", deviceId: null, socketId: null });
+      } else {
+        setStatus(s);
+      }
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => {
+    fetchStatus();
+    pollRef.current = setInterval(fetchStatus, 8000);
+    return () => clearInterval(pollRef.current);
+  }, []);
+
+  function reset() { setEmail(""); setPassword(""); setCode(""); setError(""); setInfo(""); setStep("form"); }
+  function switchTab(t) { setTab(t); reset(); }
+
+  async function handleSignIn() {
+    const trimEmail = email.trim();
+    const trimPass  = password.trim();
+    if (!trimEmail || !trimPass) { setError("Enter email and password."); return; }
+    setLoading(true); setError(""); setInfo("");
+    try {
+      const res = await fetch("http://127.0.0.1:8765/api/cortex/send-verification", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimEmail, password: trimPass }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Sign in failed");
+      if (data.connected) {
+        setStatus({ state: "connected", deviceId: data.deviceId, socketId: data.socketId });
+        reset();
+        return;
+      }
+      // Server returned a message but no token — shouldn't happen on sign-in
+      throw new Error(data.detail || "Unexpected response from server");
+    } catch (err) { setError(err.message || "Sign in failed."); }
+    finally { setLoading(false); }
+  }
+
+  async function handleRegister() {
+    const trimEmail = email.trim();
+    const trimPass  = password.trim();
+    if (!trimEmail || !trimPass) { setError("Enter email and password."); return; }
+    setLoading(true); setError(""); setInfo("");
+    try {
+      const res = await fetch("http://127.0.0.1:8765/api/cortex/send-verification", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimEmail, password: trimPass }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Registration failed");
+      setInfo(data.message || "Verification code sent.");
+      setStep("verify");
+    } catch (err) { setError(err.message || "Registration failed."); }
+    finally { setLoading(false); }
+  }
+
+  async function handleVerify() {
+    if (!code.trim()) { setError("Enter the verification code."); return; }
+    setLoading(true); setError("");
+    try {
+      const res = await fetch("http://127.0.0.1:8765/api/cortex/verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), code: code.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Verification failed");
+      setStatus({ state: "connected", deviceId: data.deviceId, socketId: data.socketId });
+      reset();
+    } catch (err) { setError(err.message || "Verification failed."); }
+    finally { setLoading(false); }
+  }
+
+  async function handleDisconnect() {
+    setLoading(true);
+    try {
+      await fetch("http://127.0.0.1:8765/api/cortex/disconnect", { method: "POST" });
+      await window.desktopApi?.cortexDisconnect?.();
+      setStatus({ state: "disconnected", deviceId: null, socketId: null });
+    } catch { /* ignore */ } finally { setLoading(false); }
+  }
+
+  const connected = status?.state === "connected";
+  const reconnecting = status?.state === "reconnecting";
+
+  return (
+    <section className="settings-section-card">
+      <div className="settings-block-title">Cortex Relay</div>
+      {!connected && (
+        <div className="danger-zone-copy">
+          Connect this desktop to the Cortex relay so mobile devices can reach it over any network.
+        </div>
+      )}
+
+      {connected ? (
+        <div>
+          <div className="provider-test-result ok" style={{ marginBottom: 10 }}>
+            {`Connected · Device ID: ${status.deviceId || "—"}`}
+          </div>
+          <button type="button" className="danger-button" disabled={loading} onClick={handleDisconnect}>
+            {loading ? "Disconnecting…" : "Disconnect"}
+          </button>
+        </div>
+      ) : reconnecting ? (
+        <div className="provider-test-result" style={{ marginBottom: 10 }}>Reconnecting…</div>
+      ) : step === "verify" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {info && <div className="provider-test-result ok">{info}</div>}
+          <div className="danger-zone-copy">Enter the 6-digit code sent to <strong>{email}</strong></div>
+          <label className="field">
+            <span>Verification Code</span>
+            <input
+              type="text"
+              value={code}
+              autoComplete="one-time-code"
+              placeholder="123456"
+              maxLength={6}
+              onChange={(e) => { setCode(e.target.value.replace(/\D/g, "")); setError(""); }}
+              onKeyDown={(e) => e.key === "Enter" && handleVerify()}
+              style={{ letterSpacing: 8, fontSize: 22, textAlign: "center" }}
+            />
+          </label>
+          {error && <div className="provider-test-result error">{error}</div>}
+          <button type="button" className="primary-button" disabled={loading} onClick={handleVerify}>
+            {loading ? "Verifying…" : "Verify & Connect"}
+          </button>
+          <button type="button" className="secondary-button" disabled={loading} onClick={() => { setStep("form"); setError(""); setInfo(""); setCode(""); }}>
+            Back
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="cortex-auth-tabs">
+            <button type="button" className={tab === "signin" ? "cortex-tab active" : "cortex-tab"} onClick={() => switchTab("signin")}>Sign In</button>
+            <button type="button" className={tab === "register" ? "cortex-tab active" : "cortex-tab"} onClick={() => switchTab("register")}>Register</button>
+          </div>
+          <label className="field">
+            <span>Email</span>
+            <input type="email" value={email} autoComplete="email" placeholder="you@example.com"
+              onChange={(e) => { setEmail(e.target.value); setError(""); }} />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input type="password" value={password} autoComplete={tab === "register" ? "new-password" : "current-password"} placeholder="••••••••"
+              onChange={(e) => { setPassword(e.target.value); setError(""); }}
+              onKeyDown={(e) => e.key === "Enter" && (tab === "signin" ? handleSignIn() : handleRegister())} />
+          </label>
+          {error && <div className="provider-test-result error">{error}</div>}
+          {tab === "signin" ? (
+            <button type="button" className="primary-button" disabled={loading} onClick={handleSignIn}>
+              {loading ? "Signing in…" : "Sign In"}
+            </button>
+          ) : (
+            <button type="button" className="primary-button" disabled={loading} onClick={handleRegister}>
+              {loading ? "Sending code…" : "Create Account"}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function splitRemoteAccessUrls(remoteAccessUrls) {
   const entries = Array.isArray(remoteAccessUrls) ? remoteAccessUrls : [];
@@ -115,6 +392,9 @@ export default function SettingsPage({
             </label>
           </section>
 
+          <CortexRelaySection />
+          <UpdateSection />
+
           <section className="settings-section-card">
             <div className="settings-block-title">Appearance</div>
             <label className="field">
@@ -130,8 +410,11 @@ export default function SettingsPage({
             </div>
           </section>
 
-          <section className="settings-section-card">
+          <section className="settings-section-card settings-section-wide">
             <div className="settings-block-title">Remote Access</div>
+            <div className="danger-zone-copy">
+              Enable this to let the installed app accept connections from Tailscale or your local network.
+            </div>
             <label className="field">
               <span>Network exposure</span>
               <select
@@ -142,9 +425,6 @@ export default function SettingsPage({
                 <option value="enabled">Enabled</option>
               </select>
             </label>
-            <div className="danger-zone-copy">
-              Enable this to let the installed app accept connections from Tailscale or your local network.
-            </div>
             <div className="connection-guide">
               <div className="connection-guide-card">
                 <div className="connection-guide-title">Local network</div>

@@ -25,6 +25,11 @@
       "web/dist/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "thenoobcoder001",
+      "repo": "Cortex"
+    },
     "win": {
       "target": [
         "nsis"
@@ -35,7 +40,9 @@
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.3",
     "node-pty": "^1.1.0",
+    "nodemailer": "^8.0.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

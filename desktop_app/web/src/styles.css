@@ -1965,6 +1965,7 @@ button:disabled {
 
 .connection-guide {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -2142,6 +2143,33 @@ button:disabled {
   padding: 0;
   margin-bottom: 8px;
   outline: none;
+}
+
+.cortex-auth-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-soft);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.cortex-tab {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cortex-tab.active {
+  background: var(--bg-card);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
 }
 
 .provider-grid {

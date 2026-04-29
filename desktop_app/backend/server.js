@@ -1,10 +1,62 @@
 const http = require("node:http");
+const https = require("node:https");
 const fs = require("node:fs");
 const path = require("node:path");
 const { exec } = require("node:child_process");
 const { URL } = require("node:url");
 const { DesktopSessionService } = require("./sessionService");
 const { TerminalService } = require("./terminalService");
+const { CortexRelayClient } = require("./cortexRelay");
+const { AppConfigStore } = require("./configStore");
+
+// ── Cortex relay server helpers ───────────────────────────────────────────────
+const CORTEX_HOST = "cortex.cbproforge.com";
+
+function _cortexPost(path, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify(bodyObj);
+    const req = https.request({
+      hostname: CORTEX_HOST,
+      path,
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(postData) },
+    }, (r) => {
+      let data = "";
+      r.on("data", (c) => { data += c; });
+      r.on("end", () => {
+        try { resolve({ status: r.statusCode, body: JSON.parse(data) }); }
+        catch { reject(new Error("Invalid JSON from Cortex relay")); }
+      });
+    });
+    req.on("error", reject);
+    req.write(postData);
+    req.end();
+  });
+}
+
+// ── module-level relay singleton ──────────────────────────────────────────
+let _relay = null;
+
+function _relayStatus() {
+  if (!_relay) return { state: "not_configured", deviceId: null, socketId: null };
+  return { state: _relay.state, deviceId: _relay.deviceId, socketId: _relay.socketId };
+}
+
+async function _relayConnect({ token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort }) {
+  if (_relay) _relay.disconnect();
+  _relay = new CortexRelayClient({
+    token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort,
+    deviceName: "Cortex Desktop",
+    appVersion: "0.0.1",
+    onStateChange: (s) => { /* could emit events here */ },
+  });
+  const result = await _relay.connect();
+  return result;
+}
+
+function _relayDisconnect() {
+  if (_relay) { _relay.disconnect(); _relay = null; }
+}
 
 function runGit(args, cwd) {
   return new Promise((resolve, reject) => {
@@ -324,6 +376,93 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
 
+      // ── Cortex relay management ────────────────────────────────────────
+      if (request.method === "POST" && url.pathname === "/api/cortex/send-verification") {
+        const { email, password } = body;
+        if (!email || !password) { sendError(response, new Error("email and password required")); return; }
+        try {
+          // Try register — relay server sends OTP email on success
+          const regResult = await _cortexPost("/cortex/api/auth/register", { email, password });
+          if (regResult.status === 200) {
+            sendJson(response, 200, { message: regResult.body?.message || `Verification code sent to ${email}` });
+            return;
+          }
+          // Already registered — try login directly (no OTP needed)
+          const loginResult = await _cortexPost("/cortex/api/auth/login", { email, password });
+          if (loginResult.status !== 200) {
+            sendJson(response, 400, { detail: loginResult.body?.detail || "Invalid credentials" }); return;
+          }
+          const token = loginResult.body?.token;
+          if (!token) { sendJson(response, 400, { detail: "No token received from relay" }); return; }
+          const result = await _relayConnect({ token, localBackendPort: port });
+          const cfg = AppConfigStore.load();
+          cfg.cortexToken = token; cfg.cortexDeviceId = result.deviceId; cfg.cortexReconnectSecret = result.reconnectSecret;
+          cfg.save();
+          sendJson(response, 200, { connected: true, ...result });
+        } catch (err) {
+          sendJson(response, 400, { detail: String(err.message || err) });
+        }
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/cortex/verify") {
+        const { email, code } = body;
+        if (!email || !code) { sendError(response, new Error("email and code required")); return; }
+        try {
+          // Verify OTP with relay server — returns {user_id, token}
+          const verifyResult = await _cortexPost("/cortex/api/auth/verify-otp", { email, otp: code });
+          if (verifyResult.status !== 200) {
+            sendJson(response, 400, { detail: verifyResult.body?.detail || "Verification failed" }); return;
+          }
+          const token = verifyResult.body?.token;
+          if (!token) { sendJson(response, 400, { detail: "No token received after verification" }); return; }
+          const result = await _relayConnect({ token, localBackendPort: port });
+          const cfg = AppConfigStore.load();
+          cfg.cortexToken = token; cfg.cortexDeviceId = result.deviceId; cfg.cortexReconnectSecret = result.reconnectSecret;
+          cfg.save();
+          sendJson(response, 200, result);
+        } catch (err) {
+          sendJson(response, 400, { detail: String(err.message || err) });
+        }
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/cortex/status") {
+        const cfg = AppConfigStore.load();
+        sendJson(response, 200, { ..._relayStatus(), hasSavedSession: Boolean(cfg.cortexToken) });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/cortex/reconnect") {
+        const cfg = AppConfigStore.load();
+        if (!cfg.cortexToken) { sendJson(response, 400, { detail: "No saved session" }); return; }
+        try {
+          const result = await _relayConnect({ token: cfg.cortexToken, deviceId: cfg.cortexDeviceId, reconnectSecret: cfg.cortexReconnectSecret, localBackendPort: port });
+          cfg.cortexReconnectSecret = result.reconnectSecret; cfg.save();
+          sendJson(response, 200, { connected: true, ...result });
+        } catch (err) {
+          sendJson(response, 400, { detail: String(err.message || err) });
+        }
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/cortex/connect") {
+        const { token, deviceId, reconnectSecret, localUrl, tailscaleUrl } = body;
+        if (!token) { sendError(response, new Error("token is required")); return; }
+        try {
+          const result = await _relayConnect({ token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort: port });
+          sendJson(response, 200, result);
+        } catch (err) {
+          sendJson(response, 400, { detail: String(err.message || err) });
+        }
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/cortex/disconnect") {
+        _relayDisconnect();
+        const cfg = AppConfigStore.load();
+        cfg.cortexToken = ""; cfg.cortexDeviceId = ""; cfg.cortexReconnectSecret = "";
+        cfg.save();
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+
       sendJson(response, 404, { detail: "Not found" });
     } catch (error) {
       sendError(response, error);
@@ -356,4 +495,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
 
 module.exports = {
   startBackendServer,
+  relayConnect: _relayConnect,
+  relayDisconnect: _relayDisconnect,
+  relayStatus: _relayStatus,
 };
