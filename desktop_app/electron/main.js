@@ -5,7 +5,26 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { AppConfigStore } = require("../backend/configStore");
-const { startBackendServer } = require("../backend/server");
+const { startBackendServer, relayConnect, relayDisconnect, relayStatus } = require("../backend/server");
+const { autoUpdater } = require("electron-updater");
+
+// ── auto-updater setup ────────────────────────────────────────────────────────
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+let _updateStatus = { state: "idle", version: null, error: null };
+
+function _setUpdateStatus(state, version = null, error = null) {
+  _updateStatus = { state, version, error };
+  mainWindow?.webContents?.send("update:status", _updateStatus);
+}
+
+autoUpdater.on("checking-for-update",    () => _setUpdateStatus("checking"));
+autoUpdater.on("update-not-available",   () => _setUpdateStatus("up-to-date"));
+autoUpdater.on("update-available",       (info) => _setUpdateStatus("available", info.version));
+autoUpdater.on("download-progress",      (p) => _setUpdateStatus("downloading", String(Math.round(p.percent)) + "%"));
+autoUpdater.on("update-downloaded",      (info) => _setUpdateStatus("ready", info.version));
+autoUpdater.on("error",                  (err) => _setUpdateStatus("error", null, String(err.message || err)));
 
 let backendHandle = null;
 let backendUrl = null;
@@ -85,6 +104,18 @@ function desktopConfigPayload() {
   };
 }
 
+function getNetworkUrl(port, tailscale = false) {
+  const interfaces = os.networkInterfaces();
+  for (const addrs of Object.values(interfaces || {})) {
+    for (const addr of addrs || []) {
+      if (addr.internal || addr.family !== "IPv4") continue;
+      const isTailscale = addr.address.startsWith("100.");
+      if (tailscale === isTailscale) return `http://${addr.address}:${port}`;
+    }
+  }
+  return "";
+}
+
 async function startBackend() {
   remoteAccessEnabled = loadRemoteAccessPreference();
   const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
@@ -98,6 +129,30 @@ async function startBackend() {
   }
   backendPort = Number(new URL(backendHandle.url).port || 8765);
   backendUrl = `http://127.0.0.1:${backendPort}`;
+
+  // Auto-connect Cortex relay if credentials are saved
+  const config = AppConfigStore.load();
+  if (config.cortexToken) {
+    setImmediate(async () => {
+      try {
+        const result = await relayConnect({
+          token:            config.cortexToken,
+          deviceId:         config.cortexDeviceId         || undefined,
+          reconnectSecret:  config.cortexReconnectSecret  || undefined,
+          localUrl:         getNetworkUrl(backendPort, false),
+          tailscaleUrl:     getNetworkUrl(backendPort, true),
+          localBackendPort: backendPort,
+        });
+        const cfg = AppConfigStore.load();
+        cfg.cortexDeviceId        = result.deviceId;
+        cfg.cortexReconnectSecret = result.reconnectSecret;
+        cfg.save();
+        logDesktopLaunch("cortex.relay.connected", { deviceId: result.deviceId, socketId: result.socketId });
+      } catch (err) {
+        logDesktopLaunch("cortex.relay.connect_failed", { message: String(err.message || err) });
+      }
+    });
+  }
 }
 
 async function stopBackend() {
@@ -291,6 +346,35 @@ if (ipcMain) {
     }
   });
 
+  ipcMain.handle("cortex:status", () => relayStatus());
+
+  ipcMain.handle("cortex:connect", async (_event, payload) => {
+    const { token, deviceId, reconnectSecret } = payload || {};
+    if (!token) throw new Error("token is required");
+    const result = await relayConnect({
+      token, deviceId, reconnectSecret,
+      localUrl:         getNetworkUrl(backendPort, false),
+      tailscaleUrl:     getNetworkUrl(backendPort, true),
+      localBackendPort: backendPort,
+    });
+    const config = AppConfigStore.load();
+    config.cortexToken           = token;
+    config.cortexDeviceId        = result.deviceId;
+    config.cortexReconnectSecret = result.reconnectSecret;
+    config.save();
+    return result;
+  });
+
+  ipcMain.handle("cortex:disconnect", () => {
+    relayDisconnect();
+    const config = AppConfigStore.load();
+    config.cortexToken = "";
+    config.cortexDeviceId = "";
+    config.cortexReconnectSecret = "";
+    config.save();
+    return { ok: true };
+  });
+
   ipcMain.handle("desktop:open-file", async (_event, payload) => {
     const filePath = String(payload?.path || "").trim();
     if (!filePath) {
@@ -310,6 +394,12 @@ if (ipcMain) {
     logDesktopLaunch("shell.openPath.started", { path: resolved });
     return { ok: true };
   });
+
+  ipcMain.handle("updater:get-status",    () => ({ ..._updateStatus, currentVersion: app.getVersion() }));
+  ipcMain.handle("updater:check",         async () => { try { await autoUpdater.checkForUpdates(); } catch (err) { _setUpdateStatus("error", null, String(err.message || err)); } return _updateStatus; });
+  ipcMain.handle("updater:download",      () => autoUpdater.downloadUpdate());
+  ipcMain.handle("updater:install",       () => { autoUpdater.quitAndInstall(); });
+  ipcMain.handle("updater:set-feed-url",  (_event, url) => { if (url) autoUpdater.setFeedURL({ url }); return { ok: true }; });
 }
 
 if (app) {
@@ -344,6 +434,14 @@ if (app) {
       return;
     }
     createWindow();
+
+    // Check for updates 10s after launch, then every 4 hours
+    setTimeout(() => {
+      try { autoUpdater.checkForUpdates().catch(() => {}); } catch {}
+    }, 10_000);
+    setInterval(() => {
+      try { autoUpdater.checkForUpdates().catch(() => {}); } catch {}
+    }, 4 * 60 * 60 * 1000);
   });
 
   app.on("window-all-closed", () => {

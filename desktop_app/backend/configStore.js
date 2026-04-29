@@ -56,6 +56,16 @@ class AppConfigStore {
     this.codexSessionId = "";
     this.activeRuns = [];
     this.interruptedRuns = [];
+    // Cortex relay
+    this.cortexToken = "";
+    this.cortexDeviceId = "";
+    this.cortexReconnectSecret = "";
+    // SMTP for email verification
+    this.smtpHost = "";
+    this.smtpPort = 587;
+    this.smtpUser = "";
+    this.smtpPass = "";
+    this.smtpFrom = "";
   }
 
   static load() {
@@ -84,6 +94,14 @@ class AppConfigStore {
         config.interruptedRuns = Array.isArray(raw.interrupted_runs || raw.interruptedRuns)
           ? raw.interrupted_runs || raw.interruptedRuns
           : [];
+        config.cortexToken           = String(raw.cortex_token           || raw.cortexToken           || "");
+        config.cortexDeviceId        = String(raw.cortex_device_id       || raw.cortexDeviceId        || "");
+        config.cortexReconnectSecret = String(raw.cortex_reconnect_secret || raw.cortexReconnectSecret || "");
+        config.smtpHost = String(raw.smtp_host || raw.smtpHost || "");
+        config.smtpPort = Number(raw.smtp_port || raw.smtpPort || 587);
+        config.smtpUser = String(raw.smtp_user || raw.smtpUser || "");
+        config.smtpPass = String(raw.smtp_pass || raw.smtpPass || "");
+        config.smtpFrom = String(raw.smtp_from || raw.smtpFrom || "");
       }
     } catch {
       return config;
@@ -113,6 +131,14 @@ class AppConfigStore {
           codex_session_id: this.codexSessionId,
           active_runs: this.activeRuns,
           interrupted_runs: this.interruptedRuns,
+          cortex_token: this.cortexToken,
+          cortex_device_id: this.cortexDeviceId,
+          cortex_reconnect_secret: this.cortexReconnectSecret,
+          smtp_host: this.smtpHost,
+          smtp_port: this.smtpPort,
+          smtp_user: this.smtpUser,
+          smtp_pass: this.smtpPass,
+          smtp_from: this.smtpFrom,
         },
         null,
         2,
