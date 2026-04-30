@@ -259,6 +259,23 @@ test("interrupt endpoint aborts a running codex chat and emits interrupted event
   }
 });
 
+test("new chat creates and activates a persisted empty chat", () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+
+  const snapshot = service.newChat(repoRoot);
+
+  assert.ok(snapshot.config.activeChatId);
+  assert.equal(snapshot.messages.length, 0);
+  assert.equal(snapshot.config.activeChatId, service.activeChatId);
+  assert.equal(snapshot.chats.length, 1);
+  assert.equal(snapshot.chats[0].chatId, snapshot.config.activeChatId);
+
+  const payload = service.chatStore.loadChat(snapshot.config.activeChatId);
+  assert.ok(payload);
+  assert.deepEqual(payload.messages, []);
+});
+
 test("workspace diff persists across chats until accepted", async () => {
   const repoRoot = makeTempRepo();
   const service = createService(repoRoot);

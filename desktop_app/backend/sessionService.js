@@ -280,8 +280,14 @@ class DesktopSessionService {
     this.messages = [];
     this.changes = [];
     this.activePlan = null;
-    this.activeChatId = "";
-    this.activeChatModel = "";
+    const nextChatId = this.chatStore.createChat([], {
+      model: this.model || DEFAULT_MODEL,
+      providerState: {},
+      changes: [],
+      toolSafetyMode: this.toolReadOnly ? "read" : "write",
+    });
+    this.activeChatId = nextChatId;
+    this.activeChatModel = this.model || DEFAULT_MODEL;
     this.geminiCliProvider.sessionId = "";
     this.geminiCliProvider.sessionMode = "fresh";
     this.claudeProvider.sessionId = "";
