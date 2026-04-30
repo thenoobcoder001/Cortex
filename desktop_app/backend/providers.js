@@ -429,8 +429,11 @@ class GeminiCliProvider {
       "",
       "--output-format",
       "stream-json",
+      // "auto" confirms non-destructive actions automatically but prompts for
+      // anything outside the working directory. "yolo" auto-approves everything
+      // including writes to arbitrary paths — too permissive for remote operation.
       "--approval-mode",
-      "yolo",
+      "auto",
       "--accept-raw-output-risk",
       "--extensions",
       "none",
@@ -617,9 +620,18 @@ class ClaudeCliProvider {
 
   buildArgs(model) {
     const args = ["--print", "--verbose", "--output-format", "stream-json"];
+
+    // Restrict Claude Code's native tools to the active repo directory only.
+    // --add-dir tells Claude Code that this is the only filesystem path its
+    // Read/Write/Edit/Bash tools are permitted to access. Without this flag,
+    // Bash can `cd` anywhere and Read can open any file on the system.
+    args.push("--add-dir", this.repoRoot);
+
     if (this.toolReadOnly) {
+      // Read-only: no Bash, no Write/Edit — file reads and searches only
       args.push("--allowedTools", "Read,Glob,Grep,LS");
     } else {
+      // Write mode: Bash is included but confined to repoRoot via --add-dir
       args.push("--allowedTools", "Bash,Read,Write,Edit,Glob,Grep,LS,WebSearch,WebFetch");
     }
     if (this.sessionMode === "resume_id" && this.sessionId) {
