@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { DEFAULT_MODEL } = require("./constants");
 
 function normalizeContextCarryMessages(value, fallback = 5) {
@@ -60,6 +61,8 @@ class AppConfigStore {
     this.cortexToken = "";
     this.cortexDeviceId = "";
     this.cortexReconnectSecret = "";
+    // Shared secret for direct mobile→desktop connections
+    this.mobileToken = "";
     // SMTP for email verification
     this.smtpHost = "";
     this.smtpPort = 587;
@@ -97,6 +100,7 @@ class AppConfigStore {
         config.cortexToken           = String(raw.cortex_token           || raw.cortexToken           || "");
         config.cortexDeviceId        = String(raw.cortex_device_id       || raw.cortexDeviceId        || "");
         config.cortexReconnectSecret = String(raw.cortex_reconnect_secret || raw.cortexReconnectSecret || "");
+        config.mobileToken           = String(raw.mobile_token           || raw.mobileToken           || "");
         config.smtpHost = String(raw.smtp_host || raw.smtpHost || "");
         config.smtpPort = Number(raw.smtp_port || raw.smtpPort || 587);
         config.smtpUser = String(raw.smtp_user || raw.smtpUser || "");
@@ -105,6 +109,11 @@ class AppConfigStore {
       }
     } catch {
       return config;
+    }
+    // Generate a stable shared secret on first launch
+    if (!config.mobileToken) {
+      config.mobileToken = crypto.randomBytes(32).toString("hex");
+      config.save();
     }
     return config;
   }
@@ -134,6 +143,7 @@ class AppConfigStore {
           cortex_token: this.cortexToken,
           cortex_device_id: this.cortexDeviceId,
           cortex_reconnect_secret: this.cortexReconnectSecret,
+          mobile_token: this.mobileToken,
           smtp_host: this.smtpHost,
           smtp_port: this.smtpPort,
           smtp_user: this.smtpUser,

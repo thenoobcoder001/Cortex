@@ -209,6 +209,37 @@ class ToolExecutor {
       return Promise.resolve("ERROR: no command provided");
     }
 
+    // Block commands that escape the repo root.
+    // cwd is set to repoRoot but a shell can still cd out — these patterns stop that.
+    const BLOCKED = [
+      // Directory traversal
+      /(?:^|[&|;])\s*cd\s+\.\./, // cd ..
+      /(?:^|[&|;])\s*cd\s+[A-Za-z]:[\\/]/, // cd C:\ (Windows absolute)
+      /(?:^|[&|;])\s*cd\s+\/(?!.*\brel\b)/, // cd / (Unix root)
+      // Destructive filesystem
+      /rmdir\s+\/s/i,
+      /rm\s+-[a-z]*r[a-z]*f|rm\s+-[a-z]*f[a-z]*r/i, // rm -rf or rm -fr
+      /del\s+\/[sq]/i,
+      /format\s+[a-z]:/i,
+      // Network exfiltration
+      /\bcurl\b/i,
+      /\bwget\b/i,
+      /Invoke-WebRequest|Start-BitsTransfer|\biwr\b/i,
+      // Publishing / pushing to remotes
+      /\bnpm\s+publish\b/i,
+      /\byarn\s+publish\b/i,
+      /git\s+push\s+.*--force/i,
+      /git\s+-C\s+/i, // git -C <other-dir>
+    ];
+
+    for (const pattern of BLOCKED) {
+      if (pattern.test(command)) {
+        return Promise.resolve(
+          `ERROR: command blocked by safety policy — operation not permitted from remote session.`,
+        );
+      }
+    }
+
     return new Promise((resolve) => {
       const child = process.platform === "win32"
         ? spawn("cmd.exe", ["/d", "/s", "/c", command], {

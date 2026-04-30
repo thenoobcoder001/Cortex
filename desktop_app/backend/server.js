@@ -159,50 +159,102 @@ function readJsonBody(request) {
   });
 }
 
-function sendJson(response, statusCode, payload) {
-  response.writeHead(statusCode, {
+// Origins allowed to make cross-origin requests (browser CORS).
+// React Native fetch and the relay client send no Origin header — they are
+// always allowed regardless of this list.
+const ALLOWED_ORIGINS = new Set([
+  "http://localhost:5173",  // Vite dev renderer
+  "http://localhost:8081",  // React Native Metro
+  "http://localhost:19006", // Expo web
+]);
+
+function corsOrigin(request) {
+  const origin = request?.headers?.origin || "";
+  return ALLOWED_ORIGINS.has(origin) ? origin : null;
+}
+
+function sendJson(response, statusCode, payload, origin) {
+  const headers = {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  });
+    "Access-Control-Allow-Headers": "Content-Type,X-PocketAI-Token",
+  };
+  if (origin) headers["Access-Control-Allow-Origin"] = origin;
+  response.writeHead(statusCode, headers);
   response.end(JSON.stringify(payload));
 }
 
-function sendError(response, error) {
-  sendJson(response, 400, { detail: String(error?.message || error) });
+function sendError(response, error, origin, request) {
+  // Expose real error details only to local callers (desktop UI / dev)
+  const remote = request?.socket?.remoteAddress || "";
+  const isLocal = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+  const detail = isLocal ? String(error?.message || error) : "Request failed.";
+  sendJson(response, 400, { detail }, origin);
+}
+
+// Returns true if the request is authorised to call the backend.
+// - Loopback connections (desktop UI, relay client) are always allowed.
+// - Network connections must supply the correct X-PocketAI-Token header.
+function isAuthorized(request, cfg) {
+  const remote = request.socket?.remoteAddress || "";
+  const isLocal = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+  if (isLocal) return true;
+  return request.headers["x-pocketai-token"] === cfg.mobileToken;
+}
+
+// Throws if repoRoot is not in the user's saved projects list.
+function assertRepoRoot(repoRoot, service) {
+  if (!repoRoot) return;
+  const saved = service.config?.recentRepoRoots || [];
+  const ok = saved.some((p) => path.resolve(p) === path.resolve(repoRoot));
+  if (!ok) throw new Error("repoRoot not in allowed projects list");
 }
 
 function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, terminalService = null } = {}) {
   const effectiveService = service || new DesktopSessionService();
   const effectiveTerminalService = terminalService || new TerminalService();
   const server = http.createServer(async (request, response) => {
+    const _origin = corsOrigin(request);
+
     if (request.method === "OPTIONS") {
-      response.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
+      const h = {
         "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      });
+        "Access-Control-Allow-Headers": "Content-Type,X-PocketAI-Token",
+      };
+      if (_origin) h["Access-Control-Allow-Origin"] = _origin;
+      response.writeHead(204, h);
       response.end();
       return;
     }
 
+    // Local helper so every route automatically gets the right CORS header
+    const reply = (code, body) => sendJson(response, code, body, _origin);
+    const fail  = (err)        => sendError(response, err, _origin, request);
+
     const url = new URL(request.url, `http://${request.headers.host}`);
     try {
       if (request.method === "GET" && url.pathname === "/health") {
-        sendJson(response, 200, { status: "ok" });
+        reply(200, { status: "ok" });
         return;
       }
+
+      // Auth check — loopback always passes; network callers need the token
+      const cfg = AppConfigStore.load();
+      if (!isAuthorized(request, cfg)) {
+        reply(401, { detail: "Unauthorized" });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/api/status") {
-        sendJson(response, 200, effectiveService.snapshot());
+        reply(200, effectiveService.snapshot());
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/chats") {
-        sendJson(response, 200, { chats: effectiveService.listChats(url.searchParams.get("repoRoot")) });
+        reply(200, { chats: effectiveService.listChats(url.searchParams.get("repoRoot")) });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/chats/messages") {
-        sendJson(response, 200, effectiveService.getChatMessages(
+        reply(200, effectiveService.getChatMessages(
           url.searchParams.get("chatId") || "",
           url.searchParams.get("repoRoot"),
           {
@@ -213,33 +265,42 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/file") {
-        sendJson(response, 200, effectiveService.readFile(url.searchParams.get("path") || ""));
+        // Guard against path traversal
+        const filePath = url.searchParams.get("path") || "";
+        const resolved = path.resolve(filePath);
+        const root = path.resolve(effectiveService.repoRoot || "");
+        if (root && !resolved.startsWith(root + path.sep) && resolved !== root) {
+          reply(403, { detail: "Path outside project root." });
+          return;
+        }
+        reply(200, effectiveService.readFile(filePath));
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/workspace/git-status") {
         const repoRoot = url.searchParams.get("repoRoot") || effectiveService.repoRoot || "";
-        sendJson(response, 200, await gitChanges(repoRoot));
+        reply(200, await gitChanges(repoRoot));
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/android/avds") {
         exec("emulator -list-avds", { encoding: "utf8", timeout: 8000 }, (error, stdout) => {
           const avds = (stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-          sendJson(response, 200, { avds });
+          reply(200, { avds });
         });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/terminal") {
-        sendJson(response, 200, effectiveTerminalService.snapshot(url.searchParams.get("chatId") || ""));
+        reply(200, effectiveTerminalService.snapshot(url.searchParams.get("chatId") || ""));
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/terminal/stream") {
         const chatId = url.searchParams.get("chatId") || "";
-        response.writeHead(200, {
+        const sseHeaders = {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          "Access-Control-Allow-Origin": "*",
-        });
+        };
+        if (_origin) sseHeaders["Access-Control-Allow-Origin"] = _origin;
+        response.writeHead(200, sseHeaders);
         // Send full history first
         const snap = effectiveTerminalService.snapshot(chatId);
         if (snap.history) {
@@ -258,31 +319,38 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
       const body = request.method === "POST" ? await readJsonBody(request) : {};
 
       if (request.method === "POST" && url.pathname === "/api/config") {
-        sendJson(response, 200, effectiveService.updateConfig(body));
+        // Remote callers cannot change toolSafetyMode — strip it before passing on
+        const { toolSafetyMode: _ignored, ...safeBody } = body;
+        reply(200, effectiveService.updateConfig(safeBody));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/new") {
-        sendJson(response, 200, effectiveService.newChat(body.repoRoot || null));
+        assertRepoRoot(body.repoRoot || null, effectiveService);
+        reply(200, effectiveService.newChat(body.repoRoot || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/activate") {
-        sendJson(response, 200, effectiveService.activateChat(body.chatId, body.repoRoot || null));
+        assertRepoRoot(body.repoRoot || null, effectiveService);
+        reply(200, effectiveService.activateChat(body.chatId, body.repoRoot || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/delete") {
-        sendJson(response, 200, effectiveService.deleteChat(body.chatId, body.repoRoot || null));
+        assertRepoRoot(body.repoRoot || null, effectiveService);
+        reply(200, effectiveService.deleteChat(body.chatId, body.repoRoot || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/rename") {
-        sendJson(response, 200, effectiveService.renameChat(body.chatId, body.title, body.repoRoot || null));
+        assertRepoRoot(body.repoRoot || null, effectiveService);
+        reply(200, effectiveService.renameChat(body.chatId, body.title, body.repoRoot || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/interrupt") {
-        sendJson(response, 200, effectiveService.interruptChat(body.chatId || null));
+        reply(200, effectiveService.interruptChat(body.chatId || null));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/preferences") {
-        sendJson(response, 200, effectiveService.updateChatPreferences({
+        assertRepoRoot(body.repoRoot || null, effectiveService);
+        reply(200, effectiveService.updateChatPreferences({
           toolSafetyMode: body.toolSafetyMode,
           chatId: body.chatId || null,
           repoRoot: body.repoRoot || null,
@@ -290,19 +358,19 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/cache/clear") {
-        sendJson(response, 200, effectiveService.clearLocalData(Array.isArray(body.repoRoots) ? body.repoRoots : []));
+        reply(200, effectiveService.clearLocalData(Array.isArray(body.repoRoots) ? body.repoRoots : []));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/config/delete") {
-        sendJson(response, 200, effectiveService.deleteSettingsFile());
+        reply(200, effectiveService.deleteSettingsFile());
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/providers/test") {
-        sendJson(response, 200, await effectiveService.testProviderConnection(body));
+        reply(200, await effectiveService.testProviderConnection(body));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/terminal/open") {
-        sendJson(response, 200, effectiveTerminalService.open({
+        reply(200, effectiveTerminalService.open({
           chatId: body.chatId,
           repoRoot: body.repoRoot || effectiveService.repoRoot,
           cols: body.cols,
@@ -311,7 +379,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/terminal/write") {
-        sendJson(response, 200, effectiveTerminalService.write({
+        reply(200, effectiveTerminalService.write({
           chatId: body.chatId,
           command: body.command,
           repoRoot: body.repoRoot || effectiveService.repoRoot,
@@ -319,7 +387,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/terminal/input") {
-        sendJson(response, 200, effectiveTerminalService.input({
+        reply(200, effectiveTerminalService.input({
           chatId: body.chatId,
           data: body.data,
           repoRoot: body.repoRoot || effectiveService.repoRoot,
@@ -327,7 +395,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/terminal/resize") {
-        sendJson(response, 200, effectiveTerminalService.resize({
+        reply(200, effectiveTerminalService.resize({
           chatId: body.chatId,
           cols: body.cols,
           rows: body.rows,
@@ -335,30 +403,29 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/terminal/close") {
-        sendJson(response, 200, effectiveTerminalService.close(body.chatId));
+        reply(200, effectiveTerminalService.close(body.chatId));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chat/send") {
-        sendJson(
-          response,
-          200,
-          await effectiveService.sendMessage(body.message, {
-            chatId: body.chatId || null,
-            repoRoot: body.repoRoot || null,
-            model: body.model || null,
-            promptPreset: body.promptPreset || null,
-            toolSafetyMode: body.toolSafetyMode || null,
-          }),
-        );
+        assertRepoRoot(body.repoRoot || null, effectiveService);
+        reply(200, await effectiveService.sendMessage(body.message, {
+          chatId: body.chatId || null,
+          repoRoot: body.repoRoot || null,
+          model: body.model || null,
+          promptPreset: body.promptPreset || null,
+          toolSafetyMode: body.toolSafetyMode || null,
+        }));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chat/send-stream") {
-        response.writeHead(200, {
+        assertRepoRoot(body.repoRoot || null, effectiveService);
+        const streamHeaders = {
           "Content-Type": "application/x-ndjson; charset=utf-8",
           "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-          "Access-Control-Allow-Origin": "*",
-        });
+          "Connection": "keep-alive",
+        };
+        if (_origin) streamHeaders["Access-Control-Allow-Origin"] = _origin;
+        response.writeHead(200, streamHeaders);
         try {
           for await (const event of effectiveService.sendMessageEvents(body.message, {
             chatId: body.chatId || null,
@@ -379,93 +446,93 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
       // ── Cortex relay management ────────────────────────────────────────
       if (request.method === "POST" && url.pathname === "/api/cortex/send-verification") {
         const { email, password } = body;
-        if (!email || !password) { sendError(response, new Error("email and password required")); return; }
+        if (!email || !password) { fail(new Error("email and password required")); return; }
         try {
           // Try register — relay server sends OTP email on success
           const regResult = await _cortexPost("/cortex/api/auth/register", { email, password });
           if (regResult.status === 200) {
-            sendJson(response, 200, { message: regResult.body?.message || `Verification code sent to ${email}` });
+            reply(200, { message: regResult.body?.message || `Verification code sent to ${email}` });
             return;
           }
           // Already registered — try login directly (no OTP needed)
           const loginResult = await _cortexPost("/cortex/api/auth/login", { email, password });
           if (loginResult.status !== 200) {
-            sendJson(response, 400, { detail: loginResult.body?.detail || "Invalid credentials" }); return;
+            reply(400, { detail: loginResult.body?.detail || "Invalid credentials" }); return;
           }
           const token = loginResult.body?.token;
-          if (!token) { sendJson(response, 400, { detail: "No token received from relay" }); return; }
+          if (!token) { reply(400, { detail: "No token received from relay" }); return; }
           const result = await _relayConnect({ token, localBackendPort: port });
-          const cfg = AppConfigStore.load();
-          cfg.cortexToken = token; cfg.cortexDeviceId = result.deviceId; cfg.cortexReconnectSecret = result.reconnectSecret;
-          cfg.save();
-          sendJson(response, 200, { connected: true, ...result });
+          const relayConfig = AppConfigStore.load();
+          relayConfig.cortexToken = token; relayConfig.cortexDeviceId = result.deviceId; relayConfig.cortexReconnectSecret = result.reconnectSecret;
+          relayConfig.save();
+          reply(200, { connected: true, ...result });
         } catch (err) {
-          sendJson(response, 400, { detail: String(err.message || err) });
+          reply(400, { detail: String(err.message || err) });
         }
         return;
       }
 
       if (request.method === "POST" && url.pathname === "/api/cortex/verify") {
         const { email, code } = body;
-        if (!email || !code) { sendError(response, new Error("email and code required")); return; }
+        if (!email || !code) { fail(new Error("email and code required")); return; }
         try {
           // Verify OTP with relay server — returns {user_id, token}
           const verifyResult = await _cortexPost("/cortex/api/auth/verify-otp", { email, otp: code });
           if (verifyResult.status !== 200) {
-            sendJson(response, 400, { detail: verifyResult.body?.detail || "Verification failed" }); return;
+            reply(400, { detail: verifyResult.body?.detail || "Verification failed" }); return;
           }
           const token = verifyResult.body?.token;
-          if (!token) { sendJson(response, 400, { detail: "No token received after verification" }); return; }
+          if (!token) { reply(400, { detail: "No token received after verification" }); return; }
           const result = await _relayConnect({ token, localBackendPort: port });
-          const cfg = AppConfigStore.load();
-          cfg.cortexToken = token; cfg.cortexDeviceId = result.deviceId; cfg.cortexReconnectSecret = result.reconnectSecret;
-          cfg.save();
-          sendJson(response, 200, result);
+          const verifyConfig = AppConfigStore.load();
+          verifyConfig.cortexToken = token; verifyConfig.cortexDeviceId = result.deviceId; verifyConfig.cortexReconnectSecret = result.reconnectSecret;
+          verifyConfig.save();
+          reply(200, result);
         } catch (err) {
-          sendJson(response, 400, { detail: String(err.message || err) });
+          reply(400, { detail: String(err.message || err) });
         }
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/cortex/status") {
-        const cfg = AppConfigStore.load();
-        sendJson(response, 200, { ..._relayStatus(), hasSavedSession: Boolean(cfg.cortexToken) });
+        const statusConfig = AppConfigStore.load();
+        reply(200, { ..._relayStatus(), hasSavedSession: Boolean(statusConfig.cortexToken), mobileToken: statusConfig.mobileToken });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/cortex/reconnect") {
-        const cfg = AppConfigStore.load();
-        if (!cfg.cortexToken) { sendJson(response, 400, { detail: "No saved session" }); return; }
+        const reconnectConfig = AppConfigStore.load();
+        if (!reconnectConfig.cortexToken) { reply(400, { detail: "No saved session" }); return; }
         try {
-          const result = await _relayConnect({ token: cfg.cortexToken, deviceId: cfg.cortexDeviceId, reconnectSecret: cfg.cortexReconnectSecret, localBackendPort: port });
-          cfg.cortexReconnectSecret = result.reconnectSecret; cfg.save();
-          sendJson(response, 200, { connected: true, ...result });
+          const result = await _relayConnect({ token: reconnectConfig.cortexToken, deviceId: reconnectConfig.cortexDeviceId, reconnectSecret: reconnectConfig.cortexReconnectSecret, localBackendPort: port });
+          reconnectConfig.cortexReconnectSecret = result.reconnectSecret; reconnectConfig.save();
+          reply(200, { connected: true, ...result });
         } catch (err) {
-          sendJson(response, 400, { detail: String(err.message || err) });
+          reply(400, { detail: String(err.message || err) });
         }
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/cortex/connect") {
         const { token, deviceId, reconnectSecret, localUrl, tailscaleUrl } = body;
-        if (!token) { sendError(response, new Error("token is required")); return; }
+        if (!token) { fail(new Error("token is required")); return; }
         try {
           const result = await _relayConnect({ token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort: port });
-          sendJson(response, 200, result);
+          reply(200, result);
         } catch (err) {
-          sendJson(response, 400, { detail: String(err.message || err) });
+          reply(400, { detail: String(err.message || err) });
         }
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/cortex/disconnect") {
         _relayDisconnect();
-        const cfg = AppConfigStore.load();
-        cfg.cortexToken = ""; cfg.cortexDeviceId = ""; cfg.cortexReconnectSecret = "";
-        cfg.save();
-        sendJson(response, 200, { ok: true });
+        const disconnectConfig = AppConfigStore.load();
+        disconnectConfig.cortexToken = ""; disconnectConfig.cortexDeviceId = ""; disconnectConfig.cortexReconnectSecret = "";
+        disconnectConfig.save();
+        reply(200, { ok: true });
         return;
       }
 
-      sendJson(response, 404, { detail: "Not found" });
+      reply(404, { detail: "Not found" });
     } catch (error) {
-      sendError(response, error);
+      fail(error);
     }
   });
 
