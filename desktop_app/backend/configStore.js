@@ -65,6 +65,8 @@ class AppConfigStore {
     this.mobileToken = "";
     // Device IDs explicitly approved to send relay commands to this desktop
     this.approvedDeviceIds = [];
+    // HMAC secret for relay message signing (P2-I)
+    this.relayHmacSecret = "";
     // SMTP for email verification
     this.smtpHost = "";
     this.smtpPort = 587;
@@ -106,6 +108,7 @@ class AppConfigStore {
         config.approvedDeviceIds     = Array.isArray(raw.approved_device_ids || raw.approvedDeviceIds)
           ? (raw.approved_device_ids || raw.approvedDeviceIds).map(String).filter(Boolean)
           : [];
+        config.relayHmacSecret       = String(raw.relay_hmac_secret || raw.relayHmacSecret || "");
         config.smtpHost = String(raw.smtp_host || raw.smtpHost || "");
         config.smtpPort = Number(raw.smtp_port || raw.smtpPort || 587);
         config.smtpUser = String(raw.smtp_user || raw.smtpUser || "");
@@ -115,11 +118,17 @@ class AppConfigStore {
     } catch {
       return config;
     }
-    // Generate a stable shared secret on first launch
+    // Generate stable shared secrets on first launch
+    let needSave = false;
     if (!config.mobileToken) {
       config.mobileToken = crypto.randomBytes(32).toString("hex");
-      config.save();
+      needSave = true;
     }
+    if (!config.relayHmacSecret) {
+      config.relayHmacSecret = crypto.randomBytes(32).toString("hex");
+      needSave = true;
+    }
+    if (needSave) config.save();
     return config;
   }
 
@@ -150,6 +159,7 @@ class AppConfigStore {
           cortex_reconnect_secret: this.cortexReconnectSecret,
           mobile_token: this.mobileToken,
           approved_device_ids: this.approvedDeviceIds,
+          relay_hmac_secret: this.relayHmacSecret,
           smtp_host: this.smtpHost,
           smtp_port: this.smtpPort,
           smtp_user: this.smtpUser,

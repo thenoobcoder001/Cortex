@@ -34,7 +34,8 @@
       "target": [
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "artifactName": "Cortex-Setup-${version}.exe"
     }
   },
   "dependencies": {

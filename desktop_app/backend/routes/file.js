@@ -81,9 +81,18 @@ async function handle(ctx) {
 
   if (method === "GET" && pathname === "/api/file") {
     const filePath = url.searchParams.get("path") || "";
+    if (!filePath) {
+      reply(400, { detail: "path parameter required." });
+      return true;
+    }
+    // P2-K: always require a selected project — never fall back to CWD
+    if (!service.repoRoot) {
+      reply(403, { detail: "No project selected." });
+      return true;
+    }
     const resolved = path.resolve(filePath);
-    const root     = path.resolve(service.repoRoot || "");
-    if (root && !resolved.startsWith(root + path.sep) && resolved !== root) {
+    const root     = path.resolve(service.repoRoot);
+    if (!resolved.startsWith(root + path.sep) && resolved !== root) {
       reply(403, { detail: "Path outside project root." });
       return true;
     }
