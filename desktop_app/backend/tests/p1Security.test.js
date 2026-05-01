@@ -6,10 +6,10 @@ const os     = require("node:os");
 const path   = require("node:path");
 const http   = require("node:http");
 
-const { startBackendServer } = require("./server");
-const { AppConfigStore }     = require("./configStore");
-const { buildCleanEnv }      = require("./androidEnv");
-const { CortexRelayClient }  = require("./cortexRelay");
+const { startBackendServer } = require("../server");
+const { AppConfigStore }     = require("../configStore");
+const { buildCleanEnv }      = require("../androidEnv");
+const { CortexRelayClient }  = require("../cortexRelay");
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ test("P1-P: buildCleanEnv keeps all required AI API keys", (t) => {
 
 test("P1-Q: messagesWithContext includes repoRoot confinement prefix", (t) => {
   const repoRoot = "C:\\projects\\myapp";
-  const { DesktopSessionService } = require("./sessionService");
+  const { DesktopSessionService } = require("../sessionService");
   const config = new MemoryConfig();
   config.recentRepoRoots = [repoRoot];
 
@@ -273,11 +273,11 @@ test("P1-Q: messagesWithContext includes repoRoot confinement prefix", (t) => {
   assert.ok(system, "system message must exist");
   assert.ok(system.content.includes("OPERATING CONSTRAINT"), "must include confinement prefix");
   assert.ok(system.content.includes(repoRoot), "must include the repoRoot path");
-  assert.ok(system.content.includes("Do not read, write, or execute anything outside"), "must include the restriction text");
+  assert.ok(system.content.includes("Stay within this directory"), "must include the restriction text");
 });
 
 test("P1-Q: messagesWithContext omits confinement prefix when repoRoot is empty", (t) => {
-  const { DesktopSessionService } = require("./sessionService");
+  const { DesktopSessionService } = require("../sessionService");
   const config = new MemoryConfig();
   config.recentRepoRoots = [];
 
@@ -303,7 +303,7 @@ test("P1-Q: messagesWithContext omits confinement prefix when repoRoot is empty"
 
 test("P1-R: _ensureClaudeSettings writes .claudeignore when absent", (t) => {
   const repoRoot = tmpDir();
-  const { DesktopSessionService } = require("./sessionService");
+  const { DesktopSessionService } = require("../sessionService");
   const config = new MemoryConfig();
   config.recentRepoRoots = [repoRoot];
 
@@ -338,7 +338,7 @@ test("P1-R: _ensureClaudeSettings does not overwrite existing .claudeignore", (t
   const custom = "# my custom rules\n*.custom\n";
   fs.writeFileSync(ignorePath, custom, "utf8");
 
-  const { DesktopSessionService } = require("./sessionService");
+  const { DesktopSessionService } = require("../sessionService");
   const config = new MemoryConfig();
   config.recentRepoRoots = [repoRoot];
 

@@ -141,6 +141,9 @@ Short version:
 - **Confinement prompt**: AI anchored to active repoRoot by default; user can override, but file-injected instructions cannot
 - **`.claudeignore`**: auto-written to block secrets from AI context window
 - **`.claude/settings.json`**: auto-written to restrict Claude Code tool permissions per repo
+- **`AGENTS.md`**: auto-written for Codex — confinement context so Codex knows the repo boundary
+- **`GEMINI.md`**: auto-written for Gemini CLI — same confinement context for Gemini
+- All three context files are written on first repo open via `_ensureClaudeSettings()`, never overwritten if user-managed
 
 ---
 
