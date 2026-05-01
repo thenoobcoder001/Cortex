@@ -115,6 +115,40 @@ function resolveAndroidEnv(baseEnv = process.env) {
   return env;
 }
 
+// Keys that CLI child processes are allowed to inherit from the host environment.
+// Everything else (GitHub tokens, AWS/GCP credentials, DB passwords, etc.) is stripped.
+const CLI_ALLOWED_ENV_KEYS = new Set([
+  // System
+  "PATH", "PATHEXT", "COMSPEC", "SystemRoot", "OS",
+  "PROCESSOR_ARCHITECTURE", "USERPROFILE", "HOME",
+  "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+  "TEMP", "TMP", "TERM", "COLORTERM", "TERM_PROGRAM",
+  // Node / npm
+  "NODE_ENV", "npm_config_cache",
+  // AI CLI keys — only what each tool actually needs
+  "ANTHROPIC_API_KEY",   // Claude Code
+  "OPENAI_API_KEY",      // Codex
+  "GEMINI_API_KEY",      // Gemini CLI
+  "GOOGLE_API_KEY",      // Gemini CLI alternate
+  // Android SDK (populated by resolveAndroidEnv)
+  "ANDROID_HOME", "ANDROID_SDK_ROOT", "ANDROID_USER_HOME",
+  "ANDROID_AVD_HOME", "ADB_VENDOR_KEYS",
+]);
+
+function buildCleanEnv(extras = {}) {
+  const clean = {};
+  for (const key of Object.keys(process.env)) {
+    // On Windows, env var names are case-insensitive but Node preserves the
+    // original case (e.g. "Path" instead of "PATH"). Normalise to uppercase
+    // before checking the allowlist so PATH/Path/PATHEXT/etc. are all kept.
+    if (CLI_ALLOWED_ENV_KEYS.has(key) || CLI_ALLOWED_ENV_KEYS.has(key.toUpperCase())) {
+      clean[key] = process.env[key];
+    }
+  }
+  return resolveAndroidEnv({ ...clean, ...extras });
+}
+
 module.exports = {
   resolveAndroidEnv,
+  buildCleanEnv,
 };

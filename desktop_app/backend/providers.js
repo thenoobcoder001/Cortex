@@ -1,7 +1,7 @@
 const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 const readline = require("node:readline");
-const { resolveAndroidEnv } = require("./androidEnv");
+const { buildCleanEnv } = require("./androidEnv");
 
 const CLI_ABORT_SETTLE_MS = 6000;
 const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
@@ -30,13 +30,15 @@ function quoteWindowsArg(value) {
 function spawnCommand(command, args, options = {}) {
   const effectiveOptions = {
     ...options,
-    env: resolveAndroidEnv(options.env || process.env),
+    env: buildCleanEnv(options.env || {}),
   };
   if (process.platform !== "win32") {
     return spawn(command, args, { ...effectiveOptions, shell: false });
   }
   const commandLine = [quoteWindowsArg(command), ...args.map(quoteWindowsArg)].join(" ");
-  return spawn("cmd.exe", ["/d", "/s", "/c", `"${commandLine}"`], {
+  // Use COMSPEC (always the full path to cmd.exe) so spawn doesn't need PATH to find it.
+  const cmdExe = process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
+  return spawn(cmdExe, ["/d", "/s", "/c", `"${commandLine}"`], {
     ...effectiveOptions,
     shell: false,
     windowsHide: true,

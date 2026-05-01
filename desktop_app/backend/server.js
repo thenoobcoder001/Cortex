@@ -1,6 +1,7 @@
 const http = require("node:http");
 const https = require("node:https");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { exec } = require("node:child_process");
 const { URL } = require("node:url");
@@ -8,6 +9,31 @@ const { DesktopSessionService } = require("./sessionService");
 const { TerminalService } = require("./terminalService");
 const { CortexRelayClient } = require("./cortexRelay");
 const { AppConfigStore } = require("./configStore");
+
+// ── Audit log ─────────────────────────────────────────────────────────────
+const AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+function auditLogPath() {
+  const dir = process.platform === "win32"
+    ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "cortex")
+    : path.join(os.homedir(), ".config", "cortex");
+  return path.join(dir, "relay-audit.log");
+}
+
+function writeAuditLog(entry) {
+  try {
+    const logPath = auditLogPath();
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    // Rotate at 10 MB
+    try {
+      const stat = fs.statSync(logPath);
+      if (stat.size > AUDIT_LOG_MAX_BYTES) {
+        fs.renameSync(logPath, `${logPath}.1`);
+      }
+    } catch { /* file may not exist yet */ }
+    fs.appendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n", "utf8");
+  } catch { /* never crash on audit failure */ }
+}
 
 // ── Cortex relay server helpers ───────────────────────────────────────────────
 const CORTEX_HOST = "cortex.cbproforge.com";
@@ -34,8 +60,39 @@ function _cortexPost(path, bodyObj) {
   });
 }
 
+// ── Rate limiter ──────────────────────────────────────────────────────────
+// Simple sliding-window counter keyed by (ip, route-bucket).
+const _rateCounts = new Map(); // key → { count, windowStart }
+
+const RATE_LIMITS = {
+  "/api/chat/send-stream": 30,
+  "/api/chat/send":        30,
+  "/api/config":           10,
+  _default:                60,
+};
+const RATE_WINDOW_MS = 60_000; // 1 minute
+
+function checkRateLimit(request, pathname) {
+  const remote = request.socket?.remoteAddress || "local";
+  // Loopback is never rate-limited
+  if (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1") return false;
+  const limit = RATE_LIMITS[pathname] ?? RATE_LIMITS._default;
+  const key   = `${remote}::${pathname}`;
+  const now   = Date.now();
+  const entry = _rateCounts.get(key);
+  if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
+    _rateCounts.set(key, { count: 1, windowStart: now });
+    return false; // not limited
+  }
+  entry.count += 1;
+  if (entry.count > limit) return true; // limited
+  return false;
+}
+
 // ── module-level relay singleton ──────────────────────────────────────────
 let _relay = null;
+// Devices that sent a relay message but are not yet in the approved list
+const _pendingPairingDevices = new Set();
 
 function _relayStatus() {
   if (!_relay) return { state: "not_configured", deviceId: null, socketId: null };
@@ -44,11 +101,17 @@ function _relayStatus() {
 
 async function _relayConnect({ token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort }) {
   if (_relay) _relay.disconnect();
+  const cfg = AppConfigStore.load();
   _relay = new CortexRelayClient({
     token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort,
     deviceName: "Cortex Desktop",
     appVersion: "0.0.1",
+    approvedDeviceIds: cfg.approvedDeviceIds.length > 0 ? [...cfg.approvedDeviceIds] : null,
     onStateChange: (s) => { /* could emit events here */ },
+    onPairingRequest: (fromDeviceId) => {
+      _pendingPairingDevices.add(fromDeviceId);
+    },
+    onAuditLog: (entry) => writeAuditLog(entry),
   });
   const result = await _relay.connect();
   return result;
@@ -163,9 +226,10 @@ function readJsonBody(request) {
 // React Native fetch and the relay client send no Origin header — they are
 // always allowed regardless of this list.
 const ALLOWED_ORIGINS = new Set([
-  "http://localhost:5173",  // Vite dev renderer
-  "http://localhost:8081",  // React Native Metro
-  "http://localhost:19006", // Expo web
+  "http://localhost:5173",     // Vite dev renderer (localhost variant)
+  "http://127.0.0.1:5173",    // Vite dev renderer (127.0.0.1 variant — used by ELECTRON_RENDERER_URL)
+  "http://localhost:8081",     // React Native Metro
+  "http://localhost:19006",    // Expo web
 ]);
 
 function corsOrigin(request) {
@@ -245,6 +309,12 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         return;
       }
 
+      // Rate limiting — network callers only
+      if (checkRateLimit(request, url.pathname)) {
+        reply(429, { detail: "Too many requests. Please slow down." });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/api/status") {
         reply(200, effectiveService.snapshot());
         return;
@@ -288,6 +358,16 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         });
         return;
       }
+      // Terminal endpoints are desktop-only — block relay / mobile callers.
+      if (url.pathname.startsWith("/api/terminal")) {
+        const _remote = request.socket?.remoteAddress || "";
+        const _isLocal = _remote === "127.0.0.1" || _remote === "::1" || _remote === "::ffff:127.0.0.1";
+        if (!_isLocal) {
+          reply(403, { detail: "Terminal access is not available over the network." });
+          return;
+        }
+      }
+
       if (request.method === "GET" && url.pathname === "/api/terminal") {
         reply(200, effectiveTerminalService.snapshot(url.searchParams.get("chatId") || ""));
         return;
@@ -319,9 +399,16 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
       const body = request.method === "POST" ? await readJsonBody(request) : {};
 
       if (request.method === "POST" && url.pathname === "/api/config") {
-        // Remote callers cannot change toolSafetyMode — strip it before passing on
-        const { toolSafetyMode: _ignored, ...safeBody } = body;
-        reply(200, effectiveService.updateConfig(safeBody));
+        const remote = request.socket?.remoteAddress || "";
+        const isLocal = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+        let configBody = body;
+        if (!isLocal) {
+          // Remote callers may only change safe fields.
+          // API keys, memory, safety mode, and remote access toggle are desktop-only.
+          const { model, promptPreset, contextCarryMessages, repoRoot } = body;
+          configBody = { model, promptPreset, contextCarryMessages, repoRoot };
+        }
+        reply(200, effectiveService.updateConfig(configBody));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/chats/new") {
@@ -519,6 +606,31 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         } catch (err) {
           reply(400, { detail: String(err.message || err) });
         }
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/cortex/pairing-requests") {
+        reply(200, { pending: [..._pendingPairingDevices] });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/cortex/approve-device") {
+        const { deviceId: approveId } = body;
+        if (!approveId) { fail(new Error("deviceId required")); return; }
+        _pendingPairingDevices.delete(approveId);
+        if (_relay) _relay.approveDevice(approveId);
+        const approveConfig = AppConfigStore.load();
+        if (!approveConfig.approvedDeviceIds.includes(approveId)) {
+          approveConfig.approvedDeviceIds.push(approveId);
+          approveConfig.save();
+        }
+        reply(200, { ok: true });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/cortex/reject-device") {
+        const { deviceId: rejectId } = body;
+        if (!rejectId) { fail(new Error("deviceId required")); return; }
+        _pendingPairingDevices.delete(rejectId);
+        if (_relay) _relay.rejectDevice(rejectId);
+        reply(200, { ok: true });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/cortex/disconnect") {
