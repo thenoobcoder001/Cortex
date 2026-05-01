@@ -47,6 +47,12 @@ class CortexRelayClient {
     this.appVersion       = opts.appVersion   || "0.0.1";
     this.localBackendPort = opts.localBackendPort || 8765;
     this.onStateChange    = opts.onStateChange || (() => {});
+    // Called with deviceId when an unknown device sends a relay message.
+    this.onPairingRequest = opts.onPairingRequest || null;
+    // Called with a log entry object for every inbound relay request.
+    this.onAuditLog       = opts.onAuditLog   || null;
+    // Set of device IDs approved to send commands. null = allow all (legacy).
+    this.approvedDeviceIds = opts.approvedDeviceIds || null;
 
     this._ws             = null;
     this._heartbeatTimer = null;
@@ -188,10 +194,39 @@ class CortexRelayClient {
 
   // ── relay dispatcher ─────────────────────────────────────────────────────
 
+  approveDevice(deviceId) {
+    if (this.approvedDeviceIds && !this.approvedDeviceIds.includes(deviceId)) {
+      this.approvedDeviceIds.push(deviceId);
+    }
+  }
+
+  rejectDevice(_deviceId) {
+    // No-op — unapproved devices are already silently dropped
+  }
+
   async _handleRelay(fromDeviceId, payload) {
     if (!payload || typeof payload !== "object") return;
     const { type, request_id } = payload;
     if (!request_id) return;
+
+    // Pairing guard — if an approved list exists, check it
+    if (Array.isArray(this.approvedDeviceIds)) {
+      if (!this.approvedDeviceIds.includes(fromDeviceId)) {
+        if (this.onPairingRequest) this.onPairingRequest(fromDeviceId);
+        return; // drop request until approved
+      }
+    }
+
+    // Audit log — record metadata only, never log request bodies
+    if (this.onAuditLog) {
+      this.onAuditLog({
+        source:    "relay",
+        device_id: fromDeviceId,
+        method:    payload.method || "POST",
+        path:      payload.path   || "",
+        stream:    Boolean(payload.stream),
+      });
+    }
 
     if (type === "api_request") {
       if (payload.stream) {

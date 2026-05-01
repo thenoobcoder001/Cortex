@@ -63,6 +63,8 @@ class AppConfigStore {
     this.cortexReconnectSecret = "";
     // Shared secret for direct mobile→desktop connections
     this.mobileToken = "";
+    // Device IDs explicitly approved to send relay commands to this desktop
+    this.approvedDeviceIds = [];
     // SMTP for email verification
     this.smtpHost = "";
     this.smtpPort = 587;
@@ -101,6 +103,9 @@ class AppConfigStore {
         config.cortexDeviceId        = String(raw.cortex_device_id       || raw.cortexDeviceId        || "");
         config.cortexReconnectSecret = String(raw.cortex_reconnect_secret || raw.cortexReconnectSecret || "");
         config.mobileToken           = String(raw.mobile_token           || raw.mobileToken           || "");
+        config.approvedDeviceIds     = Array.isArray(raw.approved_device_ids || raw.approvedDeviceIds)
+          ? (raw.approved_device_ids || raw.approvedDeviceIds).map(String).filter(Boolean)
+          : [];
         config.smtpHost = String(raw.smtp_host || raw.smtpHost || "");
         config.smtpPort = Number(raw.smtp_port || raw.smtpPort || 587);
         config.smtpUser = String(raw.smtp_user || raw.smtpUser || "");
@@ -144,6 +149,7 @@ class AppConfigStore {
           cortex_device_id: this.cortexDeviceId,
           cortex_reconnect_secret: this.cortexReconnectSecret,
           mobile_token: this.mobileToken,
+          approved_device_ids: this.approvedDeviceIds,
           smtp_host: this.smtpHost,
           smtp_port: this.smtpPort,
           smtp_user: this.smtpUser,
