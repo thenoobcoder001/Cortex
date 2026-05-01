@@ -19,10 +19,13 @@
  *     { type:"api_stream_error", request_id, message }             ← stream error
  */
 
-const http = require("node:http");
+const http   = require("node:http");
+const crypto = require("node:crypto");
 
-const CORTEX_WS_URL = "wss://cortex.cbproforge.com/cortex/ws/desktop";
-const HEARTBEAT_MS  = 25_000;
+const CORTEX_WS_URL          = "wss://cortex.cbproforge.com/cortex/ws/desktop";
+const HEARTBEAT_MS           = 25_000;
+const RELAY_STREAM_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max per streaming request
+const MAX_PENDING_ABORTS      = 500;            // cap Set to prevent unbounded growth
 
 class CortexRelayClient {
   /**
@@ -53,6 +56,8 @@ class CortexRelayClient {
     this.onAuditLog       = opts.onAuditLog   || null;
     // Set of device IDs approved to send commands. null = allow all (legacy).
     this.approvedDeviceIds = opts.approvedDeviceIds || null;
+    // HMAC secret for relay message signing (P2-I). null = accept unsigned (backward compat).
+    this.hmacSecret       = opts.hmacSecret   || null;
 
     this._ws             = null;
     this._heartbeatTimer = null;
@@ -204,6 +209,42 @@ class CortexRelayClient {
     // No-op — unapproved devices are already silently dropped
   }
 
+  // Push a message to a specific remote device through the relay.
+  sendToDevice(deviceId, payload) {
+    this._relayTo(deviceId, payload);
+  }
+
+  // P2-I: Verify HMAC signature on relay payload.
+  // Returns false only when an HMAC is present and invalid (tampered).
+  // Absent HMAC is allowed during the mobile→desktop rollout transition.
+  _verifyRelayHmac(payload) {
+    if (!this.hmacSecret || !payload.hmac) return true; // skip if not configured or unsigned
+    const { hmac, request_id, path: urlPath = "", ts = 0 } = payload;
+    // Reject stale signatures (>5 min clock skew)
+    if (Math.abs(Date.now() - ts) > 300_000) return false;
+    const expected = crypto
+      .createHmac("sha256", this.hmacSecret)
+      .update(`${request_id}:${urlPath}:${ts}`)
+      .digest("hex");
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(expected, "hex"));
+    } catch {
+      return false;
+    }
+  }
+
+  // P2-J: Return a sanitized error body safe to send to an untrusted remote caller.
+  // Strips stack trace lines and caps the detail field at 300 chars.
+  _sanitizeErrorBody(body) {
+    if (body && typeof body === "object" && typeof body.detail === "string") {
+      const clean = body.detail
+        .replace(/\n\s+at\s+\S+.*/g, "")  // strip "    at Object.method ..." lines
+        .trim();
+      return { detail: clean.slice(0, 300) };
+    }
+    return { detail: "Request failed." };
+  }
+
   async _handleRelay(fromDeviceId, payload) {
     if (!payload || typeof payload !== "object") return;
     const { type, request_id } = payload;
@@ -215,6 +256,12 @@ class CortexRelayClient {
         if (this.onPairingRequest) this.onPairingRequest(fromDeviceId);
         return; // drop request until approved
       }
+    }
+
+    // P2-I: HMAC signature verification — drop tampered messages
+    if (!this._verifyRelayHmac(payload)) {
+      if (this.onAuditLog) this.onAuditLog({ source: "relay", device_id: fromDeviceId, event: "hmac_rejected", path: payload.path || "" });
+      return;
     }
 
     // Audit log — record metadata only, never log request bodies
@@ -235,6 +282,8 @@ class CortexRelayClient {
         await this._handleRequest(fromDeviceId, payload);
       }
     } else if (type === "api_abort") {
+      // P2-L: bound the abort set to prevent unbounded memory growth
+      if (this._pendingAborts.size >= MAX_PENDING_ABORTS) this._pendingAborts.clear();
       this._pendingAborts.add(request_id);
     }
   }
@@ -243,9 +292,11 @@ class CortexRelayClient {
     const { request_id, method, path: urlPath, query, body } = payload;
     try {
       const result = await this._callLocal(method || "GET", urlPath, query, body);
-      this._relayTo(fromDeviceId, { type: "api_response", request_id, status: result.status, body: result.body });
+      // P2-J: strip stack traces — only forward sanitized detail on errors
+      const safeBody = result.status >= 400 ? this._sanitizeErrorBody(result.body) : result.body;
+      this._relayTo(fromDeviceId, { type: "api_response", request_id, status: result.status, body: safeBody });
     } catch (err) {
-      this._relayTo(fromDeviceId, { type: "api_response", request_id, status: 500, body: { detail: String(err.message || err) } });
+      this._relayTo(fromDeviceId, { type: "api_response", request_id, status: 500, body: { detail: "Request failed." } });
     }
   }
 
@@ -265,15 +316,26 @@ class CortexRelayClient {
       },
     };
 
+    // P2-L: hard timeout — kill the stream if it runs longer than RELAY_STREAM_TIMEOUT_MS
+    let timeoutHandle = null;
+    const clearStreamTimeout = () => { if (timeoutHandle) { clearTimeout(timeoutHandle); timeoutHandle = null; } };
+
     const req = http.request(options, (res) => {
       if (res.statusCode !== 200) {
         let errBody = "";
         res.on("data", (c) => { errBody += c; });
         res.on("end", () => {
-          this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: `Backend ${res.statusCode}: ${errBody.slice(0, 200)}` });
+          clearStreamTimeout();
+          // P2-J: never forward raw backend error body to remote caller
+          this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Request failed." });
         });
         return;
       }
+
+      timeoutHandle = setTimeout(() => {
+        req.destroy();
+        this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Stream timed out." });
+      }, RELAY_STREAM_TIMEOUT_MS);
 
       res.on("data", (chunk) => {
         if (this._pendingAborts.has(request_id)) return;
@@ -281,13 +343,20 @@ class CortexRelayClient {
       });
 
       res.on("end", () => {
+        clearStreamTimeout();
         this._pendingAborts.delete(request_id);
         this._relayTo(fromDeviceId, { type: "api_stream_end", request_id });
       });
+
+      res.on("error", () => {
+        clearStreamTimeout();
+        this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Stream error." });
+      });
     });
 
-    req.on("error", (err) => {
-      this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: String(err.message || err) });
+    req.on("error", () => {
+      clearStreamTimeout();
+      this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Request failed." });
     });
 
     if (bodyStr) req.write(bodyStr);

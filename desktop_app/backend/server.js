@@ -124,6 +124,7 @@ const relay = {
       deviceName:       "Cortex Desktop",
       appVersion:       "0.0.1",
       approvedDeviceIds: cfg.approvedDeviceIds.length > 0 ? [...cfg.approvedDeviceIds] : null,
+      hmacSecret:       cfg.relayHmacSecret || null,
       onStateChange:    () => {},
       onPairingRequest: (id) => _pendingPairing.add(id),
       onAuditLog:       (entry) => writeAuditLog(entry),
@@ -138,9 +139,19 @@ const relay = {
     return { state: _relayClient.state, deviceId: _relayClient.deviceId, socketId: _relayClient.socketId };
   },
   pendingDevices() { return [..._pendingPairing]; },
-  approveDevice(id) {
+  approveDevice(id, secrets) {
     _pendingPairing.delete(id);
-    if (_relayClient) _relayClient.approveDevice(id);
+    if (_relayClient) {
+      _relayClient.approveDevice(id);
+      // Push auth secrets to the mobile device so it can start signing immediately
+      if (secrets) {
+        _relayClient.sendToDevice(id, {
+          type:            "pairing_approved",
+          mobileToken:     secrets.mobileToken,
+          relayHmacSecret: secrets.relayHmacSecret,
+        });
+      }
+    }
   },
   rejectDevice(id) {
     _pendingPairing.delete(id);

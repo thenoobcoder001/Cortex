@@ -81,7 +81,7 @@ async function handle(ctx) {
 
   if (method === "GET" && pathname === "/api/cortex/status") {
     const cfg = AppConfigStore.load();
-    reply(200, { ...relay.status(), hasSavedSession: Boolean(cfg.cortexToken), mobileToken: cfg.mobileToken });
+    reply(200, { ...relay.status(), hasSavedSession: Boolean(cfg.cortexToken), mobileToken: cfg.mobileToken, relayHmacSecret: cfg.relayHmacSecret });
     return true;
   }
 
@@ -118,12 +118,13 @@ async function handle(ctx) {
   if (method === "POST" && pathname === "/api/cortex/approve-device") {
     const { deviceId } = body;
     if (!deviceId) { fail(new Error("deviceId required")); return true; }
-    relay.approveDevice(deviceId);
     const cfg = AppConfigStore.load();
     if (!cfg.approvedDeviceIds.includes(deviceId)) {
       cfg.approvedDeviceIds.push(deviceId);
       cfg.save();
     }
+    // approveDevice pushes mobileToken + relayHmacSecret to the device via relay
+    relay.approveDevice(deviceId, { mobileToken: cfg.mobileToken, relayHmacSecret: cfg.relayHmacSecret });
     reply(200, { ok: true });
     return true;
   }
