@@ -2,11 +2,11 @@
 
 ## ⚠️ Windows Security Warning
 
-When running this app for the first time, Windows may show a **"Windows protected your PC"** SmartScreen warning.
+On first launch, Windows may show a **"Windows protected your PC"** SmartScreen prompt.
 
-**This is safe to run.** Click **"More info"** → **"Run anyway"**
+**The app is safe to run.** Click **"More info"** → **"Run anyway"** to proceed.
 
-This happens because the app is currently unsigned. Code signing is on the roadmap as the project grows. [View the source code](https://github.com/chiragbiradar/gpt-tui) to verify yourself.
+This warning appears because the installer is not yet code signed — a certificate is on the roadmap as the project grows. The full source code is available in this repository if you'd like to verify it yourself before running.
 
 Desktop-first local AI coding app built with:
 - Electron

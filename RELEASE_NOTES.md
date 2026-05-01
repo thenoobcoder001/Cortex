@@ -1,6 +1,6 @@
 ## Cortex v0.0.2 — Security & Stability
 
-> ⚠️ **Windows SmartScreen warning**: Click "More info" → "Run anyway" — the app is unsigned. This is safe to run.
+> ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
 
 ### Security hardening
 - Mobile/relay callers can no longer overwrite API keys or sensitive config
