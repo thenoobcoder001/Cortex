@@ -1,310 +1,30 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import SettingsPage from "./SettingsPage.jsx";
-import XtermPanel from "./XtermPanel.jsx";
-
-function stripAnsi(str) {
-  return String(str || "")
-    // CSI sequences: ESC [ + any non-final bytes (param/intermediate) + final byte (0x40-0x7E)
-    // Covers standard SGR (\x1b[32m), DEC private (\x1b[?2026h), and all other CSI variants
-    .replace(/\x1b\[[^\x40-\x7e]*[\x40-\x7e]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")  // OSC sequences
-    .replace(/\x1b[^[\]]/g, "")               // other two-char escape sequences
-    .replace(/\r\n/g, "\n")                    // normalize CRLF
-    .replace(/\r/g, "");                       // remove bare CR (cursor-overwrite, meaningless in div)
-}
-
-function providerCliCommand(modelId) {
-  if (!modelId) return "claude";
-  if (modelId.startsWith("gemini-cli:")) return "gemini";
-  if (modelId.startsWith("codex:")) return "codex";
-  return "claude";
-}
-
-function providerCliLaunchCommand(snapshot) {
-  const resumeCommand = String(snapshot?.liveTerminalCommand || "").trim();
-  if (resumeCommand) {
-    return resumeCommand;
-  }
-  return providerCliCommand(snapshot?.config?.model || "");
-}
-
-const QUICK_COMMANDS = [
-  {
-    // "list emulators", "list avds", "show emulators", etc.
-    patterns: [
-      /\b(list|show|what)\s+(emulators?|avds?)\b/i,
-      /\bwhich\s+emulators?\b/i,
-    ],
-    type: "list-avds",
-    buildCommand: () => null,
-  },
-  {
-    // "open emulator", "start emulator tablet10_api35", "launch avd pixel7", etc.
-    patterns: [
-      /\b(open|start|launch)\s+(the\s+)?emulator\b/i,
-      /\b(open|start|launch)\s+avd\b/i,
-    ],
-    buildCommand: (message) => {
-      // Match AVD name after "emulator" or "avd" keyword, but not the trigger words themselves
-      const avdMatch =
-        message.match(/(?:emulator|avd)\s+((?!emulator|avd|the\b)[\w-]+)/i) ||
-        message.match(/([\w-]+(?:_api\d+)?)\s+(?:emulator|avd)/i);
-      const avd = avdMatch?.[1] || "";
-      // Reject if what we captured is just a trigger word
-      const triggerWords = new Set(["open", "start", "launch", "the", "emulator", "avd"]);
-      const resolvedAvd = triggerWords.has(avd.toLowerCase()) ? "" : avd;
-      return resolvedAvd
-        ? `powershell -ExecutionPolicy Bypass -File E:\\codex\\start-emulator.ps1 -avd ${resolvedAvd}`
-        : `powershell -ExecutionPolicy Bypass -File E:\\codex\\start-emulator.ps1`;
-    },
-  },
-];
-
-const PROMPT_PRESETS = [
-  { value: "chat", label: "Chat" },
-  { value: "code", label: "Code" },
-  { value: "plan", label: "Plan" },
-  { value: "debug", label: "Debug" },
-  { value: "refactor", label: "Refactor" },
-  { value: "explain", label: "Explain" },
-];
-
-const TOOL_SAFETY_OPTIONS = [
-  { value: "write", label: "Write-enabled" },
-  { value: "read", label: "Read-only" },
-];
-
-const EXTERNAL_EDITOR_OPTIONS = [
-  { id: "vscode", label: "VS Code" },
-  { id: "antigravity", label: "Antigravity" },
-  { id: "cursor", label: "Cursor" },
-];
-
-const FALLBACK_APP_VERSION = "0.0.1";
-const THEME_MODE_STORAGE_KEY = "gpt-tui.theme-mode";
-
-function EditorIcon({ editorId }) {
-  if (editorId === "vscode") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M16.2 2.4 7.8 10l-4-3.1L1.4 8.1l4.2 3.9-4.2 3.9 2.4 1.2 4-3.1 8.4 7.6 5.4-2.6V5z"
-        />
-      </svg>
-    );
-  }
-  if (editorId === "cursor") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M12 2 4 7v10l8 5 8-5V7zm0 2.2 5.8 3.6L12 11.4 6.2 7.8zM6 9.5l5 3.1v6.8L6 16.3zm7 9.9v-6.8l5-3.1v6.8z"
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 2c-1.7 3.6-5.3 5.1-8 5.6 1.5 1.8 2.6 4.3 2.6 7 0 2.7-1.1 5.2-2.6 7 2.7-.5 6.3-2 8-5.6 1.7 3.6 5.3 5.1 8 5.6-1.5-1.8-2.6-4.3-2.6-7 0-2.7 1.1-5.2 2.6-7-2.7-.5-6.3-2-8-5.6z"
-      />
-    </svg>
-  );
-}
-
-const SAVED_PROJECTS_KEY = "gpt-tui.saved-projects";
-
-function loadThemeMode() {
-  try {
-    const stored = window.localStorage.getItem(THEME_MODE_STORAGE_KEY);
-    if (stored === "light" || stored === "dark" || stored === "system") {
-      return stored;
-    }
-  } catch {
-    // ignore
-  }
-  return "system";
-}
-
-function saveThemeMode(mode) {
-  try {
-    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
-  } catch {
-    // ignore
-  }
-}
-
-function groupedModels(models) {
-  const grouped = new Map();
-  for (const model of models) {
-    const items = grouped.get(model.group) || [];
-    items.push(model);
-    grouped.set(model.group, items);
-  }
-  return [...grouped.entries()];
-}
-
-function parentModelLabel(modelId, modelGroups) {
-  for (const [group, items] of modelGroups) {
-    if (items.some((model) => model.id === modelId)) {
-      return group;
-    }
-  }
-  return "Model";
-}
-
-function providerStateForGroup(group, providers) {
-  if (group === "Claude") {
-    return providers?.claude || { available: false, connected: false };
-  }
-  if (group === "Gemini") {
-    return providers?.gemini || { available: false, connected: false };
-  }
-  if (group === "Gemini CLI") {
-    return providers?.geminiCli || { available: false, connected: false };
-  }
-  if (group === "Codex") {
-    return providers?.codex || { available: false, connected: false };
-  }
-  if (group === "Groq") {
-    return providers?.groq || { available: false, connected: false };
-  }
-  return { available: false, connected: false };
-}
-
-function stripPresetPrefix(text) {
-  return text.replace(/^\[Mode:[^\]]+\][^\n]*\n\n/, "").trim();
-}
-
-function cleanResponse(text) {
-  if (!text) return "";
-
-  let cleaned = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,10}(?:;[0-9]{0,10})*)?[0-9A-ORZcf-nqry=><]/g, "");
-  const metadataPatterns = [
-    /^(workdir|model|provider|approval|sandbox|reasoning|session id|tokens used):.*$/gim,
-    /^OpenAI Codex v[\d.]+.*$/gim,
-    /^Conversation context:.*$/gim,
-    /^Latest request:.*$/gim,
-    /^-{2,}$/gm,
-  ];
-
-  metadataPatterns.forEach((pattern) => {
-    cleaned = cleaned.replace(pattern, "");
-  });
-
-  cleaned = cleaned.replace(/OpenAI Codex[\s\S]*?(-{2,}|Latest request:)/gim, "");
-  cleaned = cleaned.replace(/^(user|assistant|codex|system)\s*$/gim, "");
-  cleaned = cleaned.replace(/\[Mode: [^\]]+\][^\n]*/gi, "");
-  cleaned = cleaned.replace(/\[\d+m/g, "");
-  cleaned = cleaned.replace(/\[0m/g, "");
-
-  return cleaned.trim().replace(/\n{3,}/g, "\n\n");
-}
-
-function projectLabel(repoRoot) {
-  if (!repoRoot) {
-    return "Workspace";
-  }
-  return repoRoot.split(/[/\\]/).filter(Boolean).at(-1) || repoRoot;
-}
-
-function normalizeProject(repoRoot) {
-  return String(repoRoot || "").trim().replaceAll("/", "\\");
-}
-
-function loadSavedProjects() {
-  try {
-    const raw = window.localStorage.getItem(SAVED_PROJECTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .map((item) => normalizeProject(item?.path || item))
-      .filter(Boolean)
-      .map((path) => ({ path, name: projectLabel(path) }));
-  } catch {
-    return [];
-  }
-}
-
-function saveSavedProjects(projects) {
-  window.localStorage.setItem(SAVED_PROJECTS_KEY, JSON.stringify(projects));
-}
-
-function upsertProject(projects, repoRoot) {
-  const path = normalizeProject(repoRoot);
-  if (!path) {
-    return projects;
-  }
-  if (projects.some((project) => project.path === path)) {
-    return projects;
-  }
-  return [...projects, { path, name: projectLabel(path) }];
-}
-
-function MarkdownMessage({ content }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        a: ({ href, children, ...props }) => (
-          <a href={href} target="_blank" rel="noreferrer" {...props}>
-            {children}
-          </a>
-        ),
-      }}
-    >
-      {String(content || "")}
-    </ReactMarkdown>
-  );
-}
-
-async function readDesktopConfig() {
-  if (window.desktopApi?.getConfig) {
-    return window.desktopApi.getConfig();
-  }
-  return {
-    backendUrl: import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8765",
-    remoteAccessEnabled: false,
-    remoteAccessUrls: [],
-  };
-}
-
-async function readNdjsonStream(response, onEvent) {
-  if (!response.body) {
-    throw new Error("Streaming response body is not available.");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      onEvent(JSON.parse(trimmed));
-    }
-  }
-
-  const tail = buffer.trim();
-  if (tail) {
-    onEvent(JSON.parse(tail));
-  }
-}
+import { EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
+import {
+  cleanResponse,
+  groupedModels,
+  loadSavedProjects,
+  loadThemeMode,
+  normalizeProject,
+  parentModelLabel,
+  projectLabel,
+  providerCliLaunchCommand,
+  providerStateForGroup,
+  readDesktopConfig,
+  readNdjsonStream,
+  saveSavedProjects,
+  saveThemeMode,
+  stripPresetPrefix,
+  upsertProject,
+} from "./app/utils.js";
+import BootScreen from "./components/BootScreen.jsx";
+import ComposerPanel from "./components/ComposerPanel.jsx";
+import ConversationSection from "./components/ConversationSection.jsx";
+import EditorIcon from "./components/EditorIcon.jsx";
+import ProjectContextMenu from "./components/ProjectContextMenu.jsx";
+import TerminalPanelSection from "./components/TerminalPanelSection.jsx";
+import UpdateBanner from "./components/UpdateBanner.jsx";
 
 export default function App() {
   const scrollRef = useRef(null);
@@ -859,8 +579,6 @@ export default function App() {
       setProjectChats({});
       setPendingTurns({});
       setSendingChatIds([]);
-      setDiffPanelOpen(false);
-      setSelectedDiffIndex(0);
       setCurrentScreen("chat");
       setShowClearCacheConfirm(false);
       setSnapshot(nextSnapshot);
@@ -1676,53 +1394,14 @@ export default function App() {
 
   if (!snapshot) {
     return (
-      <div className="boot-screen">
-        <div className="boot-container">
-          <div className="boot-main">
-            <div className="boot-glow"></div>
-            
-            <div className="boot-hex-wrap">
-              <div className="boot-hex">
-                <div className="boot-hex-inner"></div>
-              </div>
-            </div>
-            
-            <div className="boot-content">
-              <div className="boot-badge">{error ? "SYSTEM HALTED" : "BOOT PROTOCOL"}</div>
-              <h1 className="boot-title">{bootHeadline}</h1>
-              <p className="boot-subtitle">{bootMessage}</p>
-            </div>
-
-            <div className="boot-progress-wrap">
-              <div className="boot-progress-track">
-                <div 
-                  className="boot-progress-fill" 
-                  style={{ width: snapshot ? "100%" : "72%" }}
-                ></div>
-              </div>
-              <div className="boot-progress-labels">
-                <span className="boot-status-text">{bootStatusText}</span>
-                <span className="boot-percent">{snapshot ? "Ready" : "Loading"}</span>
-              </div>
-            </div>
-          </div>
-          
-          <div className="boot-footer">
-            <div className="boot-footer-item">
-              <span className="label">APP</span>
-              <span className="value">Cortex</span>
-            </div>
-            <div className="boot-footer-item">
-              <span className="label">ENVIRONMENT</span>
-              <span className="value">Desktop</span>
-            </div>
-            <div className="boot-footer-item">
-              <span className="label">VERSION</span>
-              <span className="value">v{appVersion}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <BootScreen
+        appVersion={appVersion}
+        bootHeadline={bootHeadline}
+        bootMessage={bootMessage}
+        bootStatusText={bootStatusText}
+        error={error}
+        snapshot={snapshot}
+      />
     );
   }
 
@@ -1765,39 +1444,7 @@ export default function App() {
 
   return (
     <>
-      {updateBanner && (
-        <div style={{
-          position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
-          background: updateBanner.state === "ready" ? "#16a34a" : "#2563eb",
-          color: "#fff", padding: "10px 20px",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          fontSize: 13, fontWeight: 600,
-        }}>
-          <span>
-            {updateBanner.state === "ready"
-              ? `✓ Cortex v${updateBanner.version} downloaded — restart to install`
-              : `↑ Cortex v${updateBanner.version} is available`}
-          </span>
-          <div style={{ display: "flex", gap: 8 }}>
-            {updateBanner.state === "available" && (
-              <button onClick={() => window.desktopApi?.updaterDownload?.()}
-                style={{ background: "#fff", color: "#2563eb", border: "none", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 700 }}>
-                Download
-              </button>
-            )}
-            {updateBanner.state === "ready" && (
-              <button onClick={() => window.desktopApi?.updaterInstall?.()}
-                style={{ background: "#fff", color: "#16a34a", border: "none", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 700 }}>
-                Restart & Install
-              </button>
-            )}
-            <button onClick={() => setUpdateBanner(null)}
-              style={{ background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      <UpdateBanner updateBanner={updateBanner} onDismiss={() => setUpdateBanner(null)} />
       <div
         className={`workspace-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
         style={updateBanner ? { paddingTop: 40 } : undefined}
@@ -2181,91 +1828,24 @@ export default function App() {
               Previous response was interrupted. Continue from the last saved turn.
             </div>
           )}
-          {terminalPanelOpen && (
-          <section className="terminal-panel">
-            <div className="terminal-header">
-              <div className="terminal-header-left">
-                <div className="terminal-kicker">Terminal</div>
-                <div className="terminal-title">
-                  {terminalSnapshot?.status === "running" ? "Running" : "Ready"} · {projectLabel(snapshot.config.repoRoot)}
-                </div>
-              </div>
-              <div className="terminal-actions">
-                <div className="terminal-view-toggle">
-                  <button
-                    type="button"
-                    className={terminalViewMode === "chat" ? "terminal-view-btn active" : "terminal-view-btn"}
-                    onClick={() => setTerminalViewMode("chat")}
-                  >
-                    Chat
-                  </button>
-                  <button
-                    type="button"
-                    className={terminalViewMode === "live" ? "terminal-view-btn active" : "terminal-view-btn"}
-                    onClick={() => void handleSwitchToLive()}
-                  >
-                    Live
-                  </button>
-                </div>
-                {terminalViewMode === "chat" && (
-                  <button type="button" className="secondary-button" onClick={() => void refreshTerminal().catch((nextError) => setError(String(nextError)))}>
-                    Refresh
-                  </button>
-                )}
-                <button type="button" className="secondary-button" onClick={() => void handleCloseTerminal()}>
-                  Close
-                </button>
-                <button
-                  type="button"
-                  className="terminal-expand-btn"
-                  onClick={() => void handleToggleTerminal()}
-                  title={terminalPanelOpen ? "Collapse terminal" : "Expand terminal"}
-                >
-                  {terminalPanelOpen ? "▲" : "▼"}
-                </button>
-              </div>
-            </div>
-            {/* Keep XtermPanel mounted whenever the panel is open so switching to Chat
-                tab and back doesn't wipe content that was streamed directly into xterm. */}
-            {terminalPanelOpen && activeTerminalChatId && (
-              <div style={terminalViewMode !== "live" ? { position: "absolute", visibility: "hidden", pointerEvents: "none", width: "1px", height: "1px", overflow: "hidden" } : {}}>
-                <XtermPanel
-                  backendUrl={backendUrl}
-                  chatId={activeTerminalChatId}
-                  repoRoot={snapshot.config.repoRoot || ""}
-                  onReady={(writeFn) => { liveTermWriteRef.current = writeFn; }}
-                  onUnmount={() => { liveTermWriteRef.current = null; }}
-                />
-              </div>
-            )}
-            {terminalPanelOpen && terminalViewMode === "chat" && (
-              <div className="terminal-output" ref={terminalOutputRef}>
-                {terminalSnapshot?.history
-                  ? stripAnsi(terminalSnapshot.history)
-                  : <span className="terminal-placeholder-inline">Open this thread terminal, then run commands in the selected workspace.</span>
-                }
-              </div>
-            )}
-            {terminalViewMode === "chat" && (
-              <div className="terminal-command-row">
-                <input
-                  value={terminalDraft}
-                  onChange={(event) => setTerminalDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void handleSendTerminalCommand();
-                    }
-                  }}
-                  placeholder="Run a command in the workspace..."
-                />
-                <button type="button" className="primary-button" onClick={() => void handleSendTerminalCommand()}>
-                  Run
-                </button>
-              </div>
-            )}
-          </section>
-          )}
+          <TerminalPanelSection
+            activeTerminalChatId={activeTerminalChatId}
+            backendUrl={backendUrl}
+            liveTermWriteRef={liveTermWriteRef}
+            onClose={handleCloseTerminal}
+            onRefresh={() => refreshTerminal().catch((nextError) => setError(String(nextError)))}
+            onRunCommand={handleSendTerminalCommand}
+            onSwitchToLive={handleSwitchToLive}
+            onToggle={handleToggleTerminal}
+            repoRoot={snapshot.config.repoRoot || ""}
+            setTerminalDraft={setTerminalDraft}
+            setTerminalViewMode={setTerminalViewMode}
+            terminalDraft={terminalDraft}
+            terminalOutputRef={terminalOutputRef}
+            terminalPanelOpen={terminalPanelOpen}
+            terminalSnapshot={terminalSnapshot}
+            terminalViewMode={terminalViewMode}
+          />
           {activePlan && (
             <section className="plan-card">
               <div className="plan-card-header">
@@ -2290,270 +1870,74 @@ export default function App() {
             </section>
           )}
 
-          <section className="conversation-scroll" ref={scrollRef}>
-            {displayMessages.length === 0 ? (
-              <div className="conversation-empty">
-                <h2>Start a conversation</h2>
-                <p>Ask about the current repo, request changes, or inspect the codebase.</p>
-              </div>
-            ) : (
-              displayMessages.map((message, index) => (
-                <div
-                  key={`${message.role}-${index}`}
-                  className={`message-row ${message.role}${message.pending ? " pending" : ""}`}
-                >
-                  <div className="message-bubble">
-                    {message.role === "assistant" && (
-                      <div className="message-actions">
-                        <button
-                          type="button"
-                          className="message-copy-btn"
-                          onClick={() => void copyText(String(message.content || ""), "Response copied")}
-                        >
-                          Copy
-                        </button>
-                      </div>
-                    )}
-                    <div className="message-content">
-                      {message.role === "assistant" ? (
-                        <MarkdownMessage content={message.content} />
-                      ) : (
-                        <pre>{String(message.content || "")}</pre>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-            {activePendingTurn?.running && (
-              <div className="message-row assistant">
-                <div className="thinking-dots">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-              </div>
-            )}
-          </section>
+          <ConversationSection
+            activePendingTurn={activePendingTurn}
+            copyText={copyText}
+            displayMessages={displayMessages}
+            scrollRef={scrollRef}
+          />
           </div>{/* chat-main */}
 
-          <div
-            className="composer-panel"
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <textarea
-              value={draft}
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void handleSend();
-                }
-              }}
-              placeholder={terminalViewMode === "live" && terminalPanelOpen ? `Talking to ${providerCliCommand(snapshot?.config?.model || "")} — type anything...` : "Ask for changes, inspect the repo, or debug a file..."}
-            />
-            <div className="composer-footer">
-              <div className="composer-controls">
-                <select
-                  value={snapshot.config.promptPreset || "code"}
-                  onChange={(event) => void handlePromptPresetChange(event.target.value)}
-                  title="Prompt mode"
-                >
-                  {PROMPT_PRESETS.map((preset) => (
-                    <option key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={snapshot.config.toolSafetyMode || "write"}
-                  onChange={(event) => void handleToolSafetyChange(event.target.value)}
-                  title="Chat permissions"
-                >
-                  {TOOL_SAFETY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <div
-                  className="model-picker"
-                >
-                  <button
-                    ref={modelPickerRef}
-                    type="button"
-                    className="model-picker-trigger"
-                    title={snapshot.config.model}
-                    onClick={toggleModelMenu}
-                  >
-                    <span>{activeModelParent}</span>
-                    <span className={modelMenuOpen ? "model-picker-caret open" : "model-picker-caret"}>{">"}</span>
-                  </button>
-                  {modelMenuOpen && createPortal(
-                    <>
-                    <div className="model-picker-menu" onClick={(event) => event.stopPropagation()} style={{ position: "fixed", bottom: modelMenuPos.bottom, left: modelMenuPos.left, top: "auto" }}>
-                      <div className="model-group-list">
-                        {modelGroups.map(([group, items]) => (
-                          <button
-                            key={group}
-                            type="button"
-                            className={
-                              !modelGroupStates.get(group)?.connected
-                                ? "model-group-item disabled"
-                                : hoveredModelGroup === group
-                                  ? "model-group-item active"
-                                  : "model-group-item"
-                            }
-                            disabled={!modelGroupStates.get(group)?.connected}
-                            onMouseEnter={() => setHoveredModelGroup(group)}
-                            onFocus={() => setHoveredModelGroup(group)}
-                            title={
-                              modelGroupStates.get(group)?.connected
-                                ? group
-                                : `${group} is not ready`
-                            }
-                          >
-                            <span>{group}</span>
-                            <span className="model-group-arrow">
-                              {modelGroupStates.get(group)?.connected ? ">" : "!"}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="model-submenu-flyout" onClick={(event) => event.stopPropagation()} style={{ position: "fixed", bottom: modelMenuPos.bottom, left: modelMenuPos.left + 188, top: "auto" }}>
-                      <div className="model-submenu">
-                        {(
-                          modelGroups.find(([group]) => group === hoveredModelGroup) ||
-                          modelGroups.find(([group]) => modelGroupStates.get(group)?.connected) ||
-                          [null, []]
-                        )[1].map((model) => (
-                          <button
-                            key={model.id}
-                            type="button"
-                            className={snapshot.config.model === model.id ? "model-subitem active" : "model-subitem"}
-                            title={model.label}
-                            onClick={() => {
-                              setModelMenuOpen(false);
-                              setHoveredModelGroup("");
-                              void handleConfigUpdate({ model: model.id });
-                            }}
-                          >
-                            <span className="model-subitem-name">{model.id.replace(/^codex:|^gemini-cli:/, "")}</span>
-                            <span className="model-subitem-meta">{model.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    </>,
-                    document.body
-                  )}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={handleSend}
-                disabled={terminalViewMode === "chat" && Boolean(snapshot.config.activeChatId) && sendingChatIds.includes(snapshot.config.activeChatId)}
-              >
-                {terminalViewMode === "live" && terminalPanelOpen ? "Run" : "Send"}
-              </button>
-            </div>
-          </div>
+          <ComposerPanel
+            activeModelParent={activeModelParent}
+            draft={draft}
+            hoveredModelGroup={hoveredModelGroup}
+            modelGroups={modelGroups}
+            modelGroupStates={modelGroupStates}
+            modelMenuOpen={modelMenuOpen}
+            modelMenuPos={modelMenuPos}
+            modelPickerRef={modelPickerRef}
+            onChangeDraft={setDraft}
+            onChooseModel={(modelId) => {
+              setModelMenuOpen(false);
+              setHoveredModelGroup("");
+              void handleConfigUpdate({ model: modelId });
+            }}
+            onHoverGroup={setHoveredModelGroup}
+            onPromptPresetChange={handlePromptPresetChange}
+            onSend={handleSend}
+            onToggleModelMenu={toggleModelMenu}
+            onToolSafetyChange={handleToolSafetyChange}
+            promptPreset={snapshot.config.promptPreset}
+            selectedModelId={snapshot.config.model}
+            sendingDisabled={terminalViewMode === "chat" && Boolean(snapshot.config.activeChatId) && sendingChatIds.includes(snapshot.config.activeChatId)}
+            terminalPanelOpen={terminalPanelOpen}
+            terminalViewMode={terminalViewMode}
+            toolSafetyMode={snapshot.config.toolSafetyMode}
+          />
         </main>
       </div>
 
       {projectMenuPath && (
-        <div
-          className="project-menu fixed-menu"
-          style={{
-            position: "fixed",
-            top: `${projectMenuPos.top}px`,
-            left: `${projectMenuPos.left}px`,
+        <ProjectContextMenu
+          left={projectMenuPos.left}
+          onCopyPath={() => {
+            void handleCopyWorkspacePath(projectMenuPath);
           }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              void handleOpenSavedProject(projectMenuPath);
-              setProjectMenuPath("");
-            }}
-          >
-            Open folder
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void handleCopyWorkspacePath(projectMenuPath);
-            }}
-          >
-            Copy path
-          </button>
-          <button
-            type="button"
-            className="danger-action"
-            onClick={() => {
-              void handleRemoveSavedProject(projectMenuPath);
-              setProjectMenuPath("");
-            }}
-          >
-            Remove from list
-          </button>
-        </div>
+          onOpenFolder={() => {
+            void handleOpenSavedProject(projectMenuPath);
+            setProjectMenuPath("");
+          }}
+          onRemove={() => {
+            void handleRemoveSavedProject(projectMenuPath);
+            setProjectMenuPath("");
+          }}
+          top={projectMenuPos.top}
+        />
       )}
 
       {splashVisible && (
-        <div className={bootDismissed ? "boot-overlay fading" : "boot-overlay"}>
-          <div className="boot-container">
-            <div className="boot-main">
-              <div className="boot-glow"></div>
-              
-              <div className="boot-hex-wrap">
-                <div className="boot-hex">
-                  <div className="boot-hex-inner"></div>
-                </div>
-              </div>
-              
-              <div className="boot-content">
-                <div className="boot-badge">{error ? "SYSTEM HALTED" : "BOOT PROTOCOL"}</div>
-                <h1 className="boot-title">{bootHeadline}</h1>
-                <p className="boot-subtitle">{bootMessage}</p>
-              </div>
-
-              <div className="boot-progress-wrap">
-                <div className="boot-progress-track">
-                  <div 
-                    className="boot-progress-fill" 
-                    style={{ width: snapshot ? "100%" : "72%" }}
-                  ></div>
-                </div>
-                <div className="boot-progress-labels">
-                  <span className="boot-status-text">{bootStatusText}</span>
-                  <span className="boot-percent">{snapshot ? "Ready" : "Loading"}</span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="boot-footer">
-              <div className="boot-footer-item">
-                <span className="label">APP</span>
-                <span className="value">Cortex</span>
-              </div>
-              <div className="boot-footer-item">
-                <span className="label">WORKSPACE</span>
-                <span className="value">{snapshot?.config?.repoRoot ? projectLabel(snapshot.config.repoRoot) : "PENDING"}</span>
-              </div>
-              <div className="boot-footer-item">
-                <span className="label">VERSION</span>
-                <span className="value">v{appVersion}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <BootScreen
+          appVersion={appVersion}
+          bootDismissed={bootDismissed}
+          bootHeadline={bootHeadline}
+          bootMessage={bootMessage}
+          bootStatusText={bootStatusText}
+          error={error}
+          overlay
+          snapshot={snapshot}
+          workspaceLabel={snapshot?.config?.repoRoot ? projectLabel(snapshot.config.repoRoot) : "PENDING"}
+        />
       )}
     </>
   );
