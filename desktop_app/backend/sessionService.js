@@ -316,6 +316,7 @@ class DesktopSessionService {
         ].join("\n") + "\n";
         fs.writeFileSync(ignorePath, ignoreContent, "utf8");
       }
+
     } catch {
       // Non-fatal: if we can't write the file (read-only fs, etc.) the flag-
       // based --add-dir restriction still applies.
