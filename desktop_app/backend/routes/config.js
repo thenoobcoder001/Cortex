@@ -4,7 +4,15 @@ async function handle(ctx) {
   const { method, pathname, body, reply, service, isLocal } = ctx;
 
   if (method === "GET" && pathname === "/api/status") {
-    reply(200, service.snapshot());
+    const snap = service.snapshot();
+    // ?lite=true — strip heavy fields so the response is relay-safe (< 1 MB).
+    // Mobile only needs config, providers, models, chats, and basic run state.
+    if (ctx.url?.searchParams?.get("lite") === "true") {
+      const { changes, files, messages, ...lite } = snap;
+      reply(200, lite);
+    } else {
+      reply(200, snap);
+    }
     return true;
   }
 
