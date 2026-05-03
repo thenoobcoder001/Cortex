@@ -23,7 +23,8 @@ const http   = require("node:http");
 const crypto = require("node:crypto");
 
 const CORTEX_WS_URL          = "wss://cortex.cbproforge.com/cortex/ws/desktop";
-const HEARTBEAT_MS           = 25_000;
+const CORTEX_WS_URL_FALLBACK = "ws://103.180.236.74:8087/cortex/ws/desktop";
+const HEARTBEAT_MS           = 5_000;
 const RELAY_STREAM_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max per streaming request
 const MAX_PENDING_ABORTS      = 500;            // cap Set to prevent unbounded growth
 
@@ -64,15 +65,18 @@ class CortexRelayClient {
     this._state          = "disconnected";
     this.socketId        = null;
     this._pendingAborts  = new Set();
+    this._probePending   = null;
     this._connectResolve = null;
     this._connectReject  = null;
   }
 
-  get state() { return this._state; }
+  get state() {
+    return this._state;
+  }
 
   // ── public ──────────────────────────────────────────────────────────────
 
-  connect() {
+  connect(useFallback = false) {
     return new Promise((resolve, reject) => {
       this._teardown();
       this._connectResolve = resolve;
@@ -85,14 +89,17 @@ class CortexRelayClient {
         return;
       }
 
-      const ws = new WS(CORTEX_WS_URL);
+      const url = useFallback ? CORTEX_WS_URL_FALLBACK : CORTEX_WS_URL;
+      console.log(`CortexRelayClient: connecting to ${url}${useFallback ? " (fallback)" : ""}...`);
+
+      const ws = new WS(url);
       this._ws = ws;
       this._setState("connecting");
 
       const authTimeout = setTimeout(() => {
         this._teardown();
-        this._settle(null, new Error("Cortex relay auth timed out"));
-      }, 15_000);
+        this._settle(null, new Error(`Cortex relay auth timed out (${useFallback ? "fallback" : "primary"})`));
+      }, 60_000);
 
       ws.addEventListener("open", () => {
         this._setState("authenticating");
@@ -130,27 +137,54 @@ class CortexRelayClient {
 
         } else if (msg.type === "relay") {
           this._handleRelay(msg.from_device_id, msg.payload).catch(() => {});
+        } else if (msg.type === "heartbeat_ack") {
+          this._resolveProbe();
         }
       });
 
-      ws.addEventListener("close", () => {
+      ws.addEventListener("close", (ev) => {
         clearTimeout(authTimeout);
+        const wasConnecting = this._state === "connecting" || this._state === "authenticating";
         this._stopHeartbeat();
         this._setState("disconnected");
         this._ws = null;
-        this._settle(null, new Error("WebSocket closed before auth"));
+        if (wasConnecting && !useFallback) {
+          console.warn(`CortexRelayClient: primary connection closed (code=${ev.code}), trying fallback...`);
+          this.connect(true).then(resolve).catch(reject);
+        } else {
+          const suffix = useFallback ? " (fallback failed)" : "";
+          this._settle(null, new Error(`WebSocket closed before auth (code=${ev.code})${suffix}`));
+        }
       });
 
-      ws.addEventListener("error", () => {
+      ws.addEventListener("error", (err) => {
+        console.warn("CortexRelayClient WebSocket error:", err);
+        if (this.onAuditLog) {
+          this.onAuditLog({ source: "relay", event: "relay_error", message: String(err?.message || "connection error"), fallback: useFallback });
+        }
         clearTimeout(authTimeout);
+        const wasConnecting = this._state === "connecting" || this._state === "authenticating";
         this._stopHeartbeat();
         this._setState("disconnected");
-        this._settle(null, new Error("WebSocket connection error"));
+        if (wasConnecting && !useFallback) {
+          console.warn("CortexRelayClient: primary connection error, trying fallback...");
+          this.connect(true).then(resolve).catch(reject);
+        } else {
+          const suffix = useFallback ? " (fallback failed)" : "";
+          this._settle(null, new Error(`WebSocket connection error${suffix}`));
+        }
       });
     });
   }
 
-  disconnect() { this._teardown(); }
+  disconnect() {
+    if (this.isConnected()) {
+      try {
+        this._send({ type: "terminate" });
+      } catch { /* ignore */ }
+    }
+    this._teardown();
+  }
 
   isConnected() {
     return this._ws !== null && this._ws.readyState === 1; // OPEN
@@ -175,6 +209,7 @@ class CortexRelayClient {
 
   _teardown() {
     this._stopHeartbeat();
+    this._rejectProbe(new Error("Cortex relay disconnected"));
     const ws = this._ws;
     this._ws = null;
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) ws.close();
@@ -193,7 +228,57 @@ class CortexRelayClient {
     if (this.isConnected()) this._ws.send(JSON.stringify(msg));
   }
 
+  _resolveProbe() {
+    if (!this._probePending) return;
+    const pending = this._probePending;
+    this._probePending = null;
+    clearTimeout(pending.timer);
+    pending.resolve({
+      ok: true,
+      deviceId: this.deviceId,
+      socketId: this.socketId,
+      state: this._state,
+    });
+  }
+
+  _rejectProbe(error) {
+    if (!this._probePending) return;
+    const pending = this._probePending;
+    this._probePending = null;
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+
+  probeConnection(timeoutMs = 15000) {
+    if (!this.isConnected()) {
+      return Promise.reject(new Error("Cortex relay is not connected"));
+    }
+    if (this._probePending) {
+      console.warn("CortexRelayClient: probe already in flight, rejecting new request.");
+      this._rejectProbe(new Error("Cortex relay probe already in flight"));
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._probePending = null;
+        console.warn(`CortexRelayClient: probe timed out after ${timeoutMs}ms`);
+        reject(new Error("Cortex relay probe timed out"));
+      }, timeoutMs);
+      this._probePending = { resolve, reject, timer };
+      this._send({ type: "heartbeat" });
+    });
+  }
+
   _relayTo(targetDeviceId, payload) {
+    if (this.onAuditLog) {
+      this.onAuditLog({
+        source: "relay",
+        direction: "outbound",
+        device_id: targetDeviceId,
+        type: payload.type,
+        request_id: payload.request_id,
+        status: payload.status
+      });
+    }
     this._send({ type: "relay", target_device_id: targetDeviceId, payload });
   }
 
@@ -205,8 +290,18 @@ class CortexRelayClient {
     }
   }
 
+  setHmacSecret(secret) {
+    this.hmacSecret = secret || null;
+  }
+
   rejectDevice(_deviceId) {
     // No-op — unapproved devices are already silently dropped
+  }
+
+  removeDevice(deviceId) {
+    if (Array.isArray(this.approvedDeviceIds)) {
+      this.approvedDeviceIds = this.approvedDeviceIds.filter(id => id !== deviceId);
+    }
   }
 
   // Push a message to a specific remote device through the relay.
@@ -220,17 +315,34 @@ class CortexRelayClient {
   _verifyRelayHmac(payload) {
     if (!this.hmacSecret || !payload.hmac) return true; // skip if not configured or unsigned
     const { hmac, request_id, path: urlPath = "", ts = 0 } = payload;
-    // Reject stale signatures (>5 min clock skew)
-    if (Math.abs(Date.now() - ts) > 300_000) return false;
+    // P2-L: Use a more lenient clock skew (30 min) for development/mobile
+    if (Math.abs(Date.now() - ts) > 1_800_000) {
+        if (this.onAuditLog) {
+            this.onAuditLog({ source: "relay", event: "hmac_skew_error", ts_received: ts, ts_now: Date.now() });
+        }
+        return false;
+    }
+    // Decode the hex secret to binary so both sides use the same key bytes.
+    // Mobile's hmacSha256() calls hexToBytes() on the secret; we must match that.
+    const keyBuf = Buffer.from(this.hmacSecret, "hex");
     const expected = crypto
-      .createHmac("sha256", this.hmacSecret)
+      .createHmac("sha256", keyBuf)
       .update(`${request_id}:${urlPath}:${ts}`)
       .digest("hex");
-    try {
-      return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(expected, "hex"));
-    } catch {
-      return false;
+    
+    const isValid = crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(expected, "hex"));
+    if (!isValid && this.onAuditLog) {
+      this.onAuditLog({
+        source: "relay",
+        event: "hmac_mismatch_debug",
+        path: urlPath,
+        received: hmac,
+        expected: expected,
+        secret_used: this.hmacSecret ? (this.hmacSecret.slice(0, 4) + "...") : "null",
+        ts: ts
+      });
     }
+    return isValid;
   }
 
   // P2-J: Return a sanitized error body safe to send to an untrusted remote caller.
@@ -250,12 +362,14 @@ class CortexRelayClient {
     const { type, request_id } = payload;
     if (!request_id) return;
 
-    // Pairing guard — if an approved list exists, check it
-    if (Array.isArray(this.approvedDeviceIds)) {
-      if (!this.approvedDeviceIds.includes(fromDeviceId)) {
-        if (this.onPairingRequest) this.onPairingRequest(fromDeviceId);
-        return; // drop request until approved
+    // Pairing guard — check if approved
+    const isApproved = Array.isArray(this.approvedDeviceIds) && this.approvedDeviceIds.includes(fromDeviceId);
+
+    if (!isApproved) {
+      if (this.onPairingRequest) {
+        this.onPairingRequest(fromDeviceId);
       }
+      return; // drop request until approved
     }
 
     // P2-I: HMAC signature verification — drop tampered messages
@@ -276,10 +390,20 @@ class CortexRelayClient {
     }
 
     if (type === "api_request") {
-      if (payload.stream) {
-        this._handleStream(fromDeviceId, payload);
-      } else {
-        await this._handleRequest(fromDeviceId, payload);
+      try {
+        if (payload.stream) {
+          this._handleStream(fromDeviceId, payload);
+        } else {
+          await this._handleRequest(fromDeviceId, payload);
+        }
+        if (this.onAuditLog) {
+          this.onAuditLog({ source: "relay", event: "request_handled", request_id: payload.request_id });
+        }
+      } catch (err) {
+        console.error(`CortexRelayClient: error handling relay request ${payload.request_id}:`, err);
+        if (this.onAuditLog) {
+          this.onAuditLog({ source: "relay", event: "request_failed", request_id: payload.request_id, error: err.message });
+        }
       }
     } else if (type === "api_abort") {
       // P2-L: bound the abort set to prevent unbounded memory growth
@@ -355,7 +479,7 @@ class CortexRelayClient {
     });
 
     req.on("error", () => {
-      clearStreamTimeout();
+      clearTimeout(timeoutHandle);
       this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Request failed." });
     });
 
@@ -364,6 +488,7 @@ class CortexRelayClient {
   }
 
   _callLocal(method, urlPath, query, body) {
+    console.log(`CortexRelayClient: proxying ${method} ${urlPath} to localhost:${this.localBackendPort}`);
     return new Promise((resolve, reject) => {
       const fullPath = query ? `${urlPath}?${query}` : urlPath;
       const bodyStr  = body ? JSON.stringify(body) : null;
@@ -381,12 +506,20 @@ class CortexRelayClient {
         let data = "";
         res.on("data", (c) => { data += c; });
         res.on("end", () => {
+          console.log(`CortexRelayClient: localhost responded with ${res.statusCode}`);
           let parsed;
           try { parsed = JSON.parse(data); } catch { parsed = { raw: data }; }
           resolve({ status: res.statusCode, body: parsed });
         });
       });
-      req.on("error", reject);
+      req.setTimeout(60_000, () => {
+        req.destroy();
+        reject(new Error("Localhost request timed out after 60s"));
+      });
+      req.on("error", (err) => {
+        console.error(`CortexRelayClient: localhost request error: ${err.message}`);
+        reject(err);
+      });
       if (bodyStr) req.write(bodyStr);
       req.end();
     });

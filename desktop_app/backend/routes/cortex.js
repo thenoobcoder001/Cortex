@@ -98,6 +98,16 @@ async function handle(ctx) {
     return true;
   }
 
+  if (method === "POST" && pathname === "/api/cortex/probe") {
+    try {
+      const result = await relay.probe();
+      reply(200, { verified: true, lastProbeAt: new Date().toISOString(), probe: result, state: "connected", deviceId: result.deviceId });
+    } catch (err) {
+      reply(400, { detail: String(err.message || err) });
+    }
+    return true;
+  }
+
   if (method === "POST" && pathname === "/api/cortex/connect") {
     const { token, deviceId, reconnectSecret, localUrl, tailscaleUrl } = body;
     if (!token) { fail(new Error("token is required")); return true; }
@@ -111,7 +121,8 @@ async function handle(ctx) {
   }
 
   if (method === "GET" && pathname === "/api/cortex/pairing-requests") {
-    reply(200, { pending: relay.pendingDevices() });
+    const cfg = AppConfigStore.load();
+    reply(200, { pending: relay.pendingDevices(), approved: cfg.approvedDeviceIds });
     return true;
   }
 
@@ -137,10 +148,22 @@ async function handle(ctx) {
     return true;
   }
 
+  if (method === "POST" && pathname === "/api/cortex/remove-device") {
+    const { deviceId } = body;
+    if (!deviceId) { fail(new Error("deviceId required")); return true; }
+    const cfg = AppConfigStore.load();
+    cfg.approvedDeviceIds = cfg.approvedDeviceIds.filter(id => id !== deviceId);
+    cfg.save();
+    relay.removeDevice(deviceId);
+    reply(200, { ok: true });
+    return true;
+  }
+
   if (method === "POST" && pathname === "/api/cortex/disconnect") {
     relay.disconnect();
     const cfg = AppConfigStore.load();
     cfg.cortexToken = ""; cfg.cortexDeviceId = ""; cfg.cortexReconnectSecret = "";
+    cfg.approvedDeviceIds = [];
     cfg.save();
     reply(200, { ok: true });
     return true;

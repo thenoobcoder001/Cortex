@@ -123,10 +123,13 @@ const relay = {
       token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort,
       deviceName:       "Cortex Desktop",
       appVersion:       "0.0.1",
-      approvedDeviceIds: cfg.approvedDeviceIds.length > 0 ? [...cfg.approvedDeviceIds] : null,
+      approvedDeviceIds: [...cfg.approvedDeviceIds],
       hmacSecret:       cfg.relayHmacSecret || null,
       onStateChange:    () => {},
-      onPairingRequest: (id) => _pendingPairing.add(id),
+      onPairingRequest: (id) => {
+        console.log(`Cortex relay: pairing request from ${id}`);
+        _pendingPairing.add(id);
+      },
       onAuditLog:       (entry) => writeAuditLog(entry),
     });
     return _relayClient.connect();
@@ -136,26 +139,39 @@ const relay = {
   },
   status() {
     if (!_relayClient) return { state: "not_configured", deviceId: null, socketId: null };
-    return { state: _relayClient.state, deviceId: _relayClient.deviceId, socketId: _relayClient.socketId };
+    // If the WebSocket is no longer open, report disconnected regardless of cached state.
+    const state = _relayClient.isConnected() ? _relayClient.state : "disconnected";
+    return { state, deviceId: _relayClient.deviceId, socketId: _relayClient.socketId };
+  },
+  probe() {
+    if (!_relayClient) {
+      return Promise.reject(new Error("Cortex relay is not configured"));
+    }
+    return _relayClient.probeConnection();
   },
   pendingDevices() { return [..._pendingPairing]; },
   approveDevice(id, secrets) {
     _pendingPairing.delete(id);
     if (_relayClient) {
       _relayClient.approveDevice(id);
-      // Push auth secrets to the mobile device so it can start signing immediately
-      if (secrets) {
-        _relayClient.sendToDevice(id, {
-          type:            "pairing_approved",
-          mobileToken:     secrets.mobileToken,
-          relayHmacSecret: secrets.relayHmacSecret,
-        });
+      if (secrets?.relayHmacSecret) {
+        _relayClient.setHmacSecret(secrets.relayHmacSecret);
       }
+      // Push auth secrets to the mobile device so it can start signing immediately
+      _relayClient.sendToDevice(id, {
+        type: "pairing_approved",
+        mobileToken: secrets?.mobileToken || "",
+        relayHmacSecret: secrets?.relayHmacSecret || "",
+      });
     }
   },
   rejectDevice(id) {
     _pendingPairing.delete(id);
     if (_relayClient) _relayClient.rejectDevice(id);
+  },
+  removeDevice(id) {
+    _pendingPairing.delete(id);
+    if (_relayClient) _relayClient.removeDevice(id);
   },
 };
 
@@ -282,4 +298,5 @@ module.exports = {
   relayConnect:    (...args) => relay.connect(...args),
   relayDisconnect: ()        => relay.disconnect(),
   relayStatus:     ()        => relay.status(),
+  relayProbe:      ()        => relay.probe(),
 };
