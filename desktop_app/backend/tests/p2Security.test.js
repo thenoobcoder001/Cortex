@@ -9,6 +9,7 @@ const crypto = require("node:crypto");
 
 const { startBackendServer } = require("../server");
 const { CortexRelayClient }  = require("../cortexRelay");
+const { computeRelaySessionExpiresAt, isRelaySessionExpired } = require("../relaySession");
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -181,7 +182,7 @@ test("P2-I: relay accepts payload with correct HMAC", async () => {
   const ts         = Date.now();
   const request_id = "req-signed";
   const urlPath    = "/api/status";
-  const hmac       = crypto.createHmac("sha256", secret)
+  const hmac       = crypto.createHmac("sha256", Buffer.from(secret, "hex"))
     .update(`${request_id}:${urlPath}:${ts}`)
     .digest("hex");
 
@@ -247,7 +248,7 @@ test("P2-I: relay drops stale HMAC (replay attack)", async () => {
   const ts         = Date.now() - 10 * 60 * 1000; // 10 min ago — stale
   const request_id = "req-old";
   const urlPath    = "/api/status";
-  const hmac       = crypto.createHmac("sha256", secret)
+  const hmac       = crypto.createHmac("sha256", Buffer.from(secret, "hex"))
     .update(`${request_id}:${urlPath}:${ts}`)
     .digest("hex");
 
@@ -276,6 +277,49 @@ test("P2-J: _sanitizeErrorBody strips stack traces and caps length", () => {
 });
 
 // ── P2-L: Bounded pendingAborts (unbounded session leak) ──────────────────
+
+test("P2-L: relay session helper defaults to a 24 hour window", () => {
+  const expiresAt = computeRelaySessionExpiresAt(0);
+  assert.equal(Date.parse(expiresAt), 24 * 60 * 60 * 1000, "expected default relay session window to be 24 hours");
+  assert.equal(isRelaySessionExpired(expiresAt, 24 * 60 * 60 * 1000 - 1), false, "session should still be valid before expiry");
+  assert.equal(isRelaySessionExpired(expiresAt, 24 * 60 * 60 * 1000), true, "session should expire at the deadline");
+});
+
+test("P2-L: expired relay session clears approvals and falls back to pairing", async () => {
+  const pairingRequests = [];
+  const auditEntries = [];
+  let sessionExpiredCalls = 0;
+  let processed = false;
+
+  const client = new CortexRelayClient({
+    token: "test",
+    approvedDeviceIds: ["mobile-1"],
+    sessionExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+    onPairingRequest: (id) => pairingRequests.push(id),
+    onAuditLog: (entry) => auditEntries.push(entry),
+    onSessionExpired: () => { sessionExpiredCalls += 1; },
+  });
+
+  client._callLocal = async () => {
+    processed = true;
+    return { status: 200, body: { ok: true } };
+  };
+  client._relayTo = () => {};
+
+  await client._handleRelay("mobile-1", {
+    type: "api_request",
+    request_id: "expired-req",
+    method: "GET",
+    path: "/api/status",
+  });
+
+  assert.equal(processed, false, "expired sessions must not reach the local backend");
+  assert.equal(sessionExpiredCalls, 1, "expired session callback should fire once");
+  assert.deepEqual(client.approvedDeviceIds, [], "approved relay devices must be cleared after expiry");
+  assert.equal(client.sessionExpiresAt, "", "relay session expiry should be cleared after expiry handling");
+  assert.deepEqual(pairingRequests, ["mobile-1"], "request should fall back to the pairing flow");
+  assert.ok(auditEntries.some((entry) => entry.event === "session_expired"), "session expiry should be audit logged");
+});
 
 test("P2-L: _pendingAborts is cleared when it exceeds MAX_PENDING_ABORTS", async () => {
   const client = new CortexRelayClient({ token: "test" });

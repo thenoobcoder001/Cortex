@@ -35,8 +35,8 @@ function req(port, method, pathname, body, headers = {}) {
       let raw = "";
       res.on("data", (c) => { raw += c; });
       res.on("end", () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
-        catch { resolve({ status: res.statusCode, body: raw }); }
+        try { resolve({ status: res.statusCode, body: JSON.parse(raw), headers: res.headers }); }
+        catch { resolve({ status: res.statusCode, body: raw, headers: res.headers }); }
       });
     });
     r.on("error", reject);
@@ -114,7 +114,7 @@ test("P1-E: loopback caller cannot set toolSafetyMode (always stripped)", async 
 
 // ── P1-G: Rate limiting ───────────────────────────────────────────────────
 
-test("P1-G: loopback requests are never rate-limited", async (t) => {
+test("P1-G: loopback requests without relay identity are never rate-limited", async (t) => {
   const { server, close } = await startBackendServer({ host: "127.0.0.1", port: 0 });
   const port = server.address().port;
 
@@ -127,6 +127,35 @@ test("P1-G: loopback requests are never rate-limited", async (t) => {
     }
     const tooMany = results.filter((s) => s === 429);
     assert.equal(tooMany.length, 0, "loopback should never receive 429");
+  } finally {
+    await close();
+  }
+});
+
+test("P1-G: relay device requests are rate-limited on loopback with Retry-After and isolated per device", async (t) => {
+  const { server, close } = await startBackendServer({ host: "127.0.0.1", port: 0 });
+  const port = server.address().port;
+  const relayDeviceA = `relay-a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const relayDeviceB = `relay-b-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    for (let i = 0; i < 10; i++) {
+      const res = await req(port, "POST", "/api/config", { model: "codex:gpt-5.4" }, {
+        "X-PocketAI-Relay-Device": relayDeviceA,
+      });
+      assert.equal(res.status, 200, "requests up to the limit should succeed");
+    }
+
+    const limited = await req(port, "POST", "/api/config", { model: "codex:gpt-5.4" }, {
+      "X-PocketAI-Relay-Device": relayDeviceA,
+    });
+    assert.equal(limited.status, 429, "relay device should be rate-limited");
+    assert.match(String(limited.headers["retry-after"] || ""), /^[1-9]\d*$/, "429 should include Retry-After seconds");
+
+    const otherDevice = await req(port, "POST", "/api/config", { model: "codex:gpt-5.4" }, {
+      "X-PocketAI-Relay-Device": relayDeviceB,
+    });
+    assert.equal(otherDevice.status, 200, "a different relay device should have its own bucket");
   } finally {
     await close();
   }
@@ -402,7 +431,10 @@ test("P1-F: approveDevice adds device to approved list and subsequent requests p
   await client._handleRelay("new-mobile", { type: "api_request", request_id: "r2", method: "GET", path: "/api/status", stream: false });
 
   assert.equal(pairingRequests.length, 1, "should not fire pairing request again after approval");
-  assert.equal(auditEntries.length, 1, "approved request should be audit-logged");
+  assert.ok(
+    auditEntries.some((entry) => entry.device_id === "new-mobile" && entry.path === "/api/status"),
+    "approved request should be audit-logged",
+  );
 });
 
 test("P1-F: null approvedDeviceIds allows all devices (backward compat)", async (t) => {
@@ -419,5 +451,8 @@ test("P1-F: null approvedDeviceIds allows all devices (backward compat)", async 
   await client._handleRelay("any-device", { type: "api_request", request_id: "r1", method: "GET", path: "/api/status", stream: false });
 
   assert.equal(pairingRequests.length, 0, "no pairing requests in legacy mode");
-  assert.equal(auditEntries.length, 1,    "request should still be audit-logged");
+  assert.ok(
+    auditEntries.some((entry) => entry.device_id === "any-device" && entry.path === "/api/status"),
+    "request should still be audit-logged",
+  );
 });
