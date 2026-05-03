@@ -25,6 +25,7 @@ const crypto = require("node:crypto");
 const CORTEX_WS_URL          = "wss://cortex.cbproforge.com/cortex/ws/desktop";
 const CORTEX_WS_URL_FALLBACK = "ws://103.180.236.74:8087/cortex/ws/desktop";
 const HEARTBEAT_MS           = 5_000;
+const RELAY_HMAC_MAX_SKEW_MS  = 5 * 60 * 1000;
 const RELAY_STREAM_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max per streaming request
 const MAX_PENDING_ABORTS      = 500;            // cap Set to prevent unbounded growth
 
@@ -59,6 +60,9 @@ class CortexRelayClient {
     this.approvedDeviceIds = opts.approvedDeviceIds || null;
     // HMAC secret for relay message signing (P2-I). null = accept unsigned (backward compat).
     this.hmacSecret       = opts.hmacSecret   || null;
+    // Time-bound relay approval window (P2-L).
+    this.sessionExpiresAt = opts.sessionExpiresAt || "";
+    this.onSessionExpired = opts.onSessionExpired || null;
 
     this._ws             = null;
     this._heartbeatTimer = null;
@@ -294,6 +298,10 @@ class CortexRelayClient {
     this.hmacSecret = secret || null;
   }
 
+  setSessionExpiresAt(expiresAt) {
+    this.sessionExpiresAt = String(expiresAt || "").trim();
+  }
+
   rejectDevice(_deviceId) {
     // No-op — unapproved devices are already silently dropped
   }
@@ -301,6 +309,21 @@ class CortexRelayClient {
   removeDevice(deviceId) {
     if (Array.isArray(this.approvedDeviceIds)) {
       this.approvedDeviceIds = this.approvedDeviceIds.filter(id => id !== deviceId);
+    }
+  }
+
+  _relaySessionExpired() {
+    if (!this.sessionExpiresAt) return false;
+    const parsed = Date.parse(this.sessionExpiresAt);
+    if (!Number.isFinite(parsed)) return true;
+    return Date.now() >= parsed;
+  }
+
+  _expireRelaySession() {
+    this.approvedDeviceIds = [];
+    this.sessionExpiresAt = "";
+    if (this.onSessionExpired) {
+      this.onSessionExpired();
     }
   }
 
@@ -315,8 +338,8 @@ class CortexRelayClient {
   _verifyRelayHmac(payload) {
     if (!this.hmacSecret || !payload.hmac) return true; // skip if not configured or unsigned
     const { hmac, request_id, path: urlPath = "", ts = 0 } = payload;
-    // P2-L: Use a more lenient clock skew (30 min) for development/mobile
-    if (Math.abs(Date.now() - ts) > 1_800_000) {
+    // P2-I: Reject replayed relay payloads outside a short skew window.
+    if (Math.abs(Date.now() - ts) > RELAY_HMAC_MAX_SKEW_MS) {
         if (this.onAuditLog) {
             this.onAuditLog({ source: "relay", event: "hmac_skew_error", ts_received: ts, ts_now: Date.now() });
         }
@@ -361,9 +384,21 @@ class CortexRelayClient {
     if (!payload || typeof payload !== "object") return;
     const { type, request_id } = payload;
     if (!request_id) return;
+    if (this._relaySessionExpired()) {
+      if (this.onAuditLog) {
+        this.onAuditLog({
+          source: "relay",
+          device_id: fromDeviceId,
+          event: "session_expired",
+          expired_at: this.sessionExpiresAt,
+        });
+      }
+      this._expireRelaySession();
+    }
 
     // Pairing guard — check if approved
-    const isApproved = Array.isArray(this.approvedDeviceIds) && this.approvedDeviceIds.includes(fromDeviceId);
+    const isApproved = this.approvedDeviceIds === null
+      || (Array.isArray(this.approvedDeviceIds) && this.approvedDeviceIds.includes(fromDeviceId));
 
     if (!isApproved) {
       if (this.onPairingRequest) {
@@ -415,7 +450,7 @@ class CortexRelayClient {
   async _handleRequest(fromDeviceId, payload) {
     const { request_id, method, path: urlPath, query, body } = payload;
     try {
-      const result = await this._callLocal(method || "GET", urlPath, query, body);
+      const result = await this._callLocal(method || "GET", urlPath, query, body, fromDeviceId);
       // P2-J: strip stack traces — only forward sanitized detail on errors
       const safeBody = result.status >= 400 ? this._sanitizeErrorBody(result.body) : result.body;
       this._relayTo(fromDeviceId, { type: "api_response", request_id, status: result.status, body: safeBody });
@@ -436,6 +471,7 @@ class CortexRelayClient {
       method: method || "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-PocketAI-Relay-Device": fromDeviceId,
         ...(bodyStr ? { "Content-Length": Buffer.byteLength(bodyStr) } : {}),
       },
     };
@@ -487,7 +523,7 @@ class CortexRelayClient {
     req.end();
   }
 
-  _callLocal(method, urlPath, query, body) {
+  _callLocal(method, urlPath, query, body, relayDeviceId = "") {
     console.log(`CortexRelayClient: proxying ${method} ${urlPath} to localhost:${this.localBackendPort}`);
     return new Promise((resolve, reject) => {
       const fullPath = query ? `${urlPath}?${query}` : urlPath;
@@ -499,6 +535,7 @@ class CortexRelayClient {
         method: method || "GET",
         headers: {
           "Content-Type": "application/json",
+          ...(relayDeviceId ? { "X-PocketAI-Relay-Device": relayDeviceId } : {}),
           ...(bodyStr ? { "Content-Length": Buffer.byteLength(bodyStr) } : {}),
         },
       };

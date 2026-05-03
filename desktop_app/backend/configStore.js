@@ -67,6 +67,8 @@ class AppConfigStore {
     this.approvedDeviceIds = [];
     // HMAC secret for relay message signing (P2-I)
     this.relayHmacSecret = "";
+    // Time-bound relay pairing window (P2-L)
+    this.relaySessionExpiresAt = "";
     // SMTP for email verification
     this.smtpHost = "";
     this.smtpPort = 587;
@@ -109,6 +111,7 @@ class AppConfigStore {
           ? (raw.approved_device_ids || raw.approvedDeviceIds).map(String).filter(Boolean)
           : [];
         config.relayHmacSecret       = String(raw.relay_hmac_secret || raw.relayHmacSecret || "");
+        config.relaySessionExpiresAt = String(raw.relay_session_expires || raw.relaySessionExpiresAt || raw.relaySessionExpires || "");
         config.smtpHost = String(raw.smtp_host || raw.smtpHost || "");
         config.smtpPort = Number(raw.smtp_port || raw.smtpPort || 587);
         config.smtpUser = String(raw.smtp_user || raw.smtpUser || "");
@@ -160,6 +163,7 @@ class AppConfigStore {
           mobile_token: this.mobileToken,
           approved_device_ids: this.approvedDeviceIds,
           relay_hmac_secret: this.relayHmacSecret,
+          relay_session_expires: this.relaySessionExpiresAt,
           smtp_host: this.smtpHost,
           smtp_port: this.smtpPort,
           smtp_user: this.smtpUser,
@@ -190,6 +194,7 @@ class AppConfigStore {
     this.codexSessionId = "";
     this.activeRuns = [];
     this.interruptedRuns = [];
+    this.relaySessionExpiresAt = "";
   }
 
   deleteFile() {
