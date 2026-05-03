@@ -10,6 +10,7 @@ const { DesktopSessionService } = require("./sessionService");
 const { TerminalService }       = require("./terminalService");
 const { CortexRelayClient }     = require("./cortexRelay");
 const { AppConfigStore }        = require("./configStore");
+const { computeRelaySessionExpiresAt, isRelaySessionExpired } = require("./relaySession");
 
 const chatRoutes     = require("./routes/chat");
 const chatsRoutes    = require("./routes/chats");
@@ -46,23 +47,38 @@ const RATE_LIMITS = {
   "/api/chat/send-stream": 30,
   "/api/chat/send":        30,
   "/api/config":           10,
+  "/api/workspace/accept": 10,
   _default:                60,
 };
 const RATE_WINDOW_MS = 60_000;
 
-function checkRateLimit(request, pathname) {
+function isLoopbackRemote(remote) {
+  return remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+}
+
+function rateLimitIdentity(request) {
+  const relayDeviceId = String(request.headers["x-pocketai-relay-device"] || "").trim();
+  if (relayDeviceId) return `relay:${relayDeviceId}`;
   const remote = request.socket?.remoteAddress || "local";
-  if (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1") return false;
+  if (isLoopbackRemote(remote)) return null;
+  return `ip:${remote}`;
+}
+
+function checkRateLimit(request, pathname) {
+  const identity = rateLimitIdentity(request);
+  if (!identity) return null;
   const limit = RATE_LIMITS[pathname] ?? RATE_LIMITS._default;
-  const key   = `${remote}::${pathname}`;
+  const key   = `${identity}::${pathname}`;
   const now   = Date.now();
   const entry = _rateCounts.get(key);
   if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
     _rateCounts.set(key, { count: 1, windowStart: now });
-    return false;
+    return null;
   }
   entry.count += 1;
-  return entry.count > limit;
+  if (entry.count <= limit) return null;
+  const retryAfter = Math.max(1, Math.ceil((entry.windowStart + RATE_WINDOW_MS - now) / 1000));
+  return { retryAfter };
 }
 
 // ── CORS ──────────────────────────────────────────────────────────────────
@@ -78,11 +94,12 @@ function corsOrigin(request) {
   return ALLOWED_ORIGINS.has(origin) ? origin : null;
 }
 
-function sendJson(response, statusCode, payload, origin) {
+function sendJson(response, statusCode, payload, origin, extraHeaders = null) {
   const headers = {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type,X-PocketAI-Token",
+    ...(extraHeaders || {}),
   };
   if (origin) headers["Access-Control-Allow-Origin"] = origin;
   response.writeHead(statusCode, headers);
@@ -91,7 +108,7 @@ function sendJson(response, statusCode, payload, origin) {
 
 function sendError(response, error, origin, request) {
   const remote  = request?.socket?.remoteAddress || "";
-  const isLocal = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+  const isLocal = isLoopbackRemote(remote);
   const detail  = isLocal ? String(error?.message || error) : "Request failed.";
   sendJson(response, 400, { detail }, origin);
 }
@@ -99,7 +116,7 @@ function sendError(response, error, origin, request) {
 // ── Auth ──────────────────────────────────────────────────────────────────
 function isAuthorized(request, cfg) {
   const remote  = request.socket?.remoteAddress || "";
-  const isLocal = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+  const isLocal = isLoopbackRemote(remote);
   if (isLocal) return true;
   return request.headers["x-pocketai-token"] === cfg.mobileToken;
 }
@@ -111,6 +128,24 @@ function assertRepoRoot(repoRoot, service) {
   if (!ok) throw new Error("repoRoot not in allowed projects list");
 }
 
+function clearStoredRelaySession(cfg = AppConfigStore.load()) {
+  cfg.approvedDeviceIds = [];
+  cfg.relaySessionExpiresAt = "";
+  cfg.save();
+  return cfg;
+}
+
+function normalizeStoredRelaySession(cfg = AppConfigStore.load()) {
+  if (isRelaySessionExpired(cfg.relaySessionExpiresAt)) {
+    return clearStoredRelaySession(cfg);
+  }
+  if (cfg.approvedDeviceIds.length && !cfg.relaySessionExpiresAt) {
+    cfg.relaySessionExpiresAt = computeRelaySessionExpiresAt();
+    cfg.save();
+  }
+  return cfg;
+}
+
 // ── Relay singleton ───────────────────────────────────────────────────────
 let _relayClient       = null;
 const _pendingPairing  = new Set();
@@ -118,13 +153,15 @@ const _pendingPairing  = new Set();
 const relay = {
   connect({ token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort }) {
     if (_relayClient) _relayClient.disconnect();
-    const cfg = AppConfigStore.load();
+    const cfg = normalizeStoredRelaySession(AppConfigStore.load());
     _relayClient = new CortexRelayClient({
       token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort,
       deviceName:       "Cortex Desktop",
       appVersion:       "0.0.1",
       approvedDeviceIds: [...cfg.approvedDeviceIds],
       hmacSecret:       cfg.relayHmacSecret || null,
+      sessionExpiresAt: cfg.relaySessionExpiresAt || "",
+      onSessionExpired: () => { clearStoredRelaySession(AppConfigStore.load()); },
       onStateChange:    () => {},
       onPairingRequest: (id) => {
         console.log(`Cortex relay: pairing request from ${id}`);
@@ -138,10 +175,16 @@ const relay = {
     if (_relayClient) { _relayClient.disconnect(); _relayClient = null; }
   },
   status() {
+    const cfg = normalizeStoredRelaySession(AppConfigStore.load());
     if (!_relayClient) return { state: "not_configured", deviceId: null, socketId: null };
     // If the WebSocket is no longer open, report disconnected regardless of cached state.
     const state = _relayClient.isConnected() ? _relayClient.state : "disconnected";
-    return { state, deviceId: _relayClient.deviceId, socketId: _relayClient.socketId };
+    return {
+      state,
+      deviceId: _relayClient.deviceId,
+      socketId: _relayClient.socketId,
+      relaySessionExpiresAt: cfg.relaySessionExpiresAt || "",
+    };
   },
   probe() {
     if (!_relayClient) {
@@ -154,6 +197,9 @@ const relay = {
     _pendingPairing.delete(id);
     if (_relayClient) {
       _relayClient.approveDevice(id);
+      if (secrets?.relaySessionExpiresAt) {
+        _relayClient.setSessionExpiresAt(secrets.relaySessionExpiresAt);
+      }
       if (secrets?.relayHmacSecret) {
         _relayClient.setHmacSecret(secrets.relayHmacSecret);
       }
@@ -172,6 +218,14 @@ const relay = {
   removeDevice(id) {
     _pendingPairing.delete(id);
     if (_relayClient) _relayClient.removeDevice(id);
+  },
+  clearSession() {
+    _pendingPairing.clear();
+    if (_relayClient) {
+      _relayClient.approvedDeviceIds = [];
+      _relayClient.setSessionExpiresAt("");
+    }
+    clearStoredRelaySession(AppConfigStore.load());
   },
 };
 
@@ -207,7 +261,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
   const server = http.createServer(async (request, response) => {
     const origin  = corsOrigin(request);
     const remote  = request.socket?.remoteAddress || "";
-    const isLocal = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+    const isLocal = isLoopbackRemote(remote);
 
     // Preflight
     if (request.method === "OPTIONS") {
@@ -240,10 +294,17 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
       }
 
       // Rate limiting
-      if (checkRateLimit(request, url.pathname)) {
-        reply(429, { detail: "Too many requests. Please slow down." });
-        return;
-      }
+    const rateLimit = checkRateLimit(request, url.pathname);
+    if (rateLimit) {
+      sendJson(
+        response,
+        429,
+        { detail: "Too many requests. Please slow down." },
+        origin,
+        { "Retry-After": String(rateLimit.retryAfter) },
+      );
+      return;
+    }
 
       const body = request.method === "POST" ? await readJsonBody(request) : {};
 
