@@ -49,7 +49,7 @@ class CortexRelayClient {
     this.reconnectSecret  = opts.reconnectSecret || null;
     this.localUrl         = opts.localUrl     || "";
     this.tailscaleUrl     = opts.tailscaleUrl || "";
-    this.appVersion       = opts.appVersion   || "0.0.3";
+    this.appVersion       = opts.appVersion   || "0.0.2";
     this.localBackendPort = opts.localBackendPort || 8765;
     this.onStateChange    = opts.onStateChange || (() => {});
     // Called with deviceId when an unknown device sends a relay message.
