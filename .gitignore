@@ -38,8 +38,10 @@ htmlcov/
 *.err.log
 
 .gpt-tui/
+.claude/
 .cortex/
 local-notes/
 images/
 *.md
 !CLAUDE.md
+metro-start.err
