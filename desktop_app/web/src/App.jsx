@@ -68,6 +68,8 @@ export default function App() {
   const [bootDismissed, setBootDismissed] = useState(false);
   const [showClearCacheConfirm, setShowClearCacheConfirm] = useState(false);
   const [showDeleteSettingsConfirm, setShowDeleteSettingsConfirm] = useState(false);
+  const [pendingPairingDevices, setPendingPairingDevices] = useState([]);
+  const [pairingActionLoading, setPairingActionLoading] = useState({});
   const [providerTestState, setProviderTestState] = useState({});
   const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
   const [headerInfoOpen, setHeaderInfoOpen] = useState(false);
@@ -437,6 +439,7 @@ export default function App() {
         if (!alive) return;
         applyDesktopConfig(config);
         await refreshStatus(config.backendUrl);
+        await refreshPairingRequests(config.backendUrl).catch(() => []);
         const initialProjects = loadSavedProjects();
         await Promise.all(
           [...new Set(initialProjects.map((project) => project.path))]
@@ -452,6 +455,29 @@ export default function App() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!backendUrl) {
+      setPendingPairingDevices([]);
+      return undefined;
+    }
+    let alive = true;
+    const tick = async () => {
+      try {
+        await refreshPairingRequests();
+      } catch {
+        if (!alive) {
+          return;
+        }
+      }
+    };
+    void tick();
+    const interval = window.setInterval(() => void tick(), 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+    };
+  }, [backendUrl]);
 
   useEffect(() => {
     if (!backendUrl) {
@@ -478,6 +504,22 @@ export default function App() {
       throw new Error(data.detail || `Request failed (${response.status})`);
     }
     return data;
+  };
+
+  const refreshPairingRequests = async (urlOverride) => {
+    const targetUrl = urlOverride || backendUrl;
+    if (!targetUrl) {
+      setPendingPairingDevices([]);
+      return [];
+    }
+    const response = await fetch(`${targetUrl}/api/cortex/pairing-requests`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || `Pairing request fetch failed (${response.status})`);
+    }
+    const pending = Array.isArray(data.pending) ? data.pending : [];
+    setPendingPairingDevices(pending);
+    return pending;
   };
 
   const handleConfigUpdate = async (patch) => {
@@ -1392,6 +1434,30 @@ export default function App() {
     return projectChats[projectPath] || [];
   };
 
+  const handleApprovePairingDevice = async (deviceId) => {
+    setPairingActionLoading((current) => ({ ...current, [deviceId]: true }));
+    try {
+      await postJson("/api/cortex/approve-device", { deviceId });
+      setPendingPairingDevices((current) => current.filter((id) => id !== deviceId));
+    } catch (nextError) {
+      setError(String(nextError));
+    } finally {
+      setPairingActionLoading((current) => ({ ...current, [deviceId]: false }));
+    }
+  };
+
+  const handleRejectPairingDevice = async (deviceId) => {
+    setPairingActionLoading((current) => ({ ...current, [deviceId]: true }));
+    try {
+      await postJson("/api/cortex/reject-device", { deviceId });
+      setPendingPairingDevices((current) => current.filter((id) => id !== deviceId));
+    } catch (nextError) {
+      setError(String(nextError));
+    } finally {
+      setPairingActionLoading((current) => ({ ...current, [deviceId]: false }));
+    }
+  };
+
   if (!snapshot) {
     return (
       <BootScreen
@@ -1823,6 +1889,48 @@ export default function App() {
 
           <div className="chat-main">
           {error && <div className="error-banner">{error}</div>}
+          {pendingPairingDevices.length > 0 && (
+            <div className="recovery-banner" style={{ display: "grid", gap: 10 }}>
+              <div>
+                Mobile pairing request{pendingPairingDevices.length > 1 ? "s" : ""} waiting for approval.
+              </div>
+              {pendingPairingDevices.map((deviceId) => (
+                <div
+                  key={deviceId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    background: "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+                    {deviceId}
+                  </span>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ padding: "4px 12px", fontSize: 12 }}
+                    disabled={pairingActionLoading[deviceId]}
+                    onClick={() => void handleApprovePairingDevice(deviceId)}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    style={{ padding: "4px 12px", fontSize: 12 }}
+                    disabled={pairingActionLoading[deviceId]}
+                    onClick={() => void handleRejectPairingDevice(deviceId)}
+                  >
+                    Reject
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           {!error && activeInterruptedRun && (
             <div className="recovery-banner">
               Previous response was interrupted. Continue from the last saved turn.

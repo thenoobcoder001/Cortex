@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ipcRenderer.invoke("desktop:open-in-editor", { editor, repoRoot }),
   openFile: (filePath) => ipcRenderer.invoke("desktop:open-file", { path: filePath }),
   cortexStatus: () => ipcRenderer.invoke("cortex:status"),
+  cortexRefreshStatus: () => ipcRenderer.invoke("cortex:refresh-status"),
   cortexConnect: (token, deviceId, reconnectSecret) =>
     ipcRenderer.invoke("cortex:connect", { token, deviceId, reconnectSecret }),
   cortexDisconnect: () => ipcRenderer.invoke("cortex:disconnect"),

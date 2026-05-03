@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { AppConfigStore } = require("../backend/configStore");
-const { startBackendServer, relayConnect, relayDisconnect, relayStatus } = require("../backend/server");
+const { startBackendServer, relayConnect, relayDisconnect, relayStatus, relayProbe } = require("../backend/server");
 const { autoUpdater } = require("electron-updater");
 
 // ── auto-updater setup ────────────────────────────────────────────────────────
@@ -347,6 +347,14 @@ if (ipcMain) {
   });
 
   ipcMain.handle("cortex:status", () => relayStatus());
+  ipcMain.handle("cortex:refresh-status", async () => {
+    const status = relayStatus();
+    if (status.state !== "connected") {
+      return { ...status, verified: false };
+    }
+    const result = await relayProbe();
+    return { ...status, verified: true, lastProbeAt: new Date().toISOString(), probe: result };
+  });
 
   ipcMain.handle("cortex:connect", async (_event, payload) => {
     const { token, deviceId, reconnectSecret } = payload || {};

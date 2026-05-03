@@ -101,7 +101,17 @@ function CortexRelaySection() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [pendingDevices, setPendingDevices] = useState([]);
+  const [approvedDevices, setApprovedDevices] = useState([]);
+  const [pairingLoading, setPairingLoading] = useState({});
+  const [connectionCheck, setConnectionCheck] = useState({ state: "idle", message: "" });
   const pollRef = useRef(null);
+
+  useEffect(() => {
+    fetchStatus();
+    pollRef.current = setInterval(fetchStatus, 5000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
 
   async function fetchStatus() {
     try {
@@ -119,13 +129,50 @@ function CortexRelaySection() {
         setStatus(s);
       }
     } catch { /* ignore */ }
+    // Poll for pending and approved devices
+    try {
+      const res = await fetch("http://127.0.0.1:8765/api/cortex/pairing-requests");
+      const data = await res.json();
+      setPendingDevices(data.pending || []);
+      setApprovedDevices(data.approved || []);
+    } catch { /* ignore */ }
   }
 
-  useEffect(() => {
-    fetchStatus();
-    pollRef.current = setInterval(fetchStatus, 8000);
-    return () => clearInterval(pollRef.current);
-  }, []);
+  async function handleApprove(deviceId) {
+    setPairingLoading(prev => ({ ...prev, [deviceId]: true }));
+    try {
+      await fetch("http://127.0.0.1:8765/api/cortex/approve-device", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      setPendingDevices(prev => prev.filter(id => id !== deviceId));
+    } catch { /* ignore */ }
+    finally { setPairingLoading(prev => ({ ...prev, [deviceId]: false })); }
+  }
+
+  async function handleReject(deviceId) {
+    setPairingLoading(prev => ({ ...prev, [deviceId]: true }));
+    try {
+      await fetch("http://127.0.0.1:8765/api/cortex/reject-device", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      setPendingDevices(prev => prev.filter(id => id !== deviceId));
+    } catch { /* ignore */ }
+    finally { setPairingLoading(prev => ({ ...prev, [deviceId]: false })); }
+  }
+
+  async function handleRemove(deviceId) {
+    setPairingLoading(prev => ({ ...prev, [deviceId]: true }));
+    try {
+      await fetch("http://127.0.0.1:8765/api/cortex/remove-device", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      setApprovedDevices(prev => prev.filter(id => id !== deviceId));
+    } catch { /* ignore */ }
+    finally { setPairingLoading(prev => ({ ...prev, [deviceId]: false })); }
+  }
 
   function reset() { setEmail(""); setPassword(""); setCode(""); setError(""); setInfo(""); setStep("form"); }
   function switchTab(t) { setTab(t); reset(); }
@@ -196,6 +243,30 @@ function CortexRelaySection() {
     } catch { /* ignore */ } finally { setLoading(false); }
   }
 
+  async function handleRefreshConnection() {
+    setConnectionCheck({ state: "checking", message: "Verifying relay connection..." });
+    try {
+      const res = await fetch("http://127.0.0.1:8765/api/cortex/probe", { method: "POST" });
+      const result = await res.json();
+
+      if (result?.verified) {
+        setStatus((prev) => ({ ...(prev || {}), ...result }));
+        setConnectionCheck({
+          state: "ok",
+          message: `Verified just now · Device ID: ${result.deviceId || status?.deviceId || "—"}`,
+        });
+      } else {
+        setStatus((prev) => ({ ...(prev || {}), ...result }));
+        setConnectionCheck({ state: "error", message: result?.detail || "Relay is not connected." });
+      }
+    } catch (err) {
+      setConnectionCheck({
+        state: "error",
+        message: err?.message || "Relay verification failed.",
+      });
+    }
+  }
+
   const connected = status?.state === "connected";
   const reconnecting = status?.state === "reconnecting";
 
@@ -210,9 +281,92 @@ function CortexRelaySection() {
 
       {connected ? (
         <div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ padding: "6px 12px" }}
+              disabled={connectionCheck.state === "checking"}
+              onClick={() => void handleRefreshConnection()}
+            >
+              {connectionCheck.state === "checking" ? "Checking..." : "Refresh connection"}
+            </button>
+            {connectionCheck.message && (
+              <div
+                className={
+                  connectionCheck.state === "ok"
+                    ? "provider-test-result ok"
+                    : connectionCheck.state === "error"
+                      ? "provider-test-result error"
+                      : "provider-test-result"
+                }
+                style={{ marginBottom: 0, flex: 1, minWidth: 220 }}
+              >
+                {connectionCheck.message}
+              </div>
+            )}
+          </div>
           <div className="provider-test-result ok" style={{ marginBottom: 10 }}>
             {`Connected · Device ID: ${status.deviceId || "—"}`}
           </div>
+
+          {pendingDevices.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div className="settings-block-title" style={{ fontSize: 13, marginBottom: 6 }}>
+                Pairing Requests
+              </div>
+              {pendingDevices.map(deviceId => (
+                <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--surface-1, #1e1e1e)", borderRadius: 6 }}>
+                  <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+                    {deviceId}
+                  </span>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ padding: "4px 12px", fontSize: 12 }}
+                    disabled={pairingLoading[deviceId]}
+                    onClick={() => handleApprove(deviceId)}
+                  >
+                    Allow
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    style={{ padding: "4px 12px", fontSize: 12 }}
+                    disabled={pairingLoading[deviceId]}
+                    onClick={() => handleReject(deviceId)}
+                  >
+                    Block
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {approvedDevices.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div className="settings-block-title" style={{ fontSize: 13, marginBottom: 6 }}>
+                Approved Devices
+              </div>
+              {approvedDevices.map(deviceId => (
+                <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--surface-1, #1e1e1e)", borderRadius: 6 }}>
+                  <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+                    {deviceId}
+                  </span>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    style={{ padding: "4px 12px", fontSize: 12 }}
+                    disabled={pairingLoading[deviceId]}
+                    onClick={() => handleRemove(deviceId)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <button type="button" className="danger-button" disabled={loading} onClick={handleDisconnect}>
             {loading ? "Disconnecting…" : "Disconnect"}
           </button>
