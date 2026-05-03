@@ -1,6 +1,6 @@
 {
   "name": "cortex",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "main": "electron/main.js",
   "description": "Unified AI coding assistant desktop app",
