@@ -2,6 +2,7 @@
 
 const https = require("node:https");
 const { AppConfigStore } = require("../configStore");
+const { computeRelaySessionExpiresAt, isRelaySessionExpired } = require("../relaySession");
 
 const CORTEX_HOST = "cortex.cbproforge.com";
 
@@ -81,7 +82,18 @@ async function handle(ctx) {
 
   if (method === "GET" && pathname === "/api/cortex/status") {
     const cfg = AppConfigStore.load();
-    reply(200, { ...relay.status(), hasSavedSession: Boolean(cfg.cortexToken), mobileToken: cfg.mobileToken, relayHmacSecret: cfg.relayHmacSecret });
+    if (isRelaySessionExpired(cfg.relaySessionExpiresAt)) {
+      cfg.approvedDeviceIds = [];
+      cfg.relaySessionExpiresAt = "";
+      cfg.save();
+    }
+    reply(200, {
+      ...relay.status(),
+      hasSavedSession: Boolean(cfg.cortexToken),
+      mobileToken: cfg.mobileToken,
+      relayHmacSecret: cfg.relayHmacSecret,
+      relaySessionExpiresAt: cfg.relaySessionExpiresAt || "",
+    });
     return true;
   }
 
@@ -132,11 +144,16 @@ async function handle(ctx) {
     const cfg = AppConfigStore.load();
     if (!cfg.approvedDeviceIds.includes(deviceId)) {
       cfg.approvedDeviceIds.push(deviceId);
-      cfg.save();
     }
+    cfg.relaySessionExpiresAt = computeRelaySessionExpiresAt();
+    cfg.save();
     // approveDevice pushes mobileToken + relayHmacSecret to the device via relay
-    relay.approveDevice(deviceId, { mobileToken: cfg.mobileToken, relayHmacSecret: cfg.relayHmacSecret });
-    reply(200, { ok: true });
+    relay.approveDevice(deviceId, {
+      mobileToken: cfg.mobileToken,
+      relayHmacSecret: cfg.relayHmacSecret,
+      relaySessionExpiresAt: cfg.relaySessionExpiresAt,
+    });
+    reply(200, { ok: true, relaySessionExpiresAt: cfg.relaySessionExpiresAt });
     return true;
   }
 
@@ -153,8 +170,12 @@ async function handle(ctx) {
     if (!deviceId) { fail(new Error("deviceId required")); return true; }
     const cfg = AppConfigStore.load();
     cfg.approvedDeviceIds = cfg.approvedDeviceIds.filter(id => id !== deviceId);
+    if (!cfg.approvedDeviceIds.length) {
+      cfg.relaySessionExpiresAt = "";
+    }
     cfg.save();
-    relay.removeDevice(deviceId);
+    if (!cfg.approvedDeviceIds.length) relay.clearSession();
+    else relay.removeDevice(deviceId);
     reply(200, { ok: true });
     return true;
   }
@@ -164,6 +185,7 @@ async function handle(ctx) {
     const cfg = AppConfigStore.load();
     cfg.cortexToken = ""; cfg.cortexDeviceId = ""; cfg.cortexReconnectSecret = "";
     cfg.approvedDeviceIds = [];
+    cfg.relaySessionExpiresAt = "";
     cfg.save();
     reply(200, { ok: true });
     return true;
