@@ -1076,6 +1076,59 @@ export default function App() {
           return;
         }
 
+        // Launch Emulator via API
+        if (qc.type === "launch-emulator") {
+          const args = qc.buildCommand(outgoingMessage);
+          if (!args.avd) {
+            // If no AVD name provided, first list them
+            void fetch(`${backendUrl}/api/android/avds`).then(r => r.json()).then(data => {
+              const avds = data.avds || [];
+              const listText = avds.length
+                ? `Please specify which emulator to launch:\n${avds.map((a) => `  • ${a}`).join("\n")}\n\nExample: \`open emulator ${avds[0]}\``
+                : "No emulators found to launch.";
+              setSnapshot((current) => {
+                if (!current) return current;
+                return {
+                  ...current,
+                  messages: [
+                    ...(current.messages || []),
+                    { role: "user", content: outgoingMessage },
+                    { role: "assistant", content: listText },
+                  ],
+                };
+              });
+            });
+          } else {
+            // Try to launch the specific AVD
+            try {
+              const res = await fetch(`${backendUrl}/api/android/launch`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ avd: args.avd })
+              });
+              const data = await res.json();
+              if (res.ok) {
+                setSnapshot((current) => {
+                  if (!current) return current;
+                  return {
+                    ...current,
+                    messages: [
+                      ...(current.messages || []),
+                      { role: "user", content: outgoingMessage },
+                      { role: "assistant", content: data.message || `Launching ${args.avd}...` },
+                    ],
+                  };
+                });
+              } else {
+                setError(`Error launching emulator: ${data.detail}`);
+              }
+            } catch (launchErr) {
+              setError(`Error launching emulator: ${String(launchErr)}`);
+            }
+          }
+          return;
+        }
+
         const cmd = qc.buildCommand(outgoingMessage);
         const chatId = snapshot?.config?.activeChatId || "";
         setSnapshot((current) => {

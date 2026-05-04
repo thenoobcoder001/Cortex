@@ -3,6 +3,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { buildUnifiedDiff } = require("./fileService");
 const { resolveAndroidEnv } = require("./androidEnv");
+const platform = require("./platform");
 
 class ToolExecutor {
   constructor(fileService, repoRoot) {
@@ -241,18 +242,14 @@ class ToolExecutor {
     }
 
     return new Promise((resolve) => {
-      const child = process.platform === "win32"
-        ? spawn("cmd.exe", ["/d", "/s", "/c", command], {
-            cwd: this.repoRoot,
-            env: resolveAndroidEnv(process.env),
-            windowsHide: true,
-            shell: false,
-          })
-        : spawn(process.env.SHELL || "/bin/bash", ["-lc", command], {
-            cwd: this.repoRoot,
-            env: resolveAndroidEnv(process.env),
-            shell: false,
-          });
+      const shell = platform.getShell();
+      const child = spawn(shell.command, [...shell.args, command], {
+        cwd: this.repoRoot,
+        env: resolveAndroidEnv(process.env),
+        windowsHide: true,
+        windowsVerbatimArguments: shell.useVerbatim,
+        shell: false,
+      });
 
       let stdout = "";
       let stderr = "";
