@@ -2,9 +2,13 @@
   "name": "cortex",
   "version": "0.0.3",
   "private": true,
-  "main": "electron/main.js",
+  "author": {
+    "name": "CHIRAG",
+    "email": "support@cortex-ai.com"
+  },
+  "homepage": "https://github.com/thenoobcoder001/Cortex",
   "description": "Unified AI coding assistant desktop app",
-  "author": "CHIRAG",
+  "main": "electron/main.js",
   "scripts": {
     "dev:web": "vite --config web/vite.config.js",
     "dev:backend": "node backend/start_standalone.js",
@@ -51,7 +55,8 @@
         "deb"
       ],
       "artifactName": "Cortex-Linux-${version}-${arch}.${ext}",
-      "category": "Development"
+      "category": "Development",
+      "maintainer": "CHIRAG <support@cortex-ai.com>"
     }
   },
   "dependencies": {
