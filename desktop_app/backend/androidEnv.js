@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const platform = require("./platform");
 
 function existingDir(target) {
   const resolved = String(target || "").trim();
@@ -29,13 +30,27 @@ function existingFile(target) {
 }
 
 function sdkRootCandidates(baseEnv) {
-  const localAppData = existingDir(baseEnv.LOCALAPPDATA);
-  return [
+  const home = os.homedir();
+  const candidates = [
     existingDir(baseEnv.ANDROID_HOME),
     existingDir(baseEnv.ANDROID_SDK_ROOT),
-    existingDir("E:\\Android\\Sdk"),
-    localAppData ? existingDir(path.join(localAppData, "Android", "Sdk")) : "",
-  ].filter(Boolean);
+  ];
+
+  if (platform.isWin) {
+    const localAppData = existingDir(baseEnv.LOCALAPPDATA);
+    candidates.push(existingDir("E:\\Android\\Sdk"));
+    if (localAppData) {
+      candidates.push(existingDir(path.join(localAppData, "Android", "Sdk")));
+    }
+  } else if (platform.isMac) {
+    candidates.push(existingDir(path.join(home, "Library", "Android", "sdk")));
+  } else if (platform.isLinux) {
+    candidates.push(existingDir(path.join(home, "Android", "Sdk")));
+    candidates.push(existingDir("/usr/lib/android-sdk"));
+    candidates.push(existingDir("/opt/android-sdk"));
+  }
+
+  return candidates.filter(Boolean);
 }
 
 function normalizeAndroidUserHome(rawValue) {
@@ -53,26 +68,32 @@ function normalizeAndroidUserHome(rawValue) {
 }
 
 function userHomeCandidates(baseEnv, sdkRoot) {
-  const profileHome = existingDir(baseEnv.USERPROFILE) || existingDir(os.homedir());
+  const home = os.homedir();
+  const profileHome = platform.isWin ? existingDir(baseEnv.USERPROFILE) : "";
   const sdkParent = sdkRoot ? existingDir(path.dirname(sdkRoot)) : "";
+  
   return [
     normalizeAndroidUserHome(baseEnv.ANDROID_USER_HOME),
     sdkParent ? existingDir(path.join(sdkParent, ".android")) : "",
+    existingDir(path.join(home, ".android")),
     profileHome ? existingDir(path.join(profileHome, ".android")) : "",
   ].filter(Boolean);
 }
 
 function avdHomeCandidates(baseEnv, sdkRoot, userHome) {
-  const profileHome = existingDir(baseEnv.USERPROFILE) || existingDir(os.homedir());
+  const home = os.homedir();
+  const profileHome = platform.isWin ? existingDir(baseEnv.USERPROFILE) : "";
   const sdkParent = sdkRoot ? existingDir(path.dirname(sdkRoot)) : "";
+  
   return [
     // Explicit env override
     existingDir(baseEnv.ANDROID_AVD_HOME),
-    // AVDs alongside the SDK root: E:\Android\avd
+    // AVDs alongside the SDK root
     sdkParent ? existingDir(path.join(sdkParent, "avd")) : "",
-    // AVDs inside .android: E:\Android\.android\avd
+    // AVDs inside .android
     userHome ? existingDir(path.join(userHome, "avd")) : "",
-    // AVDs in USERPROFILE\.android\avd
+    // Typical location
+    existingDir(path.join(home, ".android", "avd")),
     profileHome ? existingDir(path.join(profileHome, ".android", "avd")) : "",
   ].filter(Boolean);
 }
@@ -88,9 +109,12 @@ function resolveAndroidEnv(baseEnv = process.env) {
     const toolDirs = [
       path.join(sdkRoot, "emulator"),
       path.join(sdkRoot, "platform-tools"),
+      path.join(sdkRoot, "tools"),
+      path.join(sdkRoot, "tools", "bin"),
     ].filter((d) => existingDir(d));
+    
     if (toolDirs.length > 0) {
-      const pathSep = process.platform === "win32" ? ";" : ":";
+      const pathSep = platform.isWin ? ";" : ":";
       const existing = String(env.PATH || env.Path || "");
       const parts = existing ? existing.split(pathSep) : [];
       // Prepend so our SDK paths take priority
@@ -119,8 +143,8 @@ function resolveAndroidEnv(baseEnv = process.env) {
 // Everything else (GitHub tokens, AWS/GCP credentials, DB passwords, etc.) is stripped.
 const CLI_ALLOWED_ENV_KEYS = new Set([
   // System
-  "PATH", "PATHEXT", "COMSPEC", "SystemRoot", "OS",
-  "PROCESSOR_ARCHITECTURE", "USERPROFILE", "HOME",
+  "PATH", "Path", "PATHEXT", "COMSPEC", "SystemRoot", "OS",
+  "PROCESSOR_ARCHITECTURE", "USERPROFILE", "HOME", "SHELL",
   "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
   "TEMP", "TMP", "TERM", "COLORTERM", "TERM_PROGRAM",
   // Node / npm
@@ -137,14 +161,16 @@ const CLI_ALLOWED_ENV_KEYS = new Set([
 
 function buildCleanEnv(extras = {}) {
   const clean = {};
-  for (const key of Object.keys(process.env)) {
-    // On Windows, env var names are case-insensitive but Node preserves the
-    // original case (e.g. "Path" instead of "PATH"). Normalise to uppercase
-    // before checking the allowlist so PATH/Path/PATHEXT/etc. are all kept.
-    if (CLI_ALLOWED_ENV_KEYS.has(key) || CLI_ALLOWED_ENV_KEYS.has(key.toUpperCase())) {
-      clean[key] = process.env[key];
+  const allEnvKeys = Object.keys(process.env);
+  
+  for (const key of CLI_ALLOWED_ENV_KEYS) {
+    // Find the actual key in process.env (handles case-sensitivity differences)
+    const actualKey = allEnvKeys.find(k => k.toUpperCase() === key.toUpperCase());
+    if (actualKey) {
+      clean[key] = process.env[actualKey];
     }
   }
+  
   return resolveAndroidEnv({ ...clean, ...extras });
 }
 

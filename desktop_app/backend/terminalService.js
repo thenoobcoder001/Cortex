@@ -1,8 +1,8 @@
 const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
-const { spawnSync } = require("node:child_process");
 const { resolveAndroidEnv } = require("./androidEnv");
+const platform = require("./platform");
 
 let pty;
 try {
@@ -14,22 +14,18 @@ try {
 const MAX_HISTORY_CHARS = 80_000;
 
 function shellCommand() {
-  if (process.platform === "win32") {
-    return { command: "cmd.exe", args: [], banner: "Cortex terminal\r\n" };
-  }
-  const shell = process.env.SHELL || "/bin/bash";
-  return { command: shell, args: [], banner: `Cortex terminal (${path.basename(shell)})\r\n` };
+  const shell = platform.getShell();
+  return {
+    command: shell.command,
+    // For interactive terminals, we don't want the "/c" or "-lc" args
+    // we want just the interactive shell.
+    args: [],
+    banner: shell.banner
+  };
 }
 
 function killProcessTree(child) {
-  if (!child) return;
-  if (process.platform === "win32" && child.pid) {
-    try {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-      return;
-    } catch {}
-  }
-  try { child.kill(); } catch {}
+  platform.killProcessTree(child);
 }
 
 class TerminalService extends EventEmitter {

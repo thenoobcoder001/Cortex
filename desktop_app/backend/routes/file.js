@@ -106,14 +106,6 @@ async function handle(ctx) {
     return true;
   }
 
-  if (method === "GET" && pathname === "/api/android/avds") {
-    exec("emulator -list-avds", { encoding: "utf8", timeout: 8000 }, (error, stdout) => {
-      const avds = (stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-      reply(200, { avds });
-    });
-    return true;
-  }
-
   return false;
 }
 

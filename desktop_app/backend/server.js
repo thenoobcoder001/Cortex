@@ -10,7 +10,7 @@ const { DesktopSessionService } = require("./sessionService");
 const { TerminalService }       = require("./terminalService");
 const { CortexRelayClient }     = require("./cortexRelay");
 const { AppConfigStore }        = require("./configStore");
-const { computeRelaySessionExpiresAt, isRelaySessionExpired } = require("./relaySession");
+const platform = require("./platform");
 
 const chatRoutes     = require("./routes/chat");
 const chatsRoutes    = require("./routes/chats");
@@ -18,15 +18,13 @@ const configRoutes   = require("./routes/config");
 const terminalRoutes = require("./routes/terminal");
 const cortexRoutes   = require("./routes/cortex");
 const fileRoutes     = require("./routes/file");
+const androidRoutes  = require("./routes/android");
 
 // ── Audit log ─────────────────────────────────────────────────────────────
 const AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024;
 
 function auditLogPath() {
-  const dir = process.platform === "win32"
-    ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "cortex")
-    : path.join(os.homedir(), ".config", "cortex");
-  return path.join(dir, "relay-audit.log");
+  return path.join(platform.getAppDataDir(), "relay-audit.log");
 }
 
 function writeAuditLog(entry) {
@@ -251,6 +249,7 @@ const ROUTE_HANDLERS = [
   chatRoutes,
   terminalRoutes,
   cortexRoutes,
+  androidRoutes,
 ];
 
 // ── Server ────────────────────────────────────────────────────────────────
