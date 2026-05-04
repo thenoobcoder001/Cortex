@@ -1,5 +1,12 @@
 import { SAVED_PROJECTS_KEY, THEME_MODE_STORAGE_KEY } from "./constants.js";
 
+function prefersWindowsPaths() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return navigator.userAgent.includes("Windows");
+}
+
 export function stripAnsi(str) {
   return String(str || "")
     .replace(/\x1b\[[^\x40-\x7e]*[\x40-\x7e]/g, "")
@@ -119,7 +126,14 @@ export function projectLabel(repoRoot) {
 }
 
 export function normalizeProject(repoRoot) {
-  return String(repoRoot || "").trim().replaceAll("/", "\\");
+  const trimmed = String(repoRoot || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (prefersWindowsPaths()) {
+    return trimmed.replaceAll("/", "\\");
+  }
+  return trimmed.replaceAll("\\", "/");
 }
 
 export function loadSavedProjects() {

@@ -5,6 +5,17 @@ const crypto = require("node:crypto");
 const { DEFAULT_MODEL } = require("./constants");
 const platform = require("./platform");
 
+function normalizeRepoRootPath(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const separatorsNormalized = platform.isWin
+    ? trimmed.replaceAll("/", "\\")
+    : trimmed.replaceAll("\\", "/");
+  return path.normalize(separatorsNormalized);
+}
+
 function normalizeContextCarryMessages(value, fallback = 5) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -19,7 +30,7 @@ function normalizeRecentRepoRoots(value) {
   }
   const unique = [];
   for (const entry of value) {
-    const normalized = String(entry || "").trim();
+    const normalized = normalizeRepoRootPath(entry);
     if (!normalized || unique.includes(normalized)) {
       continue;
     }
@@ -76,7 +87,7 @@ class AppConfigStore {
     try {
       if (fs.existsSync(config.path)) {
         const raw = JSON.parse(fs.readFileSync(config.path, "utf8"));
-        config.repoRoot = String(raw.repo_root || raw.repoRoot || "");
+        config.repoRoot = normalizeRepoRootPath(raw.repo_root || raw.repoRoot || "");
         config.activeChatId = String(raw.active_chat_id || raw.activeChatId || "");
         config.model = String(raw.model || DEFAULT_MODEL) || DEFAULT_MODEL;
         config.apiKey = String(raw.api_key || raw.apiKey || "");
