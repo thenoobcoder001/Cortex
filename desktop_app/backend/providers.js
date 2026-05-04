@@ -2,13 +2,14 @@ const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 const readline = require("node:readline");
 const { buildCleanEnv } = require("./androidEnv");
+const platform = require("./platform");
 
 const CLI_ABORT_SETTLE_MS = 6000;
 const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
 function which(command) {
-  const checker = process.platform === "win32" ? "where.exe" : "which";
-  const result = spawnSync(checker, [command], { encoding: "utf8", shell: process.platform === "win32" });
+  const checker = platform.isWin ? "where.exe" : "which";
+  const result = spawnSync(checker, [command], { encoding: "utf8", shell: platform.isWin });
   if (result.status !== 0) {
     return null;
   }
@@ -16,29 +17,20 @@ function which(command) {
   return first || null;
 }
 
-function quoteWindowsArg(value) {
-  const text = String(value ?? "");
-  if (text.length === 0) {
-    return '""';
-  }
-  if (!/[\s"]/u.test(text)) {
-    return text;
-  }
-  return `"${text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, '$1$1')}"`;
-}
-
 function spawnCommand(command, args, options = {}) {
   const effectiveOptions = {
     ...options,
     env: buildCleanEnv(options.env || {}),
   };
-  if (process.platform !== "win32") {
+  
+  if (!platform.isWin) {
     return spawn(command, args, { ...effectiveOptions, shell: false });
   }
-  const commandLine = [quoteWindowsArg(command), ...args.map(quoteWindowsArg)].join(" ");
-  // Use COMSPEC (always the full path to cmd.exe) so spawn doesn't need PATH to find it.
-  const cmdExe = process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
-  return spawn(cmdExe, ["/d", "/s", "/c", `"${commandLine}"`], {
+
+  const shell = platform.getShell();
+  const commandLine = [platform.quoteArg(command), ...args.map(platform.quoteArg)].join(" ");
+  
+  return spawn(shell.command, [...shell.args, `"${commandLine}"`], {
     ...effectiveOptions,
     shell: false,
     windowsHide: true,
@@ -157,15 +149,7 @@ class CodexProvider {
   }
 
   killChild(child) {
-    if (process.platform === "win32" && child.pid !== undefined) {
-      try {
-        spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-        return;
-      } catch {
-        // Fall through to direct kill.
-      }
-    }
-    child.kill();
+    platform.killProcessTree(child);
   }
 
   writeAppServerMessage(child, message) {

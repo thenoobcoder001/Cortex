@@ -12,6 +12,7 @@ export const QUICK_COMMANDS = [
       /\b(open|start|launch)\s+(the\s+)?emulator\b/i,
       /\b(open|start|launch)\s+avd\b/i,
     ],
+    type: "launch-emulator",
     buildCommand: (message) => {
       const avdMatch =
         message.match(/(?:emulator|avd)\s+((?!emulator|avd|the\b)[\w-]+)/i) ||
@@ -19,9 +20,7 @@ export const QUICK_COMMANDS = [
       const avd = avdMatch?.[1] || "";
       const triggerWords = new Set(["open", "start", "launch", "the", "emulator", "avd"]);
       const resolvedAvd = triggerWords.has(avd.toLowerCase()) ? "" : avd;
-      return resolvedAvd
-        ? `powershell -ExecutionPolicy Bypass -File E:\\codex\\start-emulator.ps1 -avd ${resolvedAvd}`
-        : `powershell -ExecutionPolicy Bypass -File E:\\codex\\start-emulator.ps1`;
+      return { avd: resolvedAvd };
     },
   },
 ];
