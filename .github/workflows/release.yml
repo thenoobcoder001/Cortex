@@ -9,8 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -23,23 +27,22 @@ jobs:
           cache: "npm"
           cache-dependency-path: desktop_app/package-lock.json
 
+      - name: Install System Dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-dev fakeroot
+
       - name: Install dependencies
         working-directory: desktop_app
         run: npm ci
 
-      - name: Build
+      - name: Build Web UI
+        working-directory: desktop_app
+        run: npm run build:web
+
+      - name: Build and Publish Electron App
         working-directory: desktop_app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build
-
-      - name: Upload release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "Cortex ${{ github.ref_name }}"
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            desktop_app/dist/*.exe
-            desktop_app/dist/*.exe.blockmap
+        run: npx electron-builder --publish always

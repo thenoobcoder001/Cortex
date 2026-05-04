@@ -1,6 +1,6 @@
 {
   "name": "cortex",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "main": "electron/main.js",
   "description": "Unified AI coding assistant desktop app",
@@ -36,6 +36,22 @@
       ],
       "signAndEditExecutable": false,
       "artifactName": "Cortex-Setup-${version}.exe"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Cortex-Mac-${version}-${arch}.${ext}",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "artifactName": "Cortex-Linux-${version}-${arch}.${ext}",
+      "category": "Development"
     }
   },
   "dependencies": {

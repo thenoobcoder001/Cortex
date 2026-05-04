@@ -7,6 +7,7 @@ const { DesktopSessionService } = require("./sessionService");
 const { AppConfigStore } = require("./configStore");
 const { startBackendServer } = require("./server");
 const { InterruptError } = require("./providers");
+const platform = require("./platform");
 
 class MemoryConfig {
   constructor(repoRoot) {
@@ -394,7 +395,20 @@ test("provider connection test uses current draft keys and reports success", asy
 test("context carry can be set to zero and survives snapshot/config reload", () => {
   const repoRoot = makeTempRepo();
   const localAppDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cortex-config-"));
-  const configPath = path.join(localAppDataDir, "cortex", "config.json");
+  
+  const originalEnv = process.env.LOCALAPPDATA;
+  const originalHome = process.env.HOME;
+  const originalIsWin = platform.isWin;
+
+  // For testing, we simulate a non-Windows environment if we are in WSL or similar
+  if (process.platform !== "win32" || repoRoot.startsWith("/mnt/")) {
+    platform.isWin = false;
+  }
+
+  process.env.LOCALAPPDATA = localAppDataDir;
+  process.env.HOME = localAppDataDir;
+
+  const configPath = path.join(platform.getAppDataDir(), "config.json");
   const config = new AppConfigStore();
   config.path = configPath;
   const service = createService(repoRoot, { config });
@@ -404,18 +418,14 @@ test("context carry can be set to zero and survives snapshot/config reload", () 
 
   const savedRaw = JSON.parse(fs.readFileSync(configPath, "utf8"));
   assert.equal(savedRaw.context_carry_messages, 0);
-
-  const originalLocalAppData = process.env.LOCALAPPDATA;
-  process.env.LOCALAPPDATA = localAppDataDir;
+  
   try {
     const reloaded = AppConfigStore.load();
     assert.equal(reloaded.contextCarryMessages, 0);
   } finally {
-    if (originalLocalAppData == null) {
-      delete process.env.LOCALAPPDATA;
-    } else {
-      process.env.LOCALAPPDATA = originalLocalAppData;
-    }
+    process.env.LOCALAPPDATA = originalEnv;
+    process.env.HOME = originalHome;
+    platform.isWin = originalIsWin;
   }
 });
 
@@ -520,7 +530,9 @@ test("plan mode saves a markdown plan file and exposes it on the active snapshot
 
   assert.ok(finalSnapshot);
   assert.ok(finalSnapshot.activePlan);
-  assert.match(finalSnapshot.activePlan.path, /\\.cortex[\\/]plans[\\/].+\.md$/i);
+  // Cross-platform path check
+  const normalizedPath = finalSnapshot.activePlan.path.replace(/\\/g, "/");
+  assert.match(normalizedPath, /\.cortex\/plans\/.+\.md$/i);
   assert.ok(fs.existsSync(finalSnapshot.activePlan.path));
   assert.match(fs.readFileSync(finalSnapshot.activePlan.path, "utf8"), /## Plan/i);
 });
