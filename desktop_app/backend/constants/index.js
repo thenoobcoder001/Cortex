@@ -1,7 +1,7 @@
 const { TOOLS } = require("./tools");
 
 const APP_NAME = "Cortex";
-const VERSION = "0.0.2";
+const VERSION = require("../../package.json").version;
 
 const DEFAULT_MODEL = "gemini-cli:auto-gemini-2.5";
 const MAX_TOOL_ROUNDS = 8;
