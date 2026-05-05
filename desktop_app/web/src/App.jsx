@@ -76,6 +76,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [renamingChat, setRenamingChat] = useState(null);
   const [renameChatDraft, setRenameChatDraft] = useState("");
+  const [confirmDeleteChatId, setConfirmDeleteChatId] = useState(null);
   const [themeMode, setThemeMode] = useState(() => loadThemeMode());
   const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
   const [terminalSnapshot, setTerminalSnapshot] = useState(null);
@@ -1357,7 +1358,7 @@ export default function App() {
 
   const handleDeleteChat = async (event, chatId, repoRoot = snapshot?.config?.repoRoot || "") => {
     event.stopPropagation();
-    if (!window.confirm("Permanently delete this chat?")) return;
+    setConfirmDeleteChatId(null);
     setError("");
     try {
       const nextSnapshot = await postJson("/api/chats/delete", { chatId, repoRoot });
@@ -1715,15 +1716,39 @@ export default function App() {
                                 Aa
                               </button>
                             )}
-                            <button
-                              type="button"
-                              className="chat-delete-btn"
-                              onClick={(event) => handleDeleteChat(event, chat.chatId, project.path)}
-                              title="Delete chat"
-                              aria-label="Delete chat"
-                            >
-                              x
-                            </button>
+                            {confirmDeleteChatId === chat.chatId ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="chat-delete-btn"
+                                  style={{ color: "var(--color-error, #e55)" }}
+                                  onClick={(event) => handleDeleteChat(event, chat.chatId, project.path)}
+                                  title="Confirm delete"
+                                  aria-label="Confirm delete"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  type="button"
+                                  className="chat-delete-btn"
+                                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteChatId(null); }}
+                                  title="Cancel"
+                                  aria-label="Cancel delete"
+                                >
+                                  ✕
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                className="chat-delete-btn"
+                                onClick={(e) => { e.stopPropagation(); setConfirmDeleteChatId(chat.chatId); }}
+                                title="Delete chat"
+                                aria-label="Delete chat"
+                              >
+                                x
+                              </button>
+                            )}
                           </div>
                         );
                       })}
