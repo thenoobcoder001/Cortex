@@ -9,7 +9,7 @@ const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
 function which(command) {
   const checker = platform.isWin ? "where.exe" : "which";
-  const result = spawnSync(checker, [command], { encoding: "utf8", shell: platform.isWin });
+  const result = spawnSync(checker, [command], { encoding: "utf8", shell: platform.isWin, env: buildCleanEnv() });
   if (result.status !== 0) {
     return null;
   }
