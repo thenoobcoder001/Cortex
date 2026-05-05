@@ -404,7 +404,7 @@ if (ipcMain) {
   });
 
   ipcMain.handle("updater:get-status",    () => ({ ..._updateStatus, currentVersion: app.getVersion() }));
-  ipcMain.handle("updater:check",         async () => { try { await autoUpdater.checkForUpdates(); } catch (err) { _setUpdateStatus("error", null, String(err.message || err)); } return _updateStatus; });
+  ipcMain.handle("updater:check",         async () => { try { await autoUpdater.checkForUpdates(); } catch (err) { _setUpdateStatus("error", null, String(err.message || err)); } return { ..._updateStatus, currentVersion: app.getVersion() }; });
   ipcMain.handle("updater:download",      () => autoUpdater.downloadUpdate());
   ipcMain.handle("updater:install",       () => { autoUpdater.quitAndInstall(); });
   ipcMain.handle("updater:set-feed-url",  (_event, url) => { if (url) autoUpdater.setFeedURL({ url }); return { ok: true }; });

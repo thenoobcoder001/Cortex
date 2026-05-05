@@ -166,7 +166,7 @@ const relay = {
     _relayClient = new CortexRelayClient({
       token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort,
       deviceName:       "Cortex Desktop",
-      appVersion:       "0.0.2",
+      appVersion:       require("../package.json").version,
       approvedDeviceIds: [...cfg.approvedDeviceIds],
       hmacSecret:       cfg.relayHmacSecret || null,
       sessionExpiresAt: cfg.relaySessionExpiresAt || "",
