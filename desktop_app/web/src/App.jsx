@@ -76,7 +76,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [renamingChat, setRenamingChat] = useState(null);
   const [renameChatDraft, setRenameChatDraft] = useState("");
-  const [confirmDeleteChatId, setConfirmDeleteChatId] = useState(null);
+  const [confirmDeleteChat, setConfirmDeleteChat] = useState(null); // { chatId, repoRoot }
   const [themeMode, setThemeMode] = useState(() => loadThemeMode());
   const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
   const [terminalSnapshot, setTerminalSnapshot] = useState(null);
@@ -1358,7 +1358,7 @@ export default function App() {
 
   const handleDeleteChat = async (event, chatId, repoRoot = snapshot?.config?.repoRoot || "") => {
     event.stopPropagation();
-    setConfirmDeleteChatId(null);
+    setConfirmDeleteChat(null);
     setError("");
     try {
       const nextSnapshot = await postJson("/api/chats/delete", { chatId, repoRoot });
@@ -1716,39 +1716,15 @@ export default function App() {
                                 Aa
                               </button>
                             )}
-                            {confirmDeleteChatId === chat.chatId ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="chat-delete-btn"
-                                  style={{ color: "var(--color-error, #e55)" }}
-                                  onClick={(event) => handleDeleteChat(event, chat.chatId, project.path)}
-                                  title="Confirm delete"
-                                  aria-label="Confirm delete"
-                                >
-                                  ✓
-                                </button>
-                                <button
-                                  type="button"
-                                  className="chat-delete-btn"
-                                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteChatId(null); }}
-                                  title="Cancel"
-                                  aria-label="Cancel delete"
-                                >
-                                  ✕
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                className="chat-delete-btn"
-                                onClick={(e) => { e.stopPropagation(); setConfirmDeleteChatId(chat.chatId); }}
-                                title="Delete chat"
-                                aria-label="Delete chat"
-                              >
-                                x
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              className="chat-delete-btn"
+                              onClick={(e) => { e.stopPropagation(); setConfirmDeleteChat({ chatId: chat.chatId, repoRoot: project.path }); }}
+                              title="Delete chat"
+                              aria-label="Delete chat"
+                            >
+                              x
+                            </button>
                           </div>
                         );
                       })}
@@ -2110,6 +2086,26 @@ export default function App() {
           }}
           top={projectMenuPos.top}
         />
+      )}
+
+      {confirmDeleteChat && (
+        <div className="confirm-overlay" onClick={() => setConfirmDeleteChat(null)}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-badge">Danger</div>
+            <div className="confirm-title">Delete this chat?</div>
+            <div className="confirm-copy">This chat and all its messages will be permanently deleted. This cannot be undone.</div>
+            <div className="confirm-actions">
+              <button type="button" className="secondary-button" onClick={() => setConfirmDeleteChat(null)}>Cancel</button>
+              <button
+                type="button"
+                className="danger-button"
+                onClick={(e) => handleDeleteChat(e, confirmDeleteChat.chatId, confirmDeleteChat.repoRoot)}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {splashVisible && (

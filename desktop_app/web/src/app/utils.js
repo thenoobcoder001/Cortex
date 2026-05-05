@@ -40,7 +40,7 @@ export function loadThemeMode() {
   } catch {
     // ignore
   }
-  return "system";
+  return "dark";
 }
 
 export function saveThemeMode(mode) {
