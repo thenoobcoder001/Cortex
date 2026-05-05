@@ -415,11 +415,12 @@ class GeminiCliProvider {
       "",
       "--output-format",
       "stream-json",
-      // "auto" confirms non-destructive actions automatically but prompts for
-      // anything outside the working directory. "yolo" auto-approves everything
-      // including writes to arbitrary paths — too permissive for remote operation.
+      // "auto_edit" auto-approves edit tools but prompts for anything else.
+      // "yolo" auto-approves everything including writes to arbitrary paths —
+      // too permissive for remote operation.
       "--approval-mode",
-      "auto",
+      "auto_edit",
+      "--skip-trust",
       "--accept-raw-output-risk",
       "--extensions",
       "none",
