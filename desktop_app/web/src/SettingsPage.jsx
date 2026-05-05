@@ -499,6 +499,21 @@ export default function SettingsPage({
 
         <div className="settings-page-grid">
           <section className="settings-section-card">
+            <div className="settings-block-title">Appearance</div>
+            <label className="field">
+              <span>Theme</span>
+              <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)}>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <div className="theme-hint">
+              Applies instantly. Current theme: {resolvedTheme}.
+            </div>
+          </section>
+
+          <section className="settings-section-card">
             <div className="settings-block-title">Workspace</div>
             <label className="field">
               <span>Repo root</span>
@@ -548,21 +563,6 @@ export default function SettingsPage({
 
           <CortexRelaySection />
           <UpdateSection />
-
-          <section className="settings-section-card">
-            <div className="settings-block-title">Appearance</div>
-            <label className="field">
-              <span>Theme</span>
-              <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)}>
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </select>
-            </label>
-            <div className="theme-hint">
-              Applies instantly. Current theme: {resolvedTheme}.
-            </div>
-          </section>
 
           <section className="settings-section-card settings-section-wide">
             <div className="settings-block-title">Remote Access</div>
