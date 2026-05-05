@@ -99,6 +99,45 @@
   --danger-hover: rgba(177, 80, 80, 0.18);
 }
 
+/* Light theme overrides for hardcoded dark-only colors */
+:root[data-theme="light"] .error-banner {
+  background: rgba(177, 60, 60, 0.1);
+  border-color: rgba(177, 60, 60, 0.3);
+  color: #7f1f1f;
+}
+:root[data-theme="light"] .recovery-banner {
+  background: rgba(171, 127, 46, 0.12);
+  border-color: rgba(171, 127, 46, 0.3);
+  color: #6b4e12;
+}
+:root[data-theme="light"] .project-menu .danger-action {
+  color: #922020;
+}
+:root[data-theme="light"] .provider-badge {
+  background: rgba(141, 77, 44, 0.12);
+  color: #7a3d18;
+}
+:root[data-theme="light"] .provider-test-result.ok {
+  background: rgba(47, 141, 102, 0.12);
+  color: #1e6644;
+}
+:root[data-theme="light"] .provider-test-result.error {
+  background: rgba(177, 60, 60, 0.1);
+  color: #7f1f1f;
+}
+:root[data-theme="light"] .diff-git-error {
+  color: #922020;
+  background: rgba(177, 60, 60, 0.08);
+}
+:root[data-theme="light"] .diff-line.hunk {
+  color: #7a5a1a;
+  background: rgba(141, 100, 30, 0.08);
+}
+:root[data-theme="light"] .terminal-output {
+  background: rgba(71, 50, 30, 0.06);
+  color: #231a13;
+}
+
 /* Custom Minimalist Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
