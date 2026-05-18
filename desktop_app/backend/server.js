@@ -351,11 +351,12 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
+      const boundPort = server.address().port;
       resolve({
         server,
         service:         effectiveService,
         terminalService: effectiveTerminalService,
-        url:             `http://${host}:${port}`,
+        url:             `http://${host}:${boundPort}`,
         close: () => new Promise((res, rej) => {
           effectiveTerminalService.closeAll();
           server.close((err) => err ? rej(err) : res());
