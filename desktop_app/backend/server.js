@@ -122,8 +122,19 @@ function isAuthorized(request, cfg) {
 
 function assertRepoRoot(repoRoot, service) {
   if (!repoRoot) return;
+  const normalizeRepoRoot = (value) => {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) {
+      return "";
+    }
+    const separatorsNormalized = platform.isWin
+      ? trimmed.replaceAll("/", "\\")
+      : trimmed.replaceAll("\\", "/");
+    return path.resolve(separatorsNormalized);
+  };
   const saved = service.config?.recentRepoRoots || [];
-  const ok = saved.some((p) => path.resolve(p) === path.resolve(repoRoot));
+  const target = normalizeRepoRoot(repoRoot);
+  const ok = saved.some((p) => normalizeRepoRoot(p) === target);
   if (!ok) throw new Error("repoRoot not in allowed projects list");
 }
 
@@ -156,7 +167,7 @@ const relay = {
     _relayClient = new CortexRelayClient({
       token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort,
       deviceName:       "Cortex Desktop",
-      appVersion:       "0.0.3",
+      appVersion:       require("../package.json").version,
       approvedDeviceIds: [...cfg.approvedDeviceIds],
       hmacSecret:       cfg.relayHmacSecret || null,
       sessionExpiresAt: cfg.relaySessionExpiresAt || "",

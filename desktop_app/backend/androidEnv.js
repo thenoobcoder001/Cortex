@@ -98,6 +98,31 @@ function avdHomeCandidates(baseEnv, sdkRoot, userHome) {
   ].filter(Boolean);
 }
 
+function userPathCandidates() {
+  const home = os.homedir();
+  const candidates = [
+    existingDir(path.join(home, ".local", "bin")),
+    existingDir("/opt/homebrew/bin"),
+    existingDir("/usr/local/opt/homebrew/bin"),
+  ];
+
+  if (!platform.isWin) {
+    const nvmDir = existingDir(process.env.NVM_DIR) || existingDir(path.join(home, ".nvm"));
+    if (nvmDir) {
+      try {
+        const versionsDir = path.join(nvmDir, "versions", "node");
+        const versions = fs.readdirSync(versionsDir).sort().reverse();
+        for (const v of versions) {
+          const bin = existingDir(path.join(versionsDir, v, "bin"));
+          if (bin) { candidates.push(bin); break; }
+        }
+      } catch {}
+    }
+  }
+
+  return candidates.filter(Boolean);
+}
+
 function resolveAndroidEnv(baseEnv = process.env) {
   const env = { ...baseEnv };
   const sdkRoot = sdkRootCandidates(baseEnv)[0] || "";
@@ -162,7 +187,7 @@ const CLI_ALLOWED_ENV_KEYS = new Set([
 function buildCleanEnv(extras = {}) {
   const clean = {};
   const allEnvKeys = Object.keys(process.env);
-  
+
   for (const key of CLI_ALLOWED_ENV_KEYS) {
     // Find the actual key in process.env (handles case-sensitivity differences)
     const actualKey = allEnvKeys.find(k => k.toUpperCase() === key.toUpperCase());
@@ -170,7 +195,18 @@ function buildCleanEnv(extras = {}) {
       clean[key] = process.env[actualKey];
     }
   }
-  
+
+  // Desktop launchers (xrdp, app menus) often start with a minimal system PATH
+  // that skips ~/.profile, so nvm and ~/.local/bin are missing. Augment here so
+  // CLI tools like claude and codex are always discoverable.
+  const pathSep = platform.isWin ? ";" : ":";
+  const existing = String(clean.PATH || clean.Path || "");
+  const parts = existing ? existing.split(pathSep) : [];
+  const extra = userPathCandidates().filter((d) => !parts.includes(d));
+  if (extra.length) {
+    clean.PATH = [...extra, ...parts].join(pathSep);
+  }
+
   return resolveAndroidEnv({ ...clean, ...extras });
 }
 

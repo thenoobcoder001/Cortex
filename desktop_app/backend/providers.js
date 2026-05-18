@@ -9,7 +9,7 @@ const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
 function which(command) {
   const checker = platform.isWin ? "where.exe" : "which";
-  const result = spawnSync(checker, [command], { encoding: "utf8", shell: platform.isWin });
+  const result = spawnSync(checker, [command], { encoding: "utf8", shell: platform.isWin, env: buildCleanEnv() });
   if (result.status !== 0) {
     return null;
   }
@@ -415,11 +415,12 @@ class GeminiCliProvider {
       "",
       "--output-format",
       "stream-json",
-      // "auto" confirms non-destructive actions automatically but prompts for
-      // anything outside the working directory. "yolo" auto-approves everything
-      // including writes to arbitrary paths — too permissive for remote operation.
+      // "auto_edit" auto-approves edit tools but prompts for anything else.
+      // "yolo" auto-approves everything including writes to arbitrary paths —
+      // too permissive for remote operation.
       "--approval-mode",
-      "auto",
+      "auto_edit",
+      "--skip-trust",
       "--accept-raw-output-risk",
       "--extensions",
       "none",

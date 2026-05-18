@@ -15,13 +15,11 @@ const MAX_HISTORY_CHARS = 80_000;
 
 function shellCommand() {
   const shell = platform.getShell();
-  return {
-    command: shell.command,
-    // For interactive terminals, we don't want the "/c" or "-lc" args
-    // we want just the interactive shell.
-    args: [],
-    banner: shell.banner
-  };
+  // Windows inherits PATH from the process env so no extra args needed.
+  // On Linux/macOS spawn as a login shell (-l) so ~/.profile / ~/.bash_profile
+  // are sourced and tools like `claude` added there are on PATH.
+  const args = platform.isWin ? [] : ["-l"];
+  return { command: shell.command, args, banner: shell.banner };
 }
 
 function killProcessTree(child) {
