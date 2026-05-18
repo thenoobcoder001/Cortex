@@ -32,6 +32,10 @@ function configFile() {
   return path.join(platform.getAppDataDir(), "config.json");
 }
 
+// In-memory cache so repeated load() calls don't hit disk on every HTTP request.
+let _cachedConfig = null;
+let _cachedMtime  = -1;
+
 class AppConfigStore {
   constructor() {
     this.path = configFile();
@@ -74,7 +78,16 @@ class AppConfigStore {
   static load() {
     const config = new AppConfigStore();
     try {
+      // Return the cached copy unless the file has been modified since last read.
+      // This avoids a synchronous disk read on every HTTP request, which was
+      // stalling the Electron main-process Win32 message pump ("Not Responding").
+      let mtime = -1;
+      try { mtime = fs.statSync(config.path).mtimeMs; } catch { /* file may not exist */ }
+      if (_cachedConfig && mtime === _cachedMtime) {
+        return _cachedConfig;
+      }
       if (fs.existsSync(config.path)) {
+        _cachedMtime = mtime;
         const raw = JSON.parse(fs.readFileSync(config.path, "utf8"));
         config.repoRoot = String(raw.repo_root || raw.repoRoot || "");
         config.activeChatId = String(raw.active_chat_id || raw.activeChatId || "");
@@ -126,10 +139,13 @@ class AppConfigStore {
       needSave = true;
     }
     if (needSave) config.save();
+    _cachedConfig = config;
     return config;
   }
 
   save() {
+    _cachedConfig = null;
+    _cachedMtime  = -1;
     fs.mkdirSync(path.dirname(this.path), { recursive: true });
     fs.writeFileSync(
       this.path,
