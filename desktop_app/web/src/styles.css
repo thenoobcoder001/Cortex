@@ -709,6 +709,46 @@ button:disabled {
   color: white;
 }
 
+.chat-rename-confirm-btn,
+.chat-rename-cancel-btn {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 1;
+  transition: all 0.2s;
+  vertical-align: middle;
+}
+
+.chat-rename-confirm-btn {
+  color: var(--accent);
+}
+
+.chat-rename-confirm-btn:hover {
+  background: rgba(99, 179, 237, 0.15);
+  color: var(--accent);
+}
+
+.chat-rename-cancel-btn {
+  color: var(--text-faint);
+}
+
+.chat-rename-cancel-btn:hover {
+  background: var(--danger);
+  color: white;
+}
+
 .chat-dot {
   width: 5px;
   height: 5px;
