@@ -10,6 +10,7 @@ const { DesktopSessionService } = require("./sessionService");
 const { TerminalService }       = require("./terminalService");
 const { CortexRelayClient }     = require("./cortexRelay");
 const { AppConfigStore }        = require("./configStore");
+const { isRelaySessionExpired, computeRelaySessionExpiresAt } = require("./relaySession");
 const platform = require("./platform");
 
 const chatRoutes     = require("./routes/chat");
@@ -155,7 +156,7 @@ const relay = {
     _relayClient = new CortexRelayClient({
       token, deviceId, reconnectSecret, localUrl, tailscaleUrl, localBackendPort,
       deviceName:       "Cortex Desktop",
-      appVersion:       "0.0.2",
+      appVersion:       "0.0.3",
       approvedDeviceIds: [...cfg.approvedDeviceIds],
       hmacSecret:       cfg.relayHmacSecret || null,
       sessionExpiresAt: cfg.relaySessionExpiresAt || "",
