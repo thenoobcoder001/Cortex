@@ -1,11 +1,10 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { fork } = require("node:child_process");
 const fs = require("node:fs");
-const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { AppConfigStore } = require("../backend/configStore");
-const { startBackendServer, relayConnect, relayDisconnect, relayStatus, relayProbe } = require("../backend/server");
 const { autoUpdater } = require("electron-updater");
 
 // ── auto-updater setup ────────────────────────────────────────────────────────
@@ -26,7 +25,58 @@ autoUpdater.on("download-progress",      (p) => _setUpdateStatus("downloading", 
 autoUpdater.on("update-downloaded",      (info) => _setUpdateStatus("ready", info.version));
 autoUpdater.on("error",                  (err) => _setUpdateStatus("error", null, String(err.message || err)));
 
-let backendHandle = null;
+// ── Backend worker (utilityProcess) ──────────────────────────────────────────
+// The HTTP backend runs in its own process so its event loop never competes
+// with Electron's main-process Win32 message pump ("Not Responding").
+let _worker = null;
+let _msgId = 0;
+const _pending = new Map();
+
+function workerSend(type, payload = {}) {
+  return new Promise((resolve, reject) => {
+    if (!_worker) {
+      reject(new Error("Backend worker is not running"));
+      return;
+    }
+    const id = ++_msgId;
+    const timer = setTimeout(() => {
+      _pending.delete(id);
+      reject(new Error(`Worker request "${type}" timed out`));
+    }, 15_000);
+    _pending.set(id, { resolve, reject, timer });
+    _worker.send({ id, type, payload });
+  });
+}
+
+function spawnWorker() {
+  if (_worker) {
+    _worker.kill();
+    _worker = null;
+  }
+  _worker = fork(path.join(__dirname, "backend-worker.js"), [], {
+    stdio: "inherit",
+  });
+  _worker.on("message", (msg) => {
+    const pending = _pending.get(msg.id);
+    if (pending) {
+      clearTimeout(pending.timer);
+      _pending.delete(msg.id);
+      if (msg.ok) pending.resolve(msg.result);
+      else pending.reject(new Error(msg.error));
+    }
+  });
+  _worker.on("exit", (code) => {
+    logDesktopLaunch("backend.worker.exit", { code });
+    _worker = null;
+    // Clear all pending requests
+    for (const [id, { reject, timer }] of _pending) {
+      clearTimeout(timer);
+      reject(new Error("Backend worker exited unexpectedly"));
+      _pending.delete(id);
+    }
+  });
+}
+
 let backendUrl = null;
 let mainWindow = null;
 let backendPort = 8765;
@@ -39,10 +89,6 @@ const EXTERNAL_EDITORS = {
   cursor: { command: "cursor", label: "Cursor" },
 };
 
-function repoRoot() {
-  return path.resolve(__dirname, "..", "..");
-}
-
 function resolveRendererEntry() {
   if (process.env.ELECTRON_RENDERER_URL) {
     return { kind: "url", value: process.env.ELECTRON_RENDERER_URL };
@@ -51,23 +97,6 @@ function resolveRendererEntry() {
     kind: "file",
     value: path.join(__dirname, "..", "web", "dist", "index.html"),
   };
-}
-
-function findFreePort(host = "127.0.0.1") {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on("error", reject);
-    server.listen(0, host, () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("Could not determine an open port."));
-        return;
-      }
-      server.close(() => resolve(address.port));
-    });
-  });
 }
 
 function loadRemoteAccessPreference() {
@@ -119,15 +148,10 @@ function getNetworkUrl(port, tailscale = false) {
 async function startBackend() {
   remoteAccessEnabled = loadRemoteAccessPreference();
   const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
-  // Try to use the default port 8765 first so browser access works consistently.
-  try {
-    backendHandle = await startBackendServer({ host, port: 8765 });
-  } catch (err) {
-    // If 8765 is taken, fall back to a dynamic free port.
-    const port = await findFreePort(host);
-    backendHandle = await startBackendServer({ host, port });
-  }
-  backendPort = Number(new URL(backendHandle.url).port || 8765);
+
+  spawnWorker();
+  const result = await workerSend("start", { host, port: 8765 });
+  backendPort = Number(new URL(result.url).port || 8765);
   backendUrl = `http://127.0.0.1:${backendPort}`;
 
   // Auto-connect Cortex relay if credentials are saved
@@ -135,7 +159,7 @@ async function startBackend() {
   if (config.cortexToken) {
     setImmediate(async () => {
       try {
-        const result = await relayConnect({
+        const relayResult = await workerSend("relay:connect", {
           token:            config.cortexToken,
           deviceId:         config.cortexDeviceId         || undefined,
           reconnectSecret:  config.cortexReconnectSecret  || undefined,
@@ -144,10 +168,10 @@ async function startBackend() {
           localBackendPort: backendPort,
         });
         const cfg = AppConfigStore.load();
-        cfg.cortexDeviceId        = result.deviceId;
-        cfg.cortexReconnectSecret = result.reconnectSecret;
+        cfg.cortexDeviceId        = relayResult.deviceId;
+        cfg.cortexReconnectSecret = relayResult.reconnectSecret;
         cfg.save();
-        logDesktopLaunch("cortex.relay.connected", { deviceId: result.deviceId, socketId: result.socketId });
+        logDesktopLaunch("cortex.relay.connected", { deviceId: relayResult.deviceId, socketId: relayResult.socketId });
       } catch (err) {
         logDesktopLaunch("cortex.relay.connect_failed", { message: String(err.message || err) });
       }
@@ -156,18 +180,20 @@ async function startBackend() {
 }
 
 async function stopBackend() {
-  if (!backendHandle) {
-    return;
+  if (_worker) {
+    _worker.kill();
+    _worker = null;
   }
-  await backendHandle.close();
-  backendHandle = null;
   backendUrl = null;
   backendPort = 0;
 }
 
 async function restartBackend() {
-  await stopBackend();
-  await startBackend();
+  remoteAccessEnabled = loadRemoteAccessPreference();
+  const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
+  const result = await workerSend("restart", { host, port: 8765 });
+  backendPort = Number(new URL(result.url).port || 8765);
+  backendUrl = `http://127.0.0.1:${backendPort}`;
   return desktopConfigPayload();
 }
 
@@ -293,7 +319,6 @@ function createWindow() {
     dialog.showErrorBox("Cortex — Load Error", `Renderer failed to load (${errorCode}):\n${errorDescription}`);
   });
   attachWindowDiagnostics(mainWindow);
-
 }
 
 if (ipcMain) {
@@ -346,20 +371,20 @@ if (ipcMain) {
     }
   });
 
-  ipcMain.handle("cortex:status", () => relayStatus());
+  ipcMain.handle("cortex:status",         () => workerSend("relay:status"));
   ipcMain.handle("cortex:refresh-status", async () => {
-    const status = relayStatus();
+    const status = await workerSend("relay:status");
     if (status.state !== "connected") {
       return { ...status, verified: false };
     }
-    const result = await relayProbe();
+    const result = await workerSend("relay:probe");
     return { ...status, verified: true, lastProbeAt: new Date().toISOString(), probe: result };
   });
 
   ipcMain.handle("cortex:connect", async (_event, payload) => {
     const { token, deviceId, reconnectSecret } = payload || {};
     if (!token) throw new Error("token is required");
-    const result = await relayConnect({
+    const result = await workerSend("relay:connect", {
       token, deviceId, reconnectSecret,
       localUrl:         getNetworkUrl(backendPort, false),
       tailscaleUrl:     getNetworkUrl(backendPort, true),
@@ -373,8 +398,8 @@ if (ipcMain) {
     return result;
   });
 
-  ipcMain.handle("cortex:disconnect", () => {
-    relayDisconnect();
+  ipcMain.handle("cortex:disconnect", async () => {
+    await workerSend("relay:disconnect");
     const config = AppConfigStore.load();
     config.cortexToken = "";
     config.cortexDeviceId = "";
@@ -462,8 +487,10 @@ if (app) {
     void stopBackend();
   });
 } else {
-  // Fallback testing local backend if electron fails to load
+  // Fallback: start backend standalone without Electron (for local testing)
+  const { startBackendServer } = require("../backend/server");
   console.log("Starting backend without electron...");
-  startBackend();
+  startBackendServer({ host: "127.0.0.1", port: 8765 }).then((h) => {
+    console.log("Backend running at", h.url);
+  });
 }
-

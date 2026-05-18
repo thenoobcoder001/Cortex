@@ -1705,26 +1705,51 @@ export default function App() {
                                 )}
                               </>
                             )}
-                            {!isRenaming && (
-                              <button
-                                type="button"
-                                className="chat-rename-btn"
-                                onClick={(event) => handleStartRenameChat(event, chat, project.path)}
-                                title="Rename chat"
-                                aria-label="Rename chat"
-                              >
-                                Aa
-                              </button>
+                            {isRenaming ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="chat-rename-confirm-btn"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={(e) => { e.stopPropagation(); void handleSubmitRenameChat(chat, project.path); }}
+                                  title="Confirm rename"
+                                  aria-label="Confirm rename"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  type="button"
+                                  className="chat-rename-cancel-btn"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={(e) => { e.stopPropagation(); handleCancelRenameChat(); }}
+                                  title="Cancel rename"
+                                  aria-label="Cancel rename"
+                                >
+                                  ✕
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="chat-rename-btn"
+                                  onClick={(event) => handleStartRenameChat(event, chat, project.path)}
+                                  title="Rename chat"
+                                  aria-label="Rename chat"
+                                >
+                                  Aa
+                                </button>
+                                <button
+                                  type="button"
+                                  className="chat-delete-btn"
+                                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteChat({ chatId: chat.chatId, repoRoot: project.path }); }}
+                                  title="Delete chat"
+                                  aria-label="Delete chat"
+                                >
+                                  x
+                                </button>
+                              </>
                             )}
-                            <button
-                              type="button"
-                              className="chat-delete-btn"
-                              onClick={(e) => { e.stopPropagation(); setConfirmDeleteChat({ chatId: chat.chatId, repoRoot: project.path }); }}
-                              title="Delete chat"
-                              aria-label="Delete chat"
-                            >
-                              x
-                            </button>
                           </div>
                         );
                       })}
