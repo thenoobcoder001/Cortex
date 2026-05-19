@@ -118,8 +118,9 @@ class ProjectChatStore {
     return "New chat";
   }
 
-  listChats() {
-    const items = this.loadIndex().sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+  listChats(limit = null) {
+    let items = this.loadIndex().sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+    if (limit && limit > 0) items = items.slice(0, limit);
     return items.map((item) => ({
       chatId: String(item.chat_id || ""),
       title: String(item.title || "New chat"),

@@ -4,7 +4,9 @@ async function handle(ctx) {
   const { method, pathname, url, body, reply, service, assertRepoRoot } = ctx;
 
   if (method === "GET" && pathname === "/api/chats") {
-    reply(200, { chats: service.listChats(url.searchParams.get("repoRoot")) });
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? Math.max(1, parseInt(limitParam, 10) || 0) : null;
+    reply(200, { chats: service.listChats(url.searchParams.get("repoRoot"), limit) });
     return true;
   }
 
