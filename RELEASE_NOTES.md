@@ -1,3 +1,29 @@
+## Cortex v0.0.4 — Desktop Startup, Relay, and Mobile Workspace Fixes
+
+> ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
+
+### Startup and desktop stability
+- Backend now runs as a child process instead of blocking the Electron main process
+- Fixed "Startup interrupted" by using the actual bound backend port in the renderer URL
+- Fixed startup hangs and "Not Responding" cases caused by repeated synchronous config/provider checks
+- Removed the extra standalone backend from the dev command so Electron owns the backend lifecycle
+
+### Cortex relay and mobile
+- Fixed Cortex relay re-pairing loops after reconnects by preserving signed relay sessions
+- Fixed the desktop sign-in form flash during relay reconnect
+- Mobile status/config calls now use lite snapshots that skip expensive file trees, workspace diffs, and message payloads
+- Mobile chat actions now return lite snapshots, fixing workspace opens for large repos such as `mobile-coapp`
+- Relay-proxied localhost requests are now treated as mobile/remote requests, not desktop-local requests
+
+### Workspace and chat fixes
+- Fixed chat rename UI behavior and persistence
+- Added faster project chat loading through lightweight `/api/chats` responses
+- Cached CLI availability checks for Codex, Gemini CLI, and Claude CLI
+- Improved boot screen text contrast
+- Auto-written `.claudeignore` files are included for repo confinement and secret exclusion
+
+---
+
 ## Cortex v0.0.2 — Security & Stability
 
 > ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
