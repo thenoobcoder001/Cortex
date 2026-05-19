@@ -1,6 +1,7 @@
 ## Cortex v0.0.4 — Desktop Startup, Relay, and Mobile Workspace Fixes
 
 > ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
+Previous release notes are preserved below.
 
 ### Startup and desktop stability
 - Backend now runs as a child process instead of blocking the Electron main process
