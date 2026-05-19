@@ -330,8 +330,8 @@ class DesktopSessionService {
     }));
   }
 
-  snapshot() {
-    return buildSnapshot(this);
+  snapshot({ lite = false } = {}) {
+    return buildSnapshot(this, { lite });
   }
 
   activeChatPayload() {
@@ -588,7 +588,7 @@ class DesktopSessionService {
     return this.snapshot();
   }
 
-  updateConfig({ model = null, repoRoot = null, apiKey = null, geminiApiKey = null, openaiApiKey = null, promptPreset = null, assistantMemory = null, contextCarryMessages = null, remoteAccessEnabled = null } = {}) {
+  updateConfig({ model = null, repoRoot = null, apiKey = null, geminiApiKey = null, openaiApiKey = null, promptPreset = null, assistantMemory = null, contextCarryMessages = null, remoteAccessEnabled = null } = {}, { lite = false } = {}) {
     if (repoRoot) {
       this.setRepoRoot(repoRoot);
     }
@@ -620,7 +620,7 @@ class DesktopSessionService {
       this.config.remoteAccessEnabled = Boolean(remoteAccessEnabled);
     }
     this.persistConfig();
-    return this.snapshot();
+    return this.snapshot({ lite });
   }
 
   updateChatPreferences({ toolSafetyMode, chatId = null, repoRoot = null }) {

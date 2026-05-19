@@ -29,9 +29,9 @@
   --boot-glow: rgba(255, 255, 255, 0.08);
   --boot-frame: rgba(255, 255, 255, 0.03);
   --boot-frame-border: rgba(255, 255, 255, 0.1);
-  --boot-copy: rgba(255,255,255,0.5);
-  --boot-muted: rgba(255,255,255,0.4);
-  --boot-faint: rgba(255,255,255,0.3);
+  --boot-copy: rgba(255,255,255,0.75);
+  --boot-muted: rgba(255,255,255,0.6);
+  --boot-faint: rgba(255,255,255,0.5);
   --boot-border: rgba(255,255,255,0.05);
   --code-block-text: #cccccc;
   --plan-preview-bg: rgba(0, 0, 0, 0.22);

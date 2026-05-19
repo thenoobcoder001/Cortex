@@ -38,7 +38,7 @@ function providersSnapshot(service) {
   };
 }
 
-function buildSnapshot(service) {
+function buildSnapshot(service, { lite = false } = {}) {
   return {
     app: { name: APP_NAME, version: VERSION },
     config: {
@@ -59,15 +59,16 @@ function buildSnapshot(service) {
     providers: providersSnapshot(service),
     models: models(),
     chats: service.chatItems(),
-    messages: service.messages,
-    changes: service.workspaceChanges(service.repoRoot, {
+    messages: lite ? [] : service.messages,
+    // Skip expensive file diff and file tree when lite — saves 3-4 seconds per call.
+    changes: lite ? [] : service.workspaceChanges(service.repoRoot, {
       initialize: !service.suppressWorkspaceBaselineInit,
     }),
-    activeChatChanges: service.changes,
+    activeChatChanges: lite ? [] : service.changes,
     activePlan: service.activePlan,
-    files: typeof service.listFilesCached === "function"
+    files: lite ? [] : (typeof service.listFilesCached === "function"
       ? service.listFilesCached(service.repoRoot, 200)
-      : service.files.listFiles(service.repoRoot, 200),
+      : service.files.listFiles(service.repoRoot, 200)),
     liveTerminalCommand: typeof service.liveTerminalCommand === "function"
       ? service.liveTerminalCommand()
       : "",

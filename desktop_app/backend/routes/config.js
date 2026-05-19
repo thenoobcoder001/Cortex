@@ -4,15 +4,9 @@ async function handle(ctx) {
   const { method, pathname, body, reply, service, isLocal } = ctx;
 
   if (method === "GET" && pathname === "/api/status") {
-    const snap = service.snapshot();
-    // ?lite=true — strip heavy fields so the response is relay-safe (< 1 MB).
-    // Mobile only needs config, providers, models, chats, and basic run state.
-    if (ctx.url?.searchParams?.get("lite") === "true") {
-      const { changes, files, messages, ...lite } = snap;
-      reply(200, lite);
-    } else {
-      reply(200, snap);
-    }
+    const isLite = ctx.url?.searchParams?.get("lite") === "true";
+    // lite=true skips expensive workspaceChanges/files/messages computation entirely.
+    reply(200, service.snapshot({ lite: isLite }));
     return true;
   }
 
@@ -24,7 +18,8 @@ async function handle(ctx) {
       const { model, promptPreset, contextCarryMessages, repoRoot } = body;
       configBody = { model, promptPreset, contextCarryMessages, repoRoot };
     }
-    reply(200, service.updateConfig(configBody));
+    // Remote callers (mobile) never need changes/files/messages — skip the expensive diff.
+    reply(200, service.updateConfig(configBody, { lite: !isLocal }));
     return true;
   }
 
