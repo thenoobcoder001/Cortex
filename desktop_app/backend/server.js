@@ -177,6 +177,16 @@ const relay = {
         console.log(`Cortex relay: pairing request from ${id}`);
         _pendingPairing.add(id);
       },
+      onAutoApprove: (id) => {
+        const cfg = AppConfigStore.load();
+        if (!cfg.approvedDeviceIds.includes(id)) {
+          cfg.approvedDeviceIds.push(id);
+          if (!cfg.relaySessionExpiresAt) {
+            cfg.relaySessionExpiresAt = computeRelaySessionExpiresAt();
+          }
+          cfg.save();
+        }
+      },
       onAuditLog:       (entry) => writeAuditLog(entry),
     });
     return _relayClient.connect();

@@ -23,6 +23,7 @@ function cortexPost(path, bodyObj) {
       });
     });
     req.on("error", reject);
+    req.setTimeout(10000, () => { req.destroy(new Error("Cortex relay request timed out")); });
     req.write(postData);
     req.end();
   });
@@ -105,7 +106,15 @@ async function handle(ctx) {
       cfg.cortexReconnectSecret = result.reconnectSecret; cfg.save();
       reply(200, { connected: true, ...result });
     } catch (err) {
-      reply(400, { detail: String(err.message || err) });
+      // If the server explicitly rejected the token (auth failed), clear it so
+      // the status endpoint stops returning hasSavedSession and polling stops retrying.
+      if (err.authFailed) {
+        cfg.cortexToken = ""; cfg.cortexDeviceId = ""; cfg.cortexReconnectSecret = "";
+        cfg.save();
+        reply(200, { connected: false, authFailed: true });
+      } else {
+        reply(400, { detail: String(err.message || err) });
+      }
     }
     return true;
   }
