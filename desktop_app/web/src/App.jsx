@@ -1558,6 +1558,7 @@ export default function App() {
         setShowDeleteSettingsConfirm={setShowDeleteSettingsConfirm}
         onDeleteSettingsFile={handleDeleteSettingsFile}
         configPath={snapshot?.config?.configPath || ""}
+        backendUrl={backendUrl}
       />
     );
   }

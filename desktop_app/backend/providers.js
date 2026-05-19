@@ -121,6 +121,7 @@ class CodexProvider {
     this.sessionId = "";
     this.sessionMode = "fresh";
     this.toolReadOnly = false;
+    this._cliAvailable = null;
   }
 
   setRepoRoot(repoRoot) {
@@ -133,7 +134,10 @@ class CodexProvider {
   }
 
   get available() {
-    return Boolean(this.apiKey || which("codex.cmd") || which("codex"));
+    if (this._cliAvailable === null) {
+      this._cliAvailable = Boolean(which("codex.cmd") || which("codex"));
+    }
+    return Boolean(this.apiKey || this._cliAvailable);
   }
 
   get connected() {
@@ -382,6 +386,7 @@ class GeminiCliProvider {
     this.repoRoot = path.resolve(repoRoot);
     this.sessionId = "";
     this.sessionMode = "fresh";
+    this._available = null;
   }
 
   setRepoRoot(repoRoot) {
@@ -394,7 +399,10 @@ class GeminiCliProvider {
   }
 
   get available() {
-    return Boolean(which("gemini.cmd") || which("gemini.ps1") || which("gemini"));
+    if (this._available === null) {
+      this._available = Boolean(which("gemini.cmd") || which("gemini.ps1") || which("gemini"));
+    }
+    return this._available;
   }
 
   get connected() {
@@ -542,6 +550,7 @@ class ClaudeCliProvider {
     this.sessionId = "";
     this.sessionMode = "fresh";
     this.toolReadOnly = false;
+    this._available = null;
   }
 
   setRepoRoot(repoRoot) {
@@ -570,7 +579,10 @@ class ClaudeCliProvider {
   }
 
   get available() {
-    return Boolean(this.resolveCli());
+    if (this._available === null) {
+      this._available = Boolean(this.resolveCli());
+    }
+    return this._available;
   }
 
   get connected() {
