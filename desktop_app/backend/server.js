@@ -280,9 +280,10 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
   const effectiveTerminalService = terminalService || new TerminalService();
 
   const server = http.createServer(async (request, response) => {
-    const origin  = corsOrigin(request);
-    const remote  = request.socket?.remoteAddress || "";
-    const isLocal = isLoopbackRemote(remote);
+    const origin        = corsOrigin(request);
+    const remote        = request.socket?.remoteAddress || "";
+    const relayDeviceId = String(request.headers["x-pocketai-relay-device"] || "").trim();
+    const isLocal       = isLoopbackRemote(remote) && !relayDeviceId;
 
     // Preflight
     if (request.method === "OPTIONS") {

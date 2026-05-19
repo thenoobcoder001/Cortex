@@ -394,7 +394,7 @@ class DesktopSessionService {
     };
   }
 
-  newChat(repoRoot = null) {
+  newChat(repoRoot = null, { lite = false } = {}) {
     if (repoRoot) {
       this.setRepoRoot(repoRoot);
     }
@@ -417,10 +417,10 @@ class DesktopSessionService {
     this.codexProvider.sessionMode = "fresh";
     this.invalidateSnapshotCaches(this.repoRoot);
     this.persistConfig();
-    return this.snapshot();
+    return this.snapshot({ lite });
   }
 
-  activateChat(chatId, repoRoot = null) {
+  activateChat(chatId, repoRoot = null, { lite = false } = {}) {
     if (repoRoot && path.resolve(repoRoot) !== this.repoRoot) {
       this.setRepoRoot(repoRoot);
     }
@@ -436,10 +436,10 @@ class DesktopSessionService {
     this.toolReadOnly = String(payload.tool_safety_mode || "write") === "read";
     this.toolExecutor.readOnly = this.toolReadOnly;
     this.persistConfig();
-    return this.snapshot();
+    return this.snapshot({ lite });
   }
 
-  deleteChat(chatId, repoRoot = null) {
+  deleteChat(chatId, repoRoot = null, { lite = false } = {}) {
     if (this.requestRegistry.has(chatId)) {
       // Interrupt the running request and force-remove it from the registry so
       // the delete can proceed immediately. On Windows, taskkill is async and the
@@ -465,27 +465,27 @@ class DesktopSessionService {
     this.invalidateSnapshotCaches(repoRoot ? path.resolve(repoRoot) : this.repoRoot);
     this.interruptedRuns.delete(chatId);
     this.persistConfig();
-    return this.snapshot();
+    return this.snapshot({ lite });
   }
 
-  renameChat(chatId, title, repoRoot = null) {
+  renameChat(chatId, title, repoRoot = null, { lite = false } = {}) {
     const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
     const renamedTitle = store.renameChat(chatId, title);
     if (!renamedTitle) {
       throw new Error(`Chat not found: ${chatId}`);
     }
     this.invalidateSnapshotCaches(repoRoot ? path.resolve(repoRoot) : this.repoRoot);
-    return this.snapshot();
+    return this.snapshot({ lite });
   }
 
-  interruptChat(chatId) {
+  interruptChat(chatId, { lite = false } = {}) {
     if (!chatId) {
       throw new Error("Chat id is required.");
     }
     if (!this.requestRegistry.interrupt(chatId)) {
       throw new Error("Chat is not currently running.");
     }
-    return this.snapshot();
+    return this.snapshot({ lite });
   }
 
   clearLocalData(repoRoots = []) {
@@ -623,7 +623,7 @@ class DesktopSessionService {
     return this.snapshot({ lite });
   }
 
-  updateChatPreferences({ toolSafetyMode, chatId = null, repoRoot = null }) {
+  updateChatPreferences({ toolSafetyMode, chatId = null, repoRoot = null }, { lite = false } = {}) {
     const normalizedMode = String(toolSafetyMode || "write").trim().toLowerCase() === "read" ? "read" : "write";
     if (chatId) {
       const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
@@ -646,7 +646,7 @@ class DesktopSessionService {
       this.toolExecutor.readOnly = this.toolReadOnly;
     }
     this.persistConfig();
-    return this.snapshot();
+    return this.snapshot({ lite });
   }
 
   readFile(rawPath) {

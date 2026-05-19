@@ -1,7 +1,8 @@
 "use strict";
 
 async function handle(ctx) {
-  const { method, pathname, url, body, reply, service, assertRepoRoot } = ctx;
+  const { method, pathname, url, body, reply, service, assertRepoRoot, isLocal } = ctx;
+  const lite = !isLocal;
 
   if (method === "GET" && pathname === "/api/chats") {
     reply(200, { chats: service.listChats(url.searchParams.get("repoRoot")) });
@@ -22,30 +23,30 @@ async function handle(ctx) {
 
   if (method === "POST" && pathname === "/api/chats/new") {
     assertRepoRoot(body.repoRoot || null, service);
-    reply(200, service.newChat(body.repoRoot || null));
+    reply(200, service.newChat(body.repoRoot || null, { lite }));
     return true;
   }
 
   if (method === "POST" && pathname === "/api/chats/activate") {
     assertRepoRoot(body.repoRoot || null, service);
-    reply(200, service.activateChat(body.chatId, body.repoRoot || null));
+    reply(200, service.activateChat(body.chatId, body.repoRoot || null, { lite }));
     return true;
   }
 
   if (method === "POST" && pathname === "/api/chats/delete") {
     assertRepoRoot(body.repoRoot || null, service);
-    reply(200, service.deleteChat(body.chatId, body.repoRoot || null));
+    reply(200, service.deleteChat(body.chatId, body.repoRoot || null, { lite }));
     return true;
   }
 
   if (method === "POST" && pathname === "/api/chats/rename") {
     assertRepoRoot(body.repoRoot || null, service);
-    reply(200, service.renameChat(body.chatId, body.title, body.repoRoot || null));
+    reply(200, service.renameChat(body.chatId, body.title, body.repoRoot || null, { lite }));
     return true;
   }
 
   if (method === "POST" && pathname === "/api/chats/interrupt") {
-    reply(200, service.interruptChat(body.chatId || null));
+    reply(200, service.interruptChat(body.chatId || null, { lite }));
     return true;
   }
 
@@ -55,7 +56,7 @@ async function handle(ctx) {
       toolSafetyMode: body.toolSafetyMode,
       chatId:         body.chatId  || null,
       repoRoot:       body.repoRoot || null,
-    }));
+    }, { lite }));
     return true;
   }
 
