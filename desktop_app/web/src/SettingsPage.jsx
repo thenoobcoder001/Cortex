@@ -91,7 +91,7 @@ function UpdateSection() {
   );
 }
 
-function CortexRelaySection() {
+function CortexRelaySection({ backendUrl }) {
   const [status, setStatus] = useState(null);
   const [tab, setTab] = useState("signin"); // "signin" | "register"
   const [step, setStep] = useState("form"); // "form" | "verify"
@@ -109,29 +109,37 @@ function CortexRelaySection() {
 
   useEffect(() => {
     fetchStatus();
-    pollRef.current = setInterval(fetchStatus, 5000);
+    pollRef.current = setInterval(fetchStatus, 15000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
   async function fetchStatus() {
     try {
-      const res = await fetch("http://127.0.0.1:8765/api/cortex/status");
+      const res = await fetch(`${backendUrl}/api/cortex/status`);
       const s = await res.json();
-      if (s.state !== "connected" && s.hasSavedSession) {
+      if (s.state === "disconnected" && s.hasSavedSession) {
         // WS dropped but we have saved credentials — reconnect silently
-        fetch("http://127.0.0.1:8765/api/cortex/reconnect", { method: "POST" })
+        fetch(`${backendUrl}/api/cortex/reconnect`, { method: "POST" })
           .then(r => r.json())
-          .then(d => { if (d.connected) setStatus({ state: "connected", deviceId: d.deviceId, socketId: d.socketId }); })
+          .then(d => {
+            if (d.connected) setStatus({ state: "connected", deviceId: d.deviceId, socketId: d.socketId });
+            else if (d.authFailed) setStatus({ state: "disconnected", deviceId: null, socketId: null });
+          })
           .catch(() => {});
         // Keep showing connected while reconnecting
         setStatus(prev => prev?.state === "connected" ? prev : { state: "reconnecting", deviceId: null, socketId: null });
       } else {
-        setStatus(s);
+        // Normalize transitional backend states so the sign-in form never flashes
+        // during an in-progress connection handshake.
+        const normalized = (s.state === "authenticating" || s.state === "connecting")
+          ? "reconnecting"
+          : s.state;
+        setStatus({ ...s, state: normalized });
       }
     } catch { /* ignore */ }
     // Poll for pending and approved devices
     try {
-      const res = await fetch("http://127.0.0.1:8765/api/cortex/pairing-requests");
+      const res = await fetch(`${backendUrl}/api/cortex/pairing-requests`);
       const data = await res.json();
       setPendingDevices(data.pending || []);
       setApprovedDevices(data.approved || []);
@@ -141,7 +149,7 @@ function CortexRelaySection() {
   async function handleApprove(deviceId) {
     setPairingLoading(prev => ({ ...prev, [deviceId]: true }));
     try {
-      await fetch("http://127.0.0.1:8765/api/cortex/approve-device", {
+      await fetch(`${backendUrl}/api/cortex/approve-device`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId }),
       });
@@ -153,7 +161,7 @@ function CortexRelaySection() {
   async function handleReject(deviceId) {
     setPairingLoading(prev => ({ ...prev, [deviceId]: true }));
     try {
-      await fetch("http://127.0.0.1:8765/api/cortex/reject-device", {
+      await fetch(`${backendUrl}/api/cortex/reject-device`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId }),
       });
@@ -165,7 +173,7 @@ function CortexRelaySection() {
   async function handleRemove(deviceId) {
     setPairingLoading(prev => ({ ...prev, [deviceId]: true }));
     try {
-      await fetch("http://127.0.0.1:8765/api/cortex/remove-device", {
+      await fetch(`${backendUrl}/api/cortex/remove-device`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId }),
       });
@@ -183,7 +191,7 @@ function CortexRelaySection() {
     if (!trimEmail || !trimPass) { setError("Enter email and password."); return; }
     setLoading(true); setError(""); setInfo("");
     try {
-      const res = await fetch("http://127.0.0.1:8765/api/cortex/send-verification", {
+      const res = await fetch(`${backendUrl}/api/cortex/send-verification`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: trimEmail, password: trimPass }),
       });
@@ -206,7 +214,7 @@ function CortexRelaySection() {
     if (!trimEmail || !trimPass) { setError("Enter email and password."); return; }
     setLoading(true); setError(""); setInfo("");
     try {
-      const res = await fetch("http://127.0.0.1:8765/api/cortex/send-verification", {
+      const res = await fetch(`${backendUrl}/api/cortex/send-verification`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: trimEmail, password: trimPass }),
       });
@@ -222,7 +230,7 @@ function CortexRelaySection() {
     if (!code.trim()) { setError("Enter the verification code."); return; }
     setLoading(true); setError("");
     try {
-      const res = await fetch("http://127.0.0.1:8765/api/cortex/verify", {
+      const res = await fetch(`${backendUrl}/api/cortex/verify`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), code: code.trim() }),
       });
@@ -237,7 +245,7 @@ function CortexRelaySection() {
   async function handleDisconnect() {
     setLoading(true);
     try {
-      await fetch("http://127.0.0.1:8765/api/cortex/disconnect", { method: "POST" });
+      await fetch(`${backendUrl}/api/cortex/disconnect`, { method: "POST" });
       await window.desktopApi?.cortexDisconnect?.();
       setStatus({ state: "disconnected", deviceId: null, socketId: null });
     } catch { /* ignore */ } finally { setLoading(false); }
@@ -246,7 +254,7 @@ function CortexRelaySection() {
   async function handleRefreshConnection() {
     setConnectionCheck({ state: "checking", message: "Verifying relay connection..." });
     try {
-      const res = await fetch("http://127.0.0.1:8765/api/cortex/probe", { method: "POST" });
+      const res = await fetch(`${backendUrl}/api/cortex/probe`, { method: "POST" });
       const result = await res.json();
 
       if (result?.verified) {
@@ -372,7 +380,12 @@ function CortexRelaySection() {
           </button>
         </div>
       ) : reconnecting ? (
-        <div className="provider-test-result" style={{ marginBottom: 10 }}>Reconnecting…</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="provider-test-result" style={{ marginBottom: 0 }}>Reconnecting to relay...</div>
+          <button type="button" className="danger-button" disabled={loading} onClick={handleDisconnect}>
+            {loading ? "Disconnecting…" : "Cancel & Sign Out"}
+          </button>
+        </div>
       ) : step === "verify" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {info && <div className="provider-test-result ok">{info}</div>}
@@ -474,6 +487,7 @@ export default function SettingsPage({
   setShowDeleteSettingsConfirm,
   onDeleteSettingsFile,
   configPath,
+  backendUrl,
 }) {
   const { tailscaleUrls, localNetworkUrls } = splitRemoteAccessUrls(remoteAccessUrls);
 
@@ -561,7 +575,7 @@ export default function SettingsPage({
             </label>
           </section>
 
-          <CortexRelaySection />
+          <CortexRelaySection backendUrl={backendUrl} />
           <UpdateSection />
 
           <section className="settings-section-card settings-section-wide">

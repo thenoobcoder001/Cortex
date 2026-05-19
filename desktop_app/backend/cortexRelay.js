@@ -63,6 +63,8 @@ class CortexRelayClient {
     // Time-bound relay approval window (P2-L).
     this.sessionExpiresAt = opts.sessionExpiresAt || "";
     this.onSessionExpired = opts.onSessionExpired || null;
+    // Called with deviceId when a device is auto-approved via valid HMAC.
+    this.onAutoApprove    = opts.onAutoApprove    || null;
 
     this._ws             = null;
     this._heartbeatTimer = null;
@@ -152,6 +154,14 @@ class CortexRelayClient {
         this._stopHeartbeat();
         this._setState("disconnected");
         this._ws = null;
+        // Code 1000 during auth = server explicitly rejected (token invalid/expired).
+        // Do not try fallback — it will also reject. Fail immediately with a clear error.
+        if (wasConnecting && ev.code === 1000) {
+          const err = new Error("Cortex relay auth rejected (token invalid or expired)");
+          err.authFailed = true;
+          this._settle(null, err);
+          return;
+        }
         if (wasConnecting && !useFallback) {
           console.warn(`CortexRelayClient: primary connection closed (code=${ev.code}), trying fallback...`);
           this.connect(true).then(resolve).catch(reject);
@@ -396,21 +406,46 @@ class CortexRelayClient {
       this._expireRelaySession();
     }
 
+    // P2-I: HMAC signature verification — verify before pairing check so a valid
+    // HMAC can serve as proof-of-prior-approval when the relay server assigns a
+    // new device ID on reconnect (relay servers do not reliably preserve device IDs).
+    if (!this._verifyRelayHmac(payload)) {
+      if (this.onAuditLog) this.onAuditLog({ source: "relay", device_id: fromDeviceId, event: "hmac_rejected", path: payload.path || "" });
+      return;
+    }
+
     // Pairing guard — check if approved
     const isApproved = this.approvedDeviceIds === null
       || (Array.isArray(this.approvedDeviceIds) && this.approvedDeviceIds.includes(fromDeviceId));
 
     if (!isApproved) {
-      if (this.onPairingRequest) {
-        this.onPairingRequest(fromDeviceId);
+      // If the payload carried a valid HMAC (verified above) and we have a secret,
+      // this device was approved in a previous session but got a new device ID from
+      // the relay server. Auto-approve it in memory so the session continues without
+      // requiring the user to re-pair every time the mobile reconnects.
+      const isHmacAuthenticated = Boolean(this.hmacSecret && payload.hmac);
+      if (isHmacAuthenticated) {
+        if (Array.isArray(this.approvedDeviceIds)) {
+          this.approvedDeviceIds.push(fromDeviceId);
+        }
+        if (this.onAutoApprove) this.onAutoApprove(fromDeviceId);
+        // Fall through to handle the request
+      } else {
+        if (this.onPairingRequest) {
+          this.onPairingRequest(fromDeviceId);
+        }
+        // Respond immediately so mobile fails fast instead of waiting 30s for a timeout.
+        // The 403 body signals "pairing_pending" so the mobile can show a clear message.
+        if (type === "api_request" && request_id) {
+          this._relayTo(fromDeviceId, {
+            type: "api_response",
+            request_id,
+            status: 403,
+            body: { detail: "pairing_pending" },
+          });
+        }
+        return;
       }
-      return; // drop request until approved
-    }
-
-    // P2-I: HMAC signature verification — drop tampered messages
-    if (!this._verifyRelayHmac(payload)) {
-      if (this.onAuditLog) this.onAuditLog({ source: "relay", device_id: fromDeviceId, event: "hmac_rejected", path: payload.path || "" });
-      return;
     }
 
     // Audit log — record metadata only, never log request bodies
