@@ -1577,13 +1577,230 @@ export default function App() {
           setHeaderInfoOpen(false);
         }}
       >
-        <aside className="sidebar">
-          <div className="sidebar-topbar">
+        <div className="app-navbar">
+          <div className="app-navbar-brand">
             <span className="sidebar-brand">Cortex</span>
             <button type="button" className="icon-button" onClick={handlePickRepo} title="Add project">
               +
             </button>
           </div>
+          <div className="app-navbar-main">
+            <div className="topbar-left">
+              <button
+                type="button"
+                className="sidebar-toggle-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSidebarCollapsed((prev) => !prev);
+                }}
+                title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+              >
+                {sidebarCollapsed ? ">" : "<"}
+              </button>
+              <select
+                className="header-thread-select"
+                value={snapshot.config.activeChatId || ""}
+                onChange={(event) => {
+                  if (event.target.value) {
+                    void handleActivateChat(event.target.value);
+                  }
+                }}
+              >
+                <option value="">New thread</option>
+                {snapshot.chats.map((chat) => (
+                  <option key={chat.chatId} value={chat.chatId}>
+                    {chat.title}
+                  </option>
+                ))}
+              </select>
+              <span className="project-badge">{projectLabel(snapshot.config.repoRoot)}</span>
+              <span className="provider-badge">{snapshot.providerName}</span>
+              <span className="model-badge" title={activeModelId}>{activeModelShort}</span>
+
+              <div className="header-info-wrap" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className="header-info-trigger"
+                  onClick={() => {
+                    setHeaderMoreOpen(false);
+                    setHeaderInfoOpen((current) => !current);
+                  }}
+                  title="Context info"
+                >
+                  <span className="info-icon">i</span>
+                </button>
+                {headerInfoOpen && (
+                  <div className="header-menu header-info-menu">
+                    <div className="info-section">
+                      <div className="info-label">Project</div>
+                      <div className="info-value">{snapshot.config.repoRoot}</div>
+                    </div>
+                    <div className="info-section">
+                      <div className="info-label">Provider</div>
+                      <div className="info-value">{snapshot.providerName}</div>
+                    </div>
+                    <div className="info-section">
+                      <div className="info-label">Model</div>
+                      <div className="info-value">{activeModelShort}</div>
+                      <div className="info-detail">{activeModelId}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="topbar-right">
+              <div className="topbar-actions-primary">
+                <button
+                  type="button"
+                  className={terminalPanelOpen ? "secondary-button terminal-toggle active" : "secondary-button terminal-toggle"}
+                  onClick={() => void handleToggleTerminal()}
+                >
+                  {terminalPanelOpen ? "Hide terminal" : "Show terminal"}
+                </button>
+                {activeChatRunning && (
+                  <button type="button" className="secondary-button" onClick={handleInterruptChat}>
+                    Stop
+                  </button>
+                )}
+              </div>
+              <div className="topbar-actions-secondary">
+                <div className="header-menu-wrap">
+                  <button
+                    type="button"
+                    className="secondary-button header-menu-trigger"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setHeaderMoreOpen(false);
+                      setEditorMenuOpen((current) => !current);
+                    }}
+                  >
+                    Open in
+                  </button>
+                  {editorMenuOpen && (
+                    <div className="header-menu">
+                      {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
+                        <button
+                          key={editor.id}
+                          type="button"
+                          onClick={(event) => { event.stopPropagation(); void handleOpenInEditor(editor.id); }}
+                        >
+                          <span className="header-menu-item-icon">
+                            <EditorIcon editorId={editor.id} />
+                          </span>
+                          <span>{editor.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button type="button" className="secondary-button" onClick={() => void handleNewChat()}>
+                  New chat
+                </button>
+                <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
+                  Settings
+                </button>
+              </div>
+              <div className="header-more-wrap" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className="secondary-button header-more-trigger"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setEditorMenuOpen(false);
+                    setHeaderMoreOpen((current) => !current);
+                  }}
+                >
+                  More
+                </button>
+                {headerMoreOpen && (
+                  <div className="header-menu header-more-menu">
+                    <div className="header-menu-section mobile-only-actions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHeaderMoreOpen(false);
+                          void handleToggleTerminal();
+                        }}
+                      >
+                        <span>{terminalPanelOpen ? "Hide terminal" : "Show terminal"}</span>
+                      </button>
+                      {activeChatRunning && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHeaderMoreOpen(false);
+                            handleInterruptChat();
+                          }}
+                        >
+                          <span>Stop</span>
+                        </button>
+                      )}
+                      <div className="header-menu-divider"></div>
+                    </div>
+                    {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
+                      <button
+                        key={editor.id}
+                        type="button"
+                        onClick={() => {
+                          setHeaderMoreOpen(false);
+                          void handleOpenInEditor(editor.id);
+                        }}
+                      >
+                        <span className="header-menu-item-icon">
+                          <EditorIcon editorId={editor.id} />
+                        </span>
+                        <span>Open in {editor.label}</span>
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        void handleNewChat();
+                      }}
+                    >
+                      <span>New chat</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        void handleCopyWorkspacePath();
+                      }}
+                    >
+                      <span>Copy workspace path</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        setCurrentScreen("settings");
+                      }}
+                    >
+                      <span>Settings</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              <ModelPicker
+                activeModelParent={activeModelParent}
+                hoveredModelGroup={hoveredModelGroup}
+                modelGroupStates={modelGroupStates}
+                modelGroups={modelGroups}
+                modelMenuOpen={modelMenuOpen}
+                modelMenuPos={modelMenuPos}
+                modelPickerRef={modelPickerRef}
+                onChooseModel={handleChooseModel}
+                onHoverGroup={setHoveredModelGroup}
+                onToggle={handleToggleModelMenu}
+                selectedModelId={activeModelId}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="workspace-body">
+        <aside className="sidebar">
           <div className="sidebar-section">
             <div className="sidebar-heading-row">
               <div className="sidebar-label">Projects</div>
@@ -1763,209 +1980,6 @@ export default function App() {
         </aside>
 
         <main className="chat-area">
-          <header className="chat-topbar">
-            <div className="topbar-left">
-              <button
-                type="button"
-                className="sidebar-toggle-btn"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setSidebarCollapsed((prev) => !prev);
-                }}
-                title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-              >
-                {sidebarCollapsed ? ">" : "<"}
-              </button>
-              <select
-                className="header-thread-select"
-                value={snapshot.config.activeChatId || ""}
-                onChange={(event) => {
-                  if (event.target.value) {
-                    void handleActivateChat(event.target.value);
-                  }
-                }}
-              >
-                <option value="">New thread</option>
-                {snapshot.chats.map((chat) => (
-                  <option key={chat.chatId} value={chat.chatId}>
-                    {chat.title}
-                  </option>
-                ))}
-              </select>
-              <span className="project-badge">{projectLabel(snapshot.config.repoRoot)}</span>
-              <span className="provider-badge">{snapshot.providerName}</span>
-              <span className="model-badge" title={activeModelId}>{activeModelShort}</span>
-
-              <div className="header-info-wrap" onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  className="header-info-trigger"
-                  onClick={() => {
-                    setHeaderMoreOpen(false);
-                    setHeaderInfoOpen((current) => !current);
-                  }}
-                  title="Context info"
-                >
-                  <span className="info-icon">i</span>
-                </button>
-                {headerInfoOpen && (
-                  <div className="header-menu header-info-menu">
-                    <div className="info-section">
-                      <div className="info-label">Project</div>
-                      <div className="info-value">{snapshot.config.repoRoot}</div>
-                    </div>
-                    <div className="info-section">
-                      <div className="info-label">Provider</div>
-                      <div className="info-value">{snapshot.providerName}</div>
-                    </div>
-                    <div className="info-section">
-                      <div className="info-label">Model</div>
-                      <div className="info-value">{activeModelShort}</div>
-                      <div className="info-detail">{activeModelId}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="topbar-right">
-              <div className="topbar-actions-primary">
-                <button
-                  type="button"
-                  className={terminalPanelOpen ? "secondary-button terminal-toggle active" : "secondary-button terminal-toggle"}
-                  onClick={() => void handleToggleTerminal()}
-                >
-                  {terminalPanelOpen ? "Hide terminal" : "Show terminal"}
-                </button>
-                {activeChatRunning && (
-                  <button type="button" className="secondary-button" onClick={handleInterruptChat}>
-                    Stop
-                  </button>
-                )}
-              </div>
-              <div className="topbar-actions-secondary">
-                <div className="header-menu-wrap">
-                  <button
-                    type="button"
-                    className="secondary-button header-menu-trigger"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setHeaderMoreOpen(false);
-                      setEditorMenuOpen((current) => !current);
-                    }}
-                  >
-                    Open in
-                  </button>
-                  {editorMenuOpen && (
-                    <div className="header-menu">
-                      {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
-                        <button
-                          key={editor.id}
-                          type="button"
-                          onClick={(event) => { event.stopPropagation(); void handleOpenInEditor(editor.id); }}
-                        >
-                          <span className="header-menu-item-icon">
-                            <EditorIcon editorId={editor.id} />
-                          </span>
-                          <span>{editor.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <button type="button" className="secondary-button" onClick={() => void handleNewChat()}>
-                  New chat
-                </button>
-                <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
-                  Settings
-                </button>
-              </div>
-              <div className="header-more-wrap" onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  className="secondary-button header-more-trigger"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setEditorMenuOpen(false);
-                    setHeaderMoreOpen((current) => !current);
-                  }}
-                >
-                  More
-                </button>
-                {headerMoreOpen && (
-                  <div className="header-menu header-more-menu">
-                    {/* Primary actions in More menu for smaller screens */}
-                    <div className="header-menu-section mobile-only-actions">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setHeaderMoreOpen(false);
-                          void handleToggleTerminal();
-                        }}
-                      >
-                        <span>{terminalPanelOpen ? "Hide terminal" : "Show terminal"}</span>
-                      </button>
-                      {activeChatRunning && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHeaderMoreOpen(false);
-                            handleInterruptChat();
-                          }}
-                        >
-                          <span>Stop</span>
-                        </button>
-                      )}
-                      <div className="header-menu-divider"></div>
-                    </div>
-
-                    {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
-                      <button
-                        key={editor.id}
-                        type="button"
-                        onClick={() => {
-                          setHeaderMoreOpen(false);
-                          void handleOpenInEditor(editor.id);
-                        }}
-                      >
-                        <span className="header-menu-item-icon">
-                          <EditorIcon editorId={editor.id} />
-                        </span>
-                        <span>Open in {editor.label}</span>
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHeaderMoreOpen(false);
-                        void handleNewChat();
-                      }}
-                    >
-                      <span>New chat</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHeaderMoreOpen(false);
-                        void handleCopyWorkspacePath();
-                      }}
-                    >
-                      <span>Copy workspace path</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHeaderMoreOpen(false);
-                        setCurrentScreen("settings");
-                      }}
-                    >
-                      <span>Settings</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </header>
 
           <div className="chat-main">
           {error && <div className="error-banner">{error}</div>}
@@ -2094,6 +2108,7 @@ export default function App() {
             toolSafetyMode={snapshot.config.toolSafetyMode}
           />
         </main>
+        </div>{/* workspace-body */}
       </div>
 
       {projectMenuPath && (
