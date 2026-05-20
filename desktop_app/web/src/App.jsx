@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import SettingsPage from "./SettingsPage.jsx";
 import { EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
 import {
@@ -281,7 +281,7 @@ export default function App() {
     return pendingTurns[activeChatId] || null;
   }, [pendingTurns, snapshot?.config?.activeChatId]);
   const activeModelId = snapshot?.config?.model || "";
-  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:/, "");
+  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:|^agy:/, "");
   const activePlan = snapshot?.activePlan || null;
   const activeTerminalChatId = snapshot?.config?.activeChatId || "";
 
@@ -1024,7 +1024,7 @@ export default function App() {
               write(chunk);
             }
           } else if (event.type === "assistant") {
-            // CLI providers (claude/codex/gemini-cli) already streamed the full text
+            // CLI providers (claude/codex/gemini-cli/agy) already streamed the full text
             // via cli_output chunks — writing it again here would double the response.
             if (!hadCliOutput) {
               write(event.text || "");
@@ -1580,10 +1580,7 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-section">
             <div className="sidebar-heading-row">
-              <div>
-                <div className="sidebar-label">Projects</div>
-                <div className="sidebar-note">Saved folders and repos</div>
-              </div>
+              <div className="sidebar-label">Projects</div>
               <button type="button" className="icon-button" onClick={handlePickRepo}>
                 +
               </button>
