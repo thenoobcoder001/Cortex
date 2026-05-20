@@ -2,6 +2,7 @@ const {
   APP_NAME,
   VERSION,
   GEMINI_CLI_MODELS,
+  AGY_MODELS,
   CLAUDE_MODELS,
   CODEX_MODELS,
 } = require("./constants");
@@ -9,6 +10,7 @@ const {
 function modelFamily(model) {
   if (String(model).startsWith("claude:")) return "claude";
   if (String(model).startsWith("gemini-cli:")) return "gemini-cli";
+  if (String(model).startsWith("agy:")) return "agy";
   if (String(model).startsWith("gemini")) return "gemini";
   if (String(model).startsWith("codex:")) return "codex";
   return "groq";
@@ -17,6 +19,7 @@ function modelFamily(model) {
 function providerNameForModel(model) {
   if (String(model).startsWith("claude:")) return "Claude";
   if (String(model).startsWith("gemini-cli:")) return "Gemini CLI";
+  if (String(model).startsWith("agy:")) return "Agy";
   if (String(model).startsWith("gemini")) return "Gemini";
   if (String(model).startsWith("codex:")) return "Codex";
   return "Groq";
@@ -26,7 +29,8 @@ function models() {
   return [
     ...CODEX_MODELS.map(([id, label]) => ({ id, label, group: "Codex" })),
     ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
-    ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI" })),
+    ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI (Legacy)" })),
+    ...AGY_MODELS.map(([id, label]) => ({ id, label, group: "Antigravity" })),
   ];
 }
 
@@ -35,6 +39,7 @@ function providersSnapshot(service) {
     claude: { available: service.claudeProvider.available, connected: service.claudeProvider.connected },
     codex: { available: service.codexProvider.available, connected: service.codexProvider.connected },
     geminiCli: { available: service.geminiCliProvider.available, connected: service.geminiCliProvider.connected },
+    agy: { available: service.agyProvider.available, connected: service.agyProvider.connected },
   };
 }
 

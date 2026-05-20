@@ -544,6 +544,167 @@ class GeminiCliProvider {
   }
 }
 
+class AgyCliProvider {
+  constructor(repoRoot) {
+    this.repoRoot = path.resolve(repoRoot);
+    this.sessionId = "";
+    this.sessionMode = "fresh";
+    this._available = null;
+  }
+
+  setRepoRoot(repoRoot) {
+    const resolved = path.resolve(repoRoot);
+    if (resolved !== this.repoRoot) {
+      this.sessionId = "";
+      this.sessionMode = "fresh";
+    }
+    this.repoRoot = resolved;
+  }
+
+  resolveCli() {
+    const shim =
+      which("agy.cmd")
+      || which("agy.ps1")
+      || which("agy")
+      || which("agy.exe");
+    if (shim) {
+      return shim;
+    }
+    if (process.platform === "win32") {
+      const fallback = path.join(process.env.LOCALAPPDATA || "C:\\Users\\CHIRAG\\AppData\\Local", "agy", "bin", "agy.exe");
+      if (require("node:fs").existsSync(fallback)) {
+        return fallback;
+      }
+    }
+    return null;
+  }
+
+  get available() {
+    if (this._available === null) {
+      this._available = Boolean(this.resolveCli());
+    }
+    return this._available;
+  }
+
+  get connected() {
+    return this.available;
+  }
+
+  cliModelName(model) {
+    const raw = String(model || "").startsWith("agy:") ? String(model).split(":", 2)[1] : model;
+    return raw || "";
+  }
+
+  buildArgs(model) {
+    const args = [
+      "--print",
+      "--dangerously-skip-permissions",
+    ];
+    args.push("--add-dir", this.repoRoot);
+    if (this.sessionMode === "resume_id" && this.sessionId) {
+      args.push("--conversation", this.sessionId);
+    }
+    const cliModel = this.cliModelName(model);
+    if (cliModel) {
+      args.push("--model", cliModel);
+    }
+    return args;
+  }
+
+  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
+    if (signal?.aborted) {
+      throw new InterruptError("Request interrupted.");
+    }
+    const command = this.resolveCli();
+    if (!command) {
+      throw new Error("agy CLI not found");
+    }
+    const prompt = buildCompactPrompt(messages, {
+      head: [
+        "You are running in non-interactive print mode.",
+        "Return only the final answer to the user's request.",
+        "Do not output planning or tool chatter.",
+      ].join("\n"),
+    });
+
+    const child = spawnCommand(command, this.buildArgs(model), {
+      cwd: this.repoRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    let stderr = "";
+    let fullText = "";
+    let aborted = false;
+    let abortListener = null;
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+
+    if (signal) {
+      abortListener = () => {
+        aborted = true;
+        if (process.platform === "win32" && child.pid !== undefined) {
+          try {
+            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+          } catch {
+            child.kill();
+          }
+          return;
+        }
+        child.kill();
+      };
+      signal.addEventListener("abort", abortListener, { once: true });
+    }
+
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString("utf8");
+      fullText += text;
+      if (onOutput) {
+        onOutput(text);
+      }
+    });
+
+    try {
+      const exitCode = await Promise.race([
+        new Promise((resolve) => child.once("close", resolve)),
+        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS)),
+      ]);
+
+      if (aborted) {
+        throw new InterruptError("Request interrupted.", fullText);
+      }
+
+      if (exitCode !== 0) {
+        throw new Error(`agy CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
+      }
+
+      const sessionMatch = fullText.match(/session id:\s*([a-f0-9-]+)/i);
+      if (sessionMatch) {
+        this.sessionId = sessionMatch[1].trim();
+        this.sessionMode = "resume_id";
+      }
+
+      return fullText || "(No response from agy CLI.)";
+    } finally {
+      if (signal && abortListener) {
+        signal.removeEventListener("abort", abortListener);
+      }
+    }
+  }
+
+  async chatCompletion(messages, model, options = {}) {
+    return this.chatCompletionStreamRaw(messages, model, options);
+  }
+
+  async chatWithTools(messages, model, _tools, options = {}) {
+    return [await this.chatCompletion(messages, model, options), null, null];
+  }
+}
+
 class ClaudeCliProvider {
   constructor(repoRoot) {
     this.repoRoot = path.resolve(repoRoot);
@@ -975,6 +1136,7 @@ class GeminiApiProvider {
 module.exports = {
   CodexProvider,
   GeminiCliProvider,
+  AgyCliProvider,
   ClaudeCliProvider,
   GroqProvider,
   GeminiApiProvider,
