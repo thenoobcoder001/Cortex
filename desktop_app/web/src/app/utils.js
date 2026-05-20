@@ -19,6 +19,7 @@ export function stripAnsi(str) {
 export function providerCliCommand(modelId) {
   if (!modelId) return "claude";
   if (modelId.startsWith("gemini-cli:")) return "gemini";
+  if (modelId.startsWith("agy:")) return "agy";
   if (modelId.startsWith("codex:")) return "codex";
   return "claude";
 }
@@ -77,8 +78,11 @@ export function providerStateForGroup(group, providers) {
   if (group === "Gemini") {
     return providers?.gemini || { available: false, connected: false };
   }
-  if (group === "Gemini CLI") {
+  if (group === "Gemini CLI" || group === "Gemini CLI (Legacy)") {
     return providers?.geminiCli || { available: false, connected: false };
+  }
+  if (group === "Antigravity") {
+    return providers?.agy || { available: false, connected: false };
   }
   if (group === "Codex") {
     return providers?.codex || { available: false, connected: false };

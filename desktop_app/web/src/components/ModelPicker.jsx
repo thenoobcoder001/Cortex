@@ -80,7 +80,7 @@ export default function ModelPicker({
                     title={model.label}
                     onClick={() => onChooseModel(model.id)}
                   >
-                    <span className="model-subitem-name">{model.id.replace(/^codex:|^gemini-cli:/, "")}</span>
+                    <span className="model-subitem-name">{model.id.replace(/^codex:|^gemini-cli:|^agy:|^claude:/, "")}</span>
                     <span className="model-subitem-meta">{model.label}</span>
                   </button>
                 ))}
