@@ -388,15 +388,67 @@ button:disabled {
 }
 
 .workspace-shell {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  min-height: 100%;
-  transition: grid-template-columns 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  overflow-x: hidden;
-  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.workspace-shell.sidebar-collapsed {
+.app-navbar {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  z-index: 20;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-navbar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  width: 320px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  height: 100%;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              padding 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.3s;
+}
+
+.sidebar-collapsed .app-navbar-brand {
+  width: 0;
+  padding: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-right: none;
+}
+
+.app-navbar-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  min-width: 0;
+  padding: 0 16px;
+  gap: 12px;
+  height: 100%;
+}
+
+.workspace-body {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  transition: grid-template-columns 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sidebar-collapsed .workspace-body {
   grid-template-columns: 0px minmax(0, 1fr);
 }
 
@@ -417,18 +469,7 @@ button:disabled {
   width: 0;
   opacity: 0;
   border-right: none;
-}
-
-.sidebar-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 8px;
-  height: 56px;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  margin: -16px -12px 4px;
+  overflow: hidden;
 }
 
 .sidebar-brand {
@@ -436,7 +477,7 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--text);
-  padding-left: 8px;
+  padding-left: 4px;
 }
 
 .sidebar-section {
@@ -903,8 +944,8 @@ button:disabled {
 
 .chat-area {
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  height: 100vh;
+  grid-template-rows: 1fr auto;
+  height: 100%;
   gap: 0;
   min-width: 0;
   max-width: 100%;
@@ -2404,8 +2445,12 @@ button:disabled {
 }
 
 @media (min-width: 1500px) {
-  .workspace-shell {
+  .workspace-body {
     grid-template-columns: 360px minmax(0, 1fr);
+  }
+
+  .app-navbar-brand {
+    width: 360px;
   }
 
   .settings-page-grid {
@@ -2418,14 +2463,27 @@ button:disabled {
 }
 
 @media (max-width: 1300px) {
-  .workspace-shell {
+  .workspace-body {
     grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .app-navbar-brand {
+    width: 280px;
   }
 }
 
 @media (max-width: 1040px) {
-  .workspace-shell {
+  .workspace-body {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .app-navbar-brand {
+    width: 0;
+    padding: 0;
+    opacity: 0;
+    overflow: hidden;
+    border-right: none;
   }
 
   .sidebar {
