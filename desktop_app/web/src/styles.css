@@ -389,7 +389,7 @@ button:disabled {
 
 .workspace-shell {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   min-height: 100%;
   transition: grid-template-columns 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   overflow-x: hidden;
@@ -403,8 +403,8 @@ button:disabled {
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 18px 14px;
+  gap: 14px;
+  padding: 16px 12px;
   border-right: 1px solid var(--border);
   background: var(--sidebar-bg);
   overflow: hidden;
@@ -432,10 +432,10 @@ button:disabled {
 
 .sidebar-heading-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 4px 8px 0;
+  padding: 2px 8px 0;
 }
 
 .sidebar-label {
@@ -1986,7 +1986,7 @@ button:disabled {
 }
 
 .settings-page {
-  max-width: 1120px;
+  max-width: 1400px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -2381,9 +2381,23 @@ button:disabled {
   gap: 10px;
 }
 
+@media (min-width: 1500px) {
+  .workspace-shell {
+    grid-template-columns: 360px minmax(0, 1fr);
+  }
+
+  .settings-page-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .settings-section-wide {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 1300px) {
   .workspace-shell {
-    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-columns: 280px minmax(0, 1fr);
   }
 }
 
