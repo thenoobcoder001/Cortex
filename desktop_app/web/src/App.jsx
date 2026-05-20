@@ -1578,12 +1578,15 @@ export default function App() {
         }}
       >
         <aside className="sidebar">
+          <div className="sidebar-topbar">
+            <span className="sidebar-brand">Cortex</span>
+            <button type="button" className="icon-button" onClick={handlePickRepo} title="Add project">
+              +
+            </button>
+          </div>
           <div className="sidebar-section">
             <div className="sidebar-heading-row">
               <div className="sidebar-label">Projects</div>
-              <button type="button" className="icon-button" onClick={handlePickRepo}>
-                +
-              </button>
             </div>
 
             <div className="project-list">
