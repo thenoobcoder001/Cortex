@@ -24,6 +24,7 @@ import ConversationSection from "./components/ConversationSection.jsx";
 import EditorIcon from "./components/EditorIcon.jsx";
 import ProjectContextMenu from "./components/ProjectContextMenu.jsx";
 import TerminalPanelSection from "./components/TerminalPanelSection.jsx";
+import ModelPicker from "./components/ModelPicker.jsx";
 import UpdateBanner from "./components/UpdateBanner.jsx";
 
 export default function App() {
@@ -1782,19 +1783,6 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <ModelPicker
-                activeModelParent={activeModelParent}
-                hoveredModelGroup={hoveredModelGroup}
-                modelGroupStates={modelGroupStates}
-                modelGroups={modelGroups}
-                modelMenuOpen={modelMenuOpen}
-                modelMenuPos={modelMenuPos}
-                modelPickerRef={modelPickerRef}
-                onChooseModel={handleChooseModel}
-                onHoverGroup={setHoveredModelGroup}
-                onToggle={handleToggleModelMenu}
-                selectedModelId={activeModelId}
-              />
             </div>
           </div>
         </div>
