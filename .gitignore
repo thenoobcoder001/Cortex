@@ -42,6 +42,5 @@ htmlcov/
 .cortex/
 local-notes/
 images/
-*.md
-!CLAUDE.md
+CLAUDE.md
 metro-start.err
