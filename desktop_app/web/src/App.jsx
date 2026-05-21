@@ -4,6 +4,7 @@ import { EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_CO
 import {
   cleanResponse,
   groupedModels,
+  subGroupedModels,
   loadSavedProjects,
   loadThemeMode,
   normalizeProject,
@@ -56,6 +57,7 @@ export default function App() {
   const [modelMenuPos, setModelMenuPos] = useState({ bottom: 0, left: 0 });
   const modelPickerRef = useRef(null);
   const [hoveredModelGroup, setHoveredModelGroup] = useState("");
+  const [hoveredModelSubGroup, setHoveredModelSubGroup] = useState("");
   const [editorMenuOpen, setEditorMenuOpen] = useState(false);
   const [groqApiKeyDraft, setGroqApiKeyDraft] = useState("");
   const [geminiApiKeyDraft, setGeminiApiKeyDraft] = useState("");
@@ -2072,6 +2074,7 @@ export default function App() {
             activeModelParent={activeModelParent}
             draft={draft}
             hoveredModelGroup={hoveredModelGroup}
+            hoveredModelSubGroup={hoveredModelSubGroup}
             modelGroups={modelGroups}
             modelGroupStates={modelGroupStates}
             modelMenuOpen={modelMenuOpen}
@@ -2081,9 +2084,11 @@ export default function App() {
             onChooseModel={(modelId) => {
               setModelMenuOpen(false);
               setHoveredModelGroup("");
+              setHoveredModelSubGroup("");
               void handleConfigUpdate({ model: modelId });
             }}
-            onHoverGroup={setHoveredModelGroup}
+            onHoverGroup={(g) => { setHoveredModelGroup(g); setHoveredModelSubGroup(""); }}
+            onHoverSubGroup={setHoveredModelSubGroup}
             onPromptPresetChange={handlePromptPresetChange}
             onSend={handleSend}
             onToggleModelMenu={toggleModelMenu}

@@ -72,12 +72,22 @@ const GROQ_MODELS = [
 ];
 
 const CODEX_MODELS = [
-  ["codex:gpt-5.4", "gpt-5.4"],
-  ["codex:gpt-5.3-codex", "gpt-5.3-codex"],
-  ["codex:gpt-5.2-codex", "gpt-5.2-codex"],
-  ["codex:gpt-5.1-codex-max", "gpt-5.1-codex-max"],
-  ["codex:gpt-5.2", "gpt-5.2"],
-  ["codex:gpt-5.1-codex-mini", "gpt-5.1-codex-mini"],
+  ["codex:gpt-5.5:xhigh",      "gpt-5.5 · Extra High"],
+  ["codex:gpt-5.5:high",       "gpt-5.5 · High"],
+  ["codex:gpt-5.5:medium",     "gpt-5.5 · Medium"],
+  ["codex:gpt-5.5:low",        "gpt-5.5 · Low"],
+  ["codex:gpt-5.4:xhigh",      "gpt-5.4 · Extra High"],
+  ["codex:gpt-5.4:high",       "gpt-5.4 · High"],
+  ["codex:gpt-5.4:medium",     "gpt-5.4 · Medium"],
+  ["codex:gpt-5.4:low",        "gpt-5.4 · Low"],
+  ["codex:gpt-5.4-mini:xhigh", "gpt-5.4-mini · Extra High"],
+  ["codex:gpt-5.4-mini:high",  "gpt-5.4-mini · High"],
+  ["codex:gpt-5.4-mini:medium","gpt-5.4-mini · Medium"],
+  ["codex:gpt-5.4-mini:low",   "gpt-5.4-mini · Low"],
+  ["codex:gpt-5.3-codex:xhigh","gpt-5.3-codex · Extra High"],
+  ["codex:gpt-5.3-codex:high", "gpt-5.3-codex · High"],
+  ["codex:gpt-5.3-codex:medium","gpt-5.3-codex · Medium"],
+  ["codex:gpt-5.3-codex:low",  "gpt-5.3-codex · Low"],
 ];
 
 module.exports = {

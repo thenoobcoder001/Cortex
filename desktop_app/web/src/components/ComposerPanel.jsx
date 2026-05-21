@@ -6,6 +6,7 @@ export default function ComposerPanel({
   activeModelParent,
   draft,
   hoveredModelGroup,
+  hoveredModelSubGroup,
   modelGroups,
   modelGroupStates,
   modelMenuOpen,
@@ -14,6 +15,7 @@ export default function ComposerPanel({
   onChangeDraft,
   onChooseModel,
   onHoverGroup,
+  onHoverSubGroup,
   onPromptPresetChange,
   onSend,
   onToggleModelMenu,
@@ -75,6 +77,7 @@ export default function ComposerPanel({
           <ModelPicker
             activeModelParent={activeModelParent}
             hoveredModelGroup={hoveredModelGroup}
+            hoveredModelSubGroup={hoveredModelSubGroup}
             modelGroupStates={modelGroupStates}
             modelGroups={modelGroups}
             modelMenuOpen={modelMenuOpen}
@@ -82,6 +85,7 @@ export default function ComposerPanel({
             modelPickerRef={modelPickerRef}
             onChooseModel={onChooseModel}
             onHoverGroup={onHoverGroup}
+            onHoverSubGroup={onHoverSubGroup}
             onToggle={onToggleModelMenu}
             selectedModelId={selectedModelId}
           />
