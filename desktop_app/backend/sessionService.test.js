@@ -130,6 +130,7 @@ function createService(repoRoot, overrides = {}) {
     repoRoot,
     codexProvider: overrides.codexProvider || new FakeCliProvider(),
     geminiCliProvider: overrides.geminiCliProvider || new FakeCliProvider(),
+    agyProvider: overrides.agyProvider || new FakeCliProvider(),
     claudeProvider: overrides.claudeProvider || new FakeCliProvider(),
     groqProvider: new FakeApiProvider(),
     geminiProvider: new FakeApiProvider(),
@@ -509,6 +510,21 @@ test("claude provider connection test reports success", async () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.providerId, "claude");
+  assert.equal(result.message, "OK");
+});
+
+test("agy provider connection test reports success", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot, {
+    agyProvider: new FakeCliProvider({ chunks: ["OK"], delayMs: 1 }),
+  });
+
+  const result = await service.testProviderConnection({
+    providerId: "agy",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.providerId, "agy");
   assert.equal(result.message, "OK");
 });
 
