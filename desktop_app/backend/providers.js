@@ -145,7 +145,13 @@ class CodexProvider {
   }
 
   cliModelName(model) {
-    return String(model || "").startsWith("codex:") ? String(model).split(":", 2)[1] : model;
+    const parts = String(model || "").startsWith("codex:") ? String(model).split(":") : null;
+    return parts ? parts[1] : String(model || "");
+  }
+
+  cliReasoningEffort(model) {
+    const parts = String(model || "").startsWith("codex:") ? String(model).split(":") : null;
+    return parts && parts[2] ? parts[2] : null;
   }
 
   setApiKey(apiKey) {
@@ -298,11 +304,13 @@ class CodexProvider {
       await sendRequest("initialize", buildCodexInitializeParams());
       this.writeAppServerMessage(child, { method: "initialized" });
 
+      const reasoningEffort = this.cliReasoningEffort(model);
       const threadStartParams = {
         approvalPolicy: "never",
         sandbox: this.toolReadOnly ? "read-only" : "workspace-write",
         cwd: this.repoRoot,
         model: this.cliModelName(model),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
         experimentalRawEvents: false,
       };
 
@@ -341,6 +349,7 @@ class CodexProvider {
           },
         ],
         model: this.cliModelName(model),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       });
 
       const result = await Promise.race([
@@ -595,7 +604,7 @@ class AgyCliProvider {
     return raw || "";
   }
 
-  buildArgs(model) {
+  buildArgs(prompt) {
     const args = [
       "--print",
       "--dangerously-skip-permissions",
@@ -604,9 +613,9 @@ class AgyCliProvider {
     if (this.sessionMode === "resume_id" && this.sessionId) {
       args.push("--conversation", this.sessionId);
     }
-    const cliModel = this.cliModelName(model);
-    if (cliModel) {
-      args.push("--model", cliModel);
+    // AGY requires the prompt as a positional argument, not stdin
+    if (prompt) {
+      args.push(prompt);
     }
     return args;
   }
@@ -627,13 +636,10 @@ class AgyCliProvider {
       ].join("\n"),
     });
 
-    const child = spawnCommand(command, this.buildArgs(model), {
+    const child = spawnCommand(command, this.buildArgs(prompt), {
       cwd: this.repoRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
-
-    child.stdin.write(prompt);
-    child.stdin.end();
 
     let stderr = "";
     let fullText = "";

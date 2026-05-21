@@ -62,6 +62,18 @@ export function groupedModels(models) {
   return [...grouped.entries()];
 }
 
+export function subGroupedModels(models) {
+  // Returns Map<subGroup, model[]> for models that have a subGroup field
+  const grouped = new Map();
+  for (const model of models) {
+    const key = model.subGroup || "__default__";
+    const items = grouped.get(key) || [];
+    items.push(model);
+    grouped.set(key, items);
+  }
+  return grouped;
+}
+
 export function parentModelLabel(modelId, modelGroups) {
   for (const [group, items] of modelGroups) {
     if (items.some((model) => model.id === modelId)) {

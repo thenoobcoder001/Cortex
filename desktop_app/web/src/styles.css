@@ -1591,12 +1591,28 @@ button:disabled {
 .model-group-arrow {
   color: var(--text-faint);
 }
+.model-group-item.disabled .model-group-arrow[data-soon] {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  opacity: 0.7;
+  text-transform: uppercase;
+}
 
 .model-subitem {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px;
+}
+
+.model-subitem-arrow {
+  font-size: 11px;
+  color: var(--text-faint);
+  flex-shrink: 0;
 }
 
 .model-subitem:hover,

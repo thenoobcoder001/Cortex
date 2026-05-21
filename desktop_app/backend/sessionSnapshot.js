@@ -25,21 +25,30 @@ function providerNameForModel(model) {
   return "Groq";
 }
 
-function models() {
+function models({ includeAgy = true } = {}) {
   return [
-    ...CODEX_MODELS.map(([id, label]) => ({ id, label, group: "Codex" })),
+    ...CODEX_MODELS.map(([id, label]) => {
+      // id format: codex:gpt-5.5:xhigh → subGroup = "gpt-5.5"
+      const parts = id.split(":");
+      const subGroup = parts.length >= 3 ? parts[1] : null;
+      return { id, label, group: "Codex", ...(subGroup ? { subGroup } : {}) };
+    }),
     ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
     ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI (Legacy)" })),
-    ...AGY_MODELS.map(([id, label]) => ({ id, label, group: "Antigravity" })),
+    // AGY is desktop-only and coming soon — excluded from mobile snapshot
+    ...(includeAgy ? AGY_MODELS.map(([id, label]) => ({ id, label, group: "Antigravity" })) : []),
   ];
 }
 
-function providersSnapshot(service) {
+function providersSnapshot(service, { includeAgy = true } = {}) {
   return {
     claude: { available: service.claudeProvider.available, connected: service.claudeProvider.connected },
     codex: { available: service.codexProvider.available, connected: service.codexProvider.connected },
     geminiCli: { available: service.geminiCliProvider.available, connected: service.geminiCliProvider.connected },
-    agy: { available: service.agyProvider.available, connected: service.agyProvider.connected },
+    // AGY is coming soon on Windows — always shown as disconnected so it can't be selected
+    agy: includeAgy
+      ? { available: false, connected: false }
+      : { available: false, connected: false },
   };
 }
 
@@ -61,8 +70,8 @@ function buildSnapshot(service, { lite = false } = {}) {
       remoteAccessEnabled: Boolean(service.config.remoteAccessEnabled),
       recentRepoRoots: Array.isArray(service.config.recentRepoRoots) ? service.config.recentRepoRoots : [],
     },
-    providers: providersSnapshot(service),
-    models: models(),
+    providers: providersSnapshot(service, { includeAgy: !lite }),
+    models: models({ includeAgy: !lite }),
     chats: service.chatItems(),
     messages: lite ? [] : service.messages,
     // Skip expensive file diff and file tree when lite — saves 3-4 seconds per call.

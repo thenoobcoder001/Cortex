@@ -84,9 +84,25 @@ let remoteAccessEnabled = false;
 const desktopLogDir = path.join(os.homedir(), ".cortex", "logs");
 const desktopLaunchLogPath = path.join(desktopLogDir, "desktop-launch.log");
 const EXTERNAL_EDITORS = {
-  vscode: { command: "code", label: "VS Code" },
-  antigravity: { command: "antigravity", label: "Antigravity" },
-  cursor: { command: "cursor", label: "Cursor" },
+  vscode:         { command: "code",       label: "VS Code" },
+  visualstudio:   { command: "devenv",     label: "Visual Studio" },
+  cursor:         { command: "cursor",     label: "Cursor" },
+  antigravity:    { command: "agy",        label: "Antigravity" },
+  gitbash:        { command: "git-bash",   label: "Git Bash" },
+  wsl:            { command: "wsl",        label: "WSL" },
+  fileexplorer: {
+    label: "File Explorer",
+    command: process.platform === "win32" ? "explorer"
+           : process.platform === "darwin" ? "open"
+           : "xdg-open",
+  },
+  terminal: {
+    label: "Terminal",
+    command: process.platform === "win32" ? "wt"
+           : process.platform === "darwin" ? "open"
+           : "x-terminal-emulator",
+    terminalArgs: process.platform === "darwin" ? ["-a", "Terminal"] : [],
+  },
 };
 
 function resolveRendererEntry() {
@@ -364,7 +380,12 @@ if (ipcMain) {
     }
 
     try {
-      await launchDetached(editor.command, [targetPath], targetPath);
+      const args = editorId === "terminal"
+        ? (editor.terminalArgs?.length ? [...editor.terminalArgs] : [targetPath])
+        : editorId === "fileexplorer" && process.platform === "win32"
+          ? [targetPath]
+          : [targetPath];
+      await launchDetached(editor.command, args, targetPath);
       return { ok: true };
     } catch {
       throw new Error(`${editor.label} is not available. Install its CLI launcher or add it to PATH.`);

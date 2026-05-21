@@ -1,3 +1,30 @@
+## Cortex v0.0.5 — Antigravity CLI, Codex Model Tiers, Editor Launcher & UI Polish
+
+> ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
+
+### Antigravity (AGY) CLI provider
+- Added Antigravity as a new provider alongside Claude, Codex, and Gemini CLI
+- Antigravity is shown as **Coming Soon** on Windows until the CLI fixes its stdout/PTY issue
+- AGY models are excluded from the mobile model list
+
+### Codex model tiers
+- Updated Codex model list to gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex (removed unsupported gpt-5.2-codex)
+- Each model now has four reasoning effort tiers: **Extra High**, **High**, **Medium**, **Low**
+- Model picker is now a **3-level flyout**: provider → model name → effort tier
+
+### Editor launcher
+- Added **Visual Studio**, **File Explorer**, and **Terminal** to the open-in-editor menu
+- Removed Git Bash and WSL entries
+- All editor icons replaced with official brand SVGs (VS Code, Visual Studio, Cursor, Git, Ubuntu, Windows Terminal)
+- Terminal and File Explorer auto-detect the OS (Windows Terminal / explorer on Windows, Terminal.app / open on macOS, x-terminal-emulator / xdg-open on Linux)
+
+### UI fixes
+- Fixed black screen on launch caused by missing ModelPicker import and undefined handler references
+- Removed model picker from top navbar — model selection is now only in the composer
+- Navbar now spans full width across sidebar and main content on all screen sizes
+
+---
+
 ## Cortex v0.0.4 — Desktop Startup, Relay, and Mobile Workspace Fixes
 
 > ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
