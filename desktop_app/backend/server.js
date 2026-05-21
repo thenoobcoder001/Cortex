@@ -139,7 +139,8 @@ function assertRepoRoot(repoRoot, service) {
 }
 
 function clearStoredRelaySession(cfg = AppConfigStore.load()) {
-  cfg.approvedDeviceIds = [];
+  // Do NOT clear approvedDeviceIds — device approvals are permanent until
+  // the user explicitly removes them. Only session tokens are cleared here.
   cfg.relaySessionExpiresAt = "";
   cfg.save();
   return cfg;
@@ -147,7 +148,15 @@ function clearStoredRelaySession(cfg = AppConfigStore.load()) {
 
 function normalizeStoredRelaySession(cfg = AppConfigStore.load()) {
   if (isRelaySessionExpired(cfg.relaySessionExpiresAt)) {
-    return clearStoredRelaySession(cfg);
+    // Session window expired — renew it so approved devices keep working
+    // without needing to re-pair. Devices are still gated by mobileToken auth.
+    if (cfg.approvedDeviceIds.length) {
+      cfg.relaySessionExpiresAt = computeRelaySessionExpiresAt();
+      cfg.save();
+    } else {
+      clearStoredRelaySession(cfg);
+    }
+    return cfg;
   }
   if (cfg.approvedDeviceIds.length && !cfg.relaySessionExpiresAt) {
     cfg.relaySessionExpiresAt = computeRelaySessionExpiresAt();
@@ -171,7 +180,7 @@ const relay = {
       approvedDeviceIds: [...cfg.approvedDeviceIds],
       hmacSecret:       cfg.relayHmacSecret || null,
       sessionExpiresAt: cfg.relaySessionExpiresAt || "",
-      onSessionExpired: () => { clearStoredRelaySession(AppConfigStore.load()); },
+      onSessionExpired: () => { normalizeStoredRelaySession(AppConfigStore.load()); },
       onStateChange:    () => {},
       onPairingRequest: (id) => {
         console.log(`Cortex relay: pairing request from ${id}`);
