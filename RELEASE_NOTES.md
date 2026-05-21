@@ -23,6 +23,11 @@
 - Removed model picker from top navbar — model selection is now only in the composer
 - Navbar now spans full width across sidebar and main content on all screen sizes
 
+### Relay & linked devices fixes
+- Linked devices now stay visible in Settings regardless of relay connection state (were hidden when relay was disconnected)
+- Approved devices no longer disappear after relay session expiry — device approvals persist until explicitly removed
+- Fixed stale polling in Settings that caused the device list to not refresh after the initial load
+
 ---
 
 ## Cortex v0.0.4 — Desktop Startup, Relay, and Mobile Workspace Fixes
