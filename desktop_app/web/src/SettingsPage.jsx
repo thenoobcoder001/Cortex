@@ -106,20 +106,24 @@ function CortexRelaySection({ backendUrl }) {
   const [pairingLoading, setPairingLoading] = useState({});
   const [connectionCheck, setConnectionCheck] = useState({ state: "idle", message: "" });
   const pollRef = useRef(null);
+  const backendUrlRef = useRef(backendUrl);
+  useEffect(() => { backendUrlRef.current = backendUrl; }, [backendUrl]);
 
   useEffect(() => {
     fetchStatus();
     pollRef.current = setInterval(fetchStatus, 15000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function fetchStatus() {
+    const url = backendUrlRef.current;
+    if (!url) return;
     try {
-      const res = await fetch(`${backendUrl}/api/cortex/status`);
+      const res = await fetch(`${url}/api/cortex/status`);
       const s = await res.json();
       if (s.state === "disconnected" && s.hasSavedSession) {
         // WS dropped but we have saved credentials — reconnect silently
-        fetch(`${backendUrl}/api/cortex/reconnect`, { method: "POST" })
+        fetch(`${url}/api/cortex/reconnect`, { method: "POST" })
           .then(r => r.json())
           .then(d => {
             if (d.connected) setStatus({ state: "connected", deviceId: d.deviceId, socketId: d.socketId });
@@ -139,7 +143,7 @@ function CortexRelaySection({ backendUrl }) {
     } catch { /* ignore */ }
     // Poll for pending and approved devices
     try {
-      const res = await fetch(`${backendUrl}/api/cortex/pairing-requests`);
+      const res = await fetch(`${url}/api/cortex/pairing-requests`);
       const data = await res.json();
       setPendingDevices(data.pending || []);
       setApprovedDevices(data.approved || []);
@@ -351,30 +355,6 @@ function CortexRelaySection({ backendUrl }) {
             </div>
           )}
 
-          {approvedDevices.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div className="settings-block-title" style={{ fontSize: 13, marginBottom: 6 }}>
-                Approved Devices
-              </div>
-              {approvedDevices.map(deviceId => (
-                <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--surface-1, #1e1e1e)", borderRadius: 6 }}>
-                  <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
-                    {deviceId}
-                  </span>
-                  <button
-                    type="button"
-                    className="danger-button"
-                    style={{ padding: "4px 12px", fontSize: 12 }}
-                    disabled={pairingLoading[deviceId]}
-                    onClick={() => handleRemove(deviceId)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
           <button type="button" className="danger-button" disabled={loading} onClick={handleDisconnect}>
             {loading ? "Disconnecting…" : "Disconnect"}
           </button>
@@ -438,6 +418,30 @@ function CortexRelaySection({ backendUrl }) {
               {loading ? "Sending code…" : "Create Account"}
             </button>
           )}
+        </div>
+      )}
+
+      {approvedDevices.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="settings-block-title" style={{ fontSize: 13, marginBottom: 6 }}>
+            Linked Devices
+          </div>
+          {approvedDevices.map(deviceId => (
+            <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--surface-1, #1e1e1e)", borderRadius: 6 }}>
+              <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+                {deviceId}
+              </span>
+              <button
+                type="button"
+                className="danger-button"
+                style={{ padding: "4px 12px", fontSize: 12 }}
+                disabled={pairingLoading[deviceId]}
+                onClick={() => handleRemove(deviceId)}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </section>
