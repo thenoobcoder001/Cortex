@@ -328,7 +328,7 @@ function CortexRelaySection({ backendUrl }) {
                 Pairing Requests
               </div>
               {pendingDevices.map(deviceId => (
-                <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--surface-1, #1e1e1e)", borderRadius: 6 }}>
+                <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--panel-strong)", borderRadius: 6 }}>
                   <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
                     {deviceId}
                   </span>
@@ -427,7 +427,7 @@ function CortexRelaySection({ backendUrl }) {
             Linked Devices
           </div>
           {approvedDevices.map(deviceId => (
-            <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--surface-1, #1e1e1e)", borderRadius: 6 }}>
+            <div key={deviceId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "8px 10px", background: "var(--panel-strong)", borderRadius: 6 }}>
               <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
                 {deviceId}
               </span>

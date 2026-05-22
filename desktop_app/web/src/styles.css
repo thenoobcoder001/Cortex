@@ -33,6 +33,10 @@
   --boot-muted: rgba(255,255,255,0.6);
   --boot-faint: rgba(255,255,255,0.5);
   --boot-border: rgba(255,255,255,0.05);
+  --boot-accent: #ffffff;
+  --boot-accent-lo: rgba(255,255,255,0.1);
+  --boot-accent-hi: rgba(255,255,255,0.3);
+  --boot-accent-glow: rgba(255,255,255,0.5);
   --code-block-text: #cccccc;
   --plan-preview-bg: rgba(0, 0, 0, 0.22);
   --plan-preview-text: #d4d7dd;
@@ -83,6 +87,10 @@
   --boot-muted: rgba(35, 26, 19, 0.6);
   --boot-faint: rgba(35, 26, 19, 0.45);
   --boot-border: rgba(71, 50, 30, 0.1);
+  --boot-accent: #8d4d2c;
+  --boot-accent-lo: rgba(141,77,44,0.15);
+  --boot-accent-hi: rgba(141,77,44,0.35);
+  --boot-accent-glow: rgba(141,77,44,0.4);
   --code-block-text: #2d251e;
   --plan-preview-bg: rgba(101, 71, 44, 0.06);
   --plan-preview-text: #332920;
@@ -208,8 +216,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #050505;
-  color: #fff;
+  background: var(--bg);
+  color: var(--text);
   font-family: "Space Grotesk", sans-serif;
   overflow: hidden;
 }
@@ -284,14 +292,14 @@ button:disabled {
 .boot-hex-inner {
   width: 30px;
   height: 30px;
-  background: #fff;
-  box-shadow: 0 0 20px rgba(255,255,255,0.5);
+  background: var(--boot-accent);
+  box-shadow: 0 0 20px var(--boot-accent-glow);
   animation: boot-inner-rotate 4s infinite linear;
 }
 
 @keyframes boot-hex-pulse {
-  0%, 100% { transform: rotate(45deg) scale(1); border-color: rgba(255,255,255,0.1); }
-  50% { transform: rotate(45deg) scale(1.1); border-color: rgba(255,255,255,0.3); }
+  0%, 100% { transform: rotate(45deg) scale(1); border-color: var(--boot-accent-lo); }
+  50% { transform: rotate(45deg) scale(1.1); border-color: var(--boot-accent-hi); }
 }
 
 @keyframes boot-hex-float {
@@ -348,9 +356,9 @@ button:disabled {
 
 .boot-progress-fill {
   height: 100%;
-  background: #fff;
+  background: var(--boot-accent);
   transition: width 0.4s ease;
-  box-shadow: 0 0 10px rgba(255,255,255,0.5);
+  box-shadow: 0 0 10px var(--boot-accent-glow);
 }
 
 .boot-progress-labels {
