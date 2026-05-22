@@ -87,9 +87,6 @@ const EXTERNAL_EDITORS = {
   vscode:         { command: "code",       label: "VS Code" },
   visualstudio:   { command: "devenv",     label: "Visual Studio" },
   cursor:         { command: "cursor",     label: "Cursor" },
-  antigravity:    { command: "agy",        label: "Antigravity" },
-  gitbash:        { command: "git-bash",   label: "Git Bash" },
-  wsl:            { command: "wsl",        label: "WSL" },
   fileexplorer: {
     label: "File Explorer",
     command: process.platform === "win32" ? "explorer"

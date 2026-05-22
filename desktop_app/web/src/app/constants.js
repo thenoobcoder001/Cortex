@@ -43,7 +43,6 @@ export const EXTERNAL_EDITOR_OPTIONS = [
   { id: "vscode",       label: "VS Code" },
   { id: "visualstudio", label: "Visual Studio" },
   { id: "cursor",       label: "Cursor" },
-  { id: "antigravity",  label: "Antigravity" },
   { id: "fileexplorer", label: "File Explorer" },
   { id: "terminal",     label: "Terminal" },
 ];
