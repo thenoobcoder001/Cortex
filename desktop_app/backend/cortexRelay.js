@@ -24,7 +24,8 @@ const crypto = require("node:crypto");
 
 const CORTEX_WS_URL          = "wss://cortex.cbproforge.com/cortex/ws/desktop";
 const CORTEX_WS_URL_FALLBACK = "ws://103.180.236.74:8087/cortex/ws/desktop";
-const HEARTBEAT_MS           = 5_000;
+const HEARTBEAT_MS            = 5_000;
+const RELAY_AUTH_TIMEOUT_MS   = 10_000;
 const RELAY_HMAC_MAX_SKEW_MS  = 5 * 60 * 1000;
 const RELAY_STREAM_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max per streaming request
 const MAX_PENDING_ABORTS      = 500;            // cap Set to prevent unbounded growth
@@ -105,7 +106,7 @@ class CortexRelayClient {
       const authTimeout = setTimeout(() => {
         this._teardown();
         this._settle(null, new Error(`Cortex relay auth timed out (${useFallback ? "fallback" : "primary"})`));
-      }, 60_000);
+      }, RELAY_AUTH_TIMEOUT_MS);
 
       ws.addEventListener("open", () => {
         this._setState("authenticating");

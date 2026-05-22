@@ -27,6 +27,12 @@
 - Linked devices now stay visible in Settings regardless of relay connection state (were hidden when relay was disconnected)
 - Approved devices no longer disappear after relay session expiry — device approvals persist until explicitly removed
 - Fixed stale polling in Settings that caused the device list to not refresh after the initial load
+- Reduced relay auth timeout from 60s to 10s — connection failures are reported immediately instead of hanging
+
+### Light theme fixes
+- Boot screen background and text now follow the active theme (was hardcoded dark `#050505` / `#fff`)
+- Boot screen hex spinner, progress bar, and pulse animation use themed accent colors (warm brown in light, white in dark)
+- Linked devices and pairing request rows no longer show a dark background in light theme
 
 ---
 
