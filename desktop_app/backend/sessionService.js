@@ -14,7 +14,7 @@ const { AppConfigStore, normalizeContextCarryMessages, normalizeRecentRepoRoots 
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
-const { CodexProvider, GeminiCliProvider, AgyCliProvider, ClaudeCliProvider, GroqProvider, GeminiApiProvider } = require("./providers");
+const { CodexProvider, GeminiCliProvider, AgyCliProvider, ClaudeCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
 const { normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
 const {
@@ -273,7 +273,6 @@ class DesktopSessionService {
             "Bash(cd /*)",
             "Bash(cd [A-Z]:*)",  // Windows absolute paths e.g. cd C:\
             // Block network exfiltration
-            "Bash(curl *)",
             "Bash(wget *)",
             "Bash(Invoke-WebRequest *)",
             "Bash(iwr *)",
@@ -495,6 +494,13 @@ class DesktopSessionService {
     if (!this.requestRegistry.interrupt(chatId)) {
       throw new Error("Chat is not currently running.");
     }
+    // Release the running-chat lock immediately so the user can start a new
+    // request without waiting for the provider process to fully unwind.
+    // The request handler's cleanup is idempotent and will still run when the
+    // aborted stream exits.
+    this.requestRegistry.finish(chatId);
+    this.clearActiveRun(chatId);
+    this.persistConfig();
     return this.snapshot({ lite });
   }
 
@@ -938,10 +944,16 @@ class DesktopSessionService {
 
   async sendMessage(text, options = {}) {
     let completed = null;
+    let failed = null;
     for await (const event of this.sendMessageEvents(text, options)) {
       if (event.type === "completed") {
         completed = event;
+      } else if (event.type === "error") {
+        failed = new Error(String(event.message || "Request failed."));
       }
+    }
+    if (failed) {
+      throw toUserFacingProviderError(failed, { model: options.model || this.model });
     }
     if (!completed) {
       throw new Error("Send completed without a final completion event.");
