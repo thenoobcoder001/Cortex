@@ -29,6 +29,7 @@ const RELAY_AUTH_TIMEOUT_MS   = 10_000;
 const RELAY_HMAC_MAX_SKEW_MS  = 5 * 60 * 1000;
 const RELAY_STREAM_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max per streaming request
 const MAX_PENDING_ABORTS      = 500;            // cap Set to prevent unbounded growth
+const RECONNECT_DELAY_MS      = 3_000;          // wait before auto-reconnect after drop
 
 class CortexRelayClient {
   /**
@@ -69,12 +70,15 @@ class CortexRelayClient {
 
     this._ws             = null;
     this._heartbeatTimer = null;
+    this._reconnectTimer = null;
     this._state          = "disconnected";
     this.socketId        = null;
     this._pendingAborts  = new Set();
+    this._activeStreams   = new Set(); // active http.ClientRequest objects
     this._probePending   = null;
     this._connectResolve = null;
     this._connectReject  = null;
+    this._deliberateDisconnect = false;
   }
 
   get state() {
@@ -84,6 +88,7 @@ class CortexRelayClient {
   // ── public ──────────────────────────────────────────────────────────────
 
   connect(useFallback = false) {
+    this._deliberateDisconnect = false;
     return new Promise((resolve, reject) => {
       this._teardown();
       this._connectResolve = resolve;
@@ -155,6 +160,7 @@ class CortexRelayClient {
         this._stopHeartbeat();
         this._setState("disconnected");
         this._ws = null;
+        this._abortActiveStreams();
         // Code 1000 during auth = server explicitly rejected (token invalid/expired).
         // Do not try fallback — it will also reject. Fail immediately with a clear error.
         if (wasConnecting && ev.code === 1000) {
@@ -166,9 +172,16 @@ class CortexRelayClient {
         if (wasConnecting && !useFallback) {
           console.warn(`CortexRelayClient: primary connection closed (code=${ev.code}), trying fallback...`);
           this.connect(true).then(resolve).catch(reject);
-        } else {
+        } else if (wasConnecting) {
           const suffix = useFallback ? " (fallback failed)" : "";
           this._settle(null, new Error(`WebSocket closed before auth (code=${ev.code})${suffix}`));
+        } else if (!this._deliberateDisconnect) {
+          // Dropped post-auth — auto-reconnect after a short delay.
+          console.warn(`CortexRelayClient: connection dropped (code=${ev.code}), reconnecting in ${RECONNECT_DELAY_MS}ms...`);
+          this._reconnectTimer = setTimeout(() => {
+            this._reconnectTimer = null;
+            this.connect().catch(err => console.warn("CortexRelayClient: auto-reconnect failed:", err.message));
+          }, RECONNECT_DELAY_MS);
         }
       });
 
@@ -181,18 +194,27 @@ class CortexRelayClient {
         const wasConnecting = this._state === "connecting" || this._state === "authenticating";
         this._stopHeartbeat();
         this._setState("disconnected");
+        this._abortActiveStreams();
         if (wasConnecting && !useFallback) {
           console.warn("CortexRelayClient: primary connection error, trying fallback...");
           this.connect(true).then(resolve).catch(reject);
-        } else {
+        } else if (wasConnecting) {
           const suffix = useFallback ? " (fallback failed)" : "";
           this._settle(null, new Error(`WebSocket connection error${suffix}`));
+        } else if (!this._deliberateDisconnect) {
+          console.warn(`CortexRelayClient: connection error post-auth, reconnecting in ${RECONNECT_DELAY_MS}ms...`);
+          this._reconnectTimer = setTimeout(() => {
+            this._reconnectTimer = null;
+            this.connect().catch(e => console.warn("CortexRelayClient: auto-reconnect failed:", e.message));
+          }, RECONNECT_DELAY_MS);
         }
       });
     });
   }
 
   disconnect() {
+    this._deliberateDisconnect = true;
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
     if (this.isConnected()) {
       try {
         this._send({ type: "terminate" });
@@ -224,6 +246,7 @@ class CortexRelayClient {
 
   _teardown() {
     this._stopHeartbeat();
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
     this._rejectProbe(new Error("Cortex relay disconnected"));
     const ws = this._ws;
     this._ws = null;
@@ -237,6 +260,13 @@ class CortexRelayClient {
 
   _stopHeartbeat() {
     if (this._heartbeatTimer) { clearInterval(this._heartbeatTimer); this._heartbeatTimer = null; }
+  }
+
+  _abortActiveStreams() {
+    for (const req of this._activeStreams) {
+      try { req.destroy(); } catch { /* ignore */ }
+    }
+    this._activeStreams.clear();
   }
 
   _send(msg) {
@@ -522,6 +552,7 @@ class CortexRelayClient {
         res.on("data", (c) => { errBody += c; });
         res.on("end", () => {
           clearStreamTimeout();
+          this._activeStreams.delete(req);
           // P2-J: never forward raw backend error body to remote caller
           this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Request failed." });
         });
@@ -530,6 +561,7 @@ class CortexRelayClient {
 
       timeoutHandle = setTimeout(() => {
         req.destroy();
+        this._activeStreams.delete(req);
         this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Stream timed out." });
       }, RELAY_STREAM_TIMEOUT_MS);
 
@@ -540,21 +572,25 @@ class CortexRelayClient {
 
       res.on("end", () => {
         clearStreamTimeout();
+        this._activeStreams.delete(req);
         this._pendingAborts.delete(request_id);
         this._relayTo(fromDeviceId, { type: "api_stream_end", request_id });
       });
 
       res.on("error", () => {
         clearStreamTimeout();
+        this._activeStreams.delete(req);
         this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Stream error." });
       });
     });
 
     req.on("error", () => {
       clearTimeout(timeoutHandle);
+      this._activeStreams.delete(req);
       this._relayTo(fromDeviceId, { type: "api_stream_error", request_id, message: "Request failed." });
     });
 
+    this._activeStreams.add(req);
     if (bodyStr) req.write(bodyStr);
     req.end();
   }
