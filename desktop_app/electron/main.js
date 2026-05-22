@@ -84,9 +84,10 @@ let remoteAccessEnabled = false;
 const desktopLogDir = path.join(os.homedir(), ".cortex", "logs");
 const desktopLaunchLogPath = path.join(desktopLogDir, "desktop-launch.log");
 const EXTERNAL_EDITORS = {
-  vscode:         { command: "code",       label: "VS Code" },
-  visualstudio:   { command: "devenv",     label: "Visual Studio" },
-  cursor:         { command: "cursor",     label: "Cursor" },
+  vscode:         { command: "code",         label: "VS Code" },
+  visualstudio:   { command: "devenv",       label: "Visual Studio" },
+  cursor:         { command: "cursor",       label: "Cursor" },
+  antigravity:    { command: "antigravity",  label: "Antigravity" },
   fileexplorer: {
     label: "File Explorer",
     command: process.platform === "win32" ? "explorer"
