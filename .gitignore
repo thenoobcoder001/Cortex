@@ -44,3 +44,12 @@ local-notes/
 images/
 CLAUDE.md
 metro-start.err
+
+# Scratch / local notes
+*.txt
+MOBILE_TODO.md
+ROADMAP.md
+desktop_app/P1_SECURITY_FIXES.md
+desktop_app/P2_SECURITY_FIXES.md
+desktop_app/cortex-socket.md
+desktop_app/cortex-socket-testcases.md
