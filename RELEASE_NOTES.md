@@ -1,3 +1,26 @@
+## Cortex v0.0.6 — Relay Stability, Light Theme, and Error Handling
+
+> ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
+
+### Relay stability
+- Auto-reconnect after relay WebSocket drops post-auth — no more permanent disconnects from network blips
+- In-flight chat streams are cleanly aborted when the relay drops instead of silently hanging
+- Reduced relay auth timeout from 60s to 10s for faster failure detection
+
+### Light theme fixes
+- Boot screen background, text, hex spinner, and progress bar are now fully themed (were hardcoded dark)
+- Linked devices and pairing request rows no longer show a dark background in light theme
+
+### Error handling
+- API rate limit and quota errors (429, "usage limit reached", etc.) are now shown as clear user-facing messages per provider (e.g. "API limits reached for Claude.")
+- Interrupt now releases the chat lock immediately so a new chat can start without waiting
+
+### Editor & settings
+- Fixed Antigravity editor launcher — command corrected from `agy` to `antigravity`
+- `curl` unblocked in Claude's per-repo settings — allows network reachability checks in chat sessions
+
+---
+
 ## Cortex v0.0.5 — Antigravity CLI, Codex Model Tiers, Editor Launcher & UI Polish
 
 > ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.

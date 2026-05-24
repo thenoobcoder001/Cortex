@@ -2,7 +2,7 @@ const { ProjectChatStore } = require("./chatStore");
 const path = require("node:path");
 const { DEFAULT_MODEL, MAX_TOOL_ROUNDS, TOOLS } = require("./constants");
 const { normalizeMessages, normalizeChanges, nowIso } = require("./sessionShared");
-const { isInterruptError } = require("./providers");
+const { isInterruptError, toUserFacingProviderError } = require("./providers");
 
 function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
   const titleSource = String(userPrompt || "").split(/\r?\n/, 1)[0].trim() || "Implementation Plan";
@@ -411,6 +411,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       });
       return;
     }
+    error = toUserFacingProviderError(error, { model: requestModel });
     service.interruptedRuns.set(chatId, {
       chat_id: chatId,
       repo_root: requestRepoRoot,

@@ -118,6 +118,17 @@ class FakeApiProvider {
   }
 }
 
+class ErrorCliProvider extends FakeCliProvider {
+  constructor(message) {
+    super({ chunks: [], delayMs: 0 });
+    this.message = message;
+  }
+
+  async chatCompletionStreamRaw() {
+    throw new Error(this.message);
+  }
+}
+
 function makeTempRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cortex-node-"));
   fs.writeFileSync(path.join(root, "seed.txt"), "seed\n", "utf8");
@@ -160,6 +171,51 @@ test("codex streaming send completes and clears request state", async () => {
   const chats = service.listChats(repoRoot);
   assert.equal(chats.length, 1);
   assert.equal(chats[0].toolSafetyMode, "read");
+});
+
+test("CLI provider limit errors are normalized for codex, gemini-cli, and claude", async () => {
+  const repoRoot = makeTempRepo();
+  const limitMessage = "usage limit reached, please try again later";
+  const service = createService(repoRoot, {
+    codexProvider: new ErrorCliProvider(limitMessage),
+    geminiCliProvider: new ErrorCliProvider(limitMessage),
+    claudeProvider: new ErrorCliProvider(limitMessage),
+  });
+
+  const cases = [
+    ["codex:gpt-5.4", "API limits reached for Codex."],
+    ["gemini-cli:auto-gemini-2.5", "API limits reached for Gemini CLI."],
+    ["claude:sonnet", "API limits reached for Claude."],
+  ];
+
+  for (const [model, expected] of cases) {
+    const events = [];
+    for await (const event of service.sendMessageEvents("trigger limit", {
+      model,
+      repoRoot,
+      toolSafetyMode: "read",
+    })) {
+      events.push(event);
+    }
+    assert.equal(events.at(-1)?.type, "error");
+    assert.equal(events.at(-1)?.message, expected);
+  }
+});
+
+test("non-stream send surfaces normalized CLI limit errors", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot, {
+    claudeProvider: new ErrorCliProvider("429 too many requests"),
+  });
+
+  await assert.rejects(
+    service.sendMessage("trigger limit", {
+      model: "claude:sonnet",
+      repoRoot,
+      toolSafetyMode: "read",
+    }),
+    /API limits reached for Claude\./,
+  );
 });
 
 test("android emulator requests add deterministic emulator guidance to system context", () => {
@@ -259,6 +315,35 @@ test("interrupt endpoint aborts a running codex chat and emits interrupted event
   } finally {
     await backend.close();
   }
+});
+
+test("interrupt releases the chat lock immediately so a new chat can start", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot, {
+    geminiCliProvider: new FakeCliProvider({ chunks: ["one ", "two ", "three"], delayMs: 25 }),
+  });
+
+  const events = [];
+  const streamDone = (async () => {
+    for await (const event of service.sendMessageEvents("stream then stop", {
+      model: "gemini-cli:auto-gemini-2.5",
+      repoRoot,
+      toolSafetyMode: "write",
+    })) {
+      events.push(event);
+      if (event.type === "cli_output" && event.chatId) {
+        service.interruptChat(event.chatId);
+        assert.equal(service.requestRegistry.has(event.chatId), false);
+        const nextSnapshot = service.newChat(repoRoot);
+        assert.ok(nextSnapshot.config.activeChatId);
+        assert.notEqual(nextSnapshot.config.activeChatId, event.chatId);
+        return;
+      }
+    }
+  })();
+
+  await streamDone;
+  assert.ok(events.some((event) => event.type === "cli_output"));
 });
 
 test("new chat creates and activates a persisted empty chat", () => {

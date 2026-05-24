@@ -114,6 +114,53 @@ function toInterruptError(error, partialText = "") {
   return error;
 }
 
+function isApiLimitError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  if (!message) {
+    return false;
+  }
+  const patterns = [
+    /\brate limit\b/,
+    /\btoo many requests\b/,
+    /\b429\b/,
+    /\bquota exceeded\b/,
+    /\bquota\b/,
+    /\busage limit\b/,
+    /\blimit reached\b/,
+    /\blimit will reset\b/,
+    /\brequest limit\b/,
+    /\bmonthly spend limit\b/,
+    /\binsufficient credits?\b/,
+    /\bcredit balance is too low\b/,
+    /\bexceeded your current quota\b/,
+  ];
+  return patterns.some((pattern) => pattern.test(message));
+}
+
+function providerDisplayName(model) {
+  const value = String(model || "");
+  if (value.startsWith("codex:")) return "Codex";
+  if (value.startsWith("gemini-cli:")) return "Gemini CLI";
+  if (value.startsWith("claude:")) return "Claude";
+  if (value.startsWith("agy:")) return "Agy";
+  if (value.startsWith("gemini")) return "Gemini";
+  return "API";
+}
+
+function toUserFacingProviderError(error, { model = "" } = {}) {
+  if (isInterruptError(error)) {
+    return error;
+  }
+  if (isApiLimitError(error)) {
+    const providerName = providerDisplayName(model);
+    const nextError = new Error(`API limits reached for ${providerName}.`);
+    nextError.code = "API_LIMIT_REACHED";
+    nextError.cause = error;
+    return nextError;
+  }
+  return error;
+}
+
 class CodexProvider {
   constructor(repoRoot, apiKey = "") {
     this.repoRoot = path.resolve(repoRoot);
@@ -1148,5 +1195,7 @@ module.exports = {
   GeminiApiProvider,
   InterruptError,
   isInterruptError,
+  isApiLimitError,
+  toUserFacingProviderError,
   buildCompactPrompt,
 };
