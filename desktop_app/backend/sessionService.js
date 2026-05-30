@@ -872,13 +872,10 @@ class DesktopSessionService {
         if (!this.geminiCliProvider.available) {
           throw new Error("Gemini CLI is not available in PATH.");
         }
-        const reply = await this.geminiCliProvider.chatCompletion(messages, GEMINI_CLI_MODELS[0][0], {
-          signal: controller.signal,
-        });
         return {
           ok: true,
           providerId: normalized,
-          message: String(reply || "OK").trim().slice(0, 120),
+          message: "Gemini CLI is available.",
         };
       }
 
@@ -886,13 +883,10 @@ class DesktopSessionService {
         if (!this.agyProvider.available) {
           throw new Error("Agy CLI is not available in PATH.");
         }
-        const reply = await this.agyProvider.chatCompletion(messages, "agy:auto", {
-          signal: controller.signal,
-        });
         return {
           ok: true,
           providerId: normalized,
-          message: String(reply || "OK").trim().slice(0, 120),
+          message: "Agy CLI is available.",
         };
       }
 

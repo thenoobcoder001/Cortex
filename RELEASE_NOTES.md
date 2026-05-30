@@ -23,6 +23,7 @@
 - Antigravity (AGY) is now available directly in the desktop model picker on Windows
 - AGY runs through a real PTY, so responses stream correctly instead of returning an empty result
 - Added clean ANSI handling and interrupt support for AGY terminal sessions
+- Gemini CLI and AGY readiness checks now return immediately without launching an agent turn
 
 ---
 
