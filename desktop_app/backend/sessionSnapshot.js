@@ -35,7 +35,7 @@ function models({ includeAgy = true } = {}) {
     }),
     ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
     ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI (Legacy)" })),
-    // AGY is desktop-only and coming soon — excluded from mobile snapshot
+    // AGY is desktop-only — excluded from mobile snapshot
     ...(includeAgy ? AGY_MODELS.map(([id, label]) => ({ id, label, group: "Antigravity" })) : []),
   ];
 }
@@ -45,9 +45,8 @@ function providersSnapshot(service, { includeAgy = true } = {}) {
     claude: { available: service.claudeProvider.available, connected: service.claudeProvider.connected },
     codex: { available: service.codexProvider.available, connected: service.codexProvider.connected },
     geminiCli: { available: service.geminiCliProvider.available, connected: service.geminiCliProvider.connected },
-    // AGY is coming soon on Windows — always shown as disconnected so it can't be selected
     agy: includeAgy
-      ? { available: false, connected: false }
+      ? { available: service.agyProvider.available, connected: service.agyProvider.connected }
       : { available: false, connected: false },
   };
 }

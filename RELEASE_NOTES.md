@@ -19,6 +19,11 @@
 - Fixed Antigravity editor launcher — command corrected from `agy` to `antigravity`
 - `curl` unblocked in Claude's per-repo settings — allows network reachability checks in chat sessions
 
+### 🚀 Antigravity desktop integration
+- Antigravity (AGY) is now available directly in the desktop model picker on Windows
+- AGY runs through a real PTY, so responses stream correctly instead of returning an empty result
+- Added clean ANSI handling and interrupt support for AGY terminal sessions
+
 ---
 
 ## Cortex v0.0.5 — Antigravity CLI, Codex Model Tiers, Editor Launcher & UI Polish

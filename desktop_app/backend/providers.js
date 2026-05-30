@@ -4,6 +4,19 @@ const readline = require("node:readline");
 const { buildCleanEnv } = require("./androidEnv");
 const platform = require("./platform");
 
+let pty;
+try {
+  pty = require("node-pty");
+} catch {
+  pty = null;
+}
+
+// Strip ANSI escape sequences from PTY output
+function stripAnsi(str) {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b[()][A-Z0-9]/g, "").replace(/\x1b[=>]/g, "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
 const CLI_ABORT_SETTLE_MS = 6000;
 const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -683,57 +696,82 @@ class AgyCliProvider {
       ].join("\n"),
     });
 
-    const child = spawnCommand(command, this.buildArgs(prompt), {
-      cwd: this.repoRoot,
-      stdio: ["pipe", "pipe", "pipe"],
+    const env = buildCleanEnv({
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      // Suppress the account info header agy prints at startup
+      AGY_CLI_HIDE_ACCOUNT_INFO: "1",
     });
 
-    let stderr = "";
-    let fullText = "";
+    // agy requires a real PTY — it detects piped stdio and produces no output
+    if (!pty) {
+      throw new Error("node-pty is not available; cannot run agy CLI");
+    }
+
+    const child = pty.spawn(command, this.buildArgs(prompt), {
+      name: "xterm-256color",
+      cols: 220,
+      rows: 50,
+      cwd: this.repoRoot,
+      env,
+    });
+
+    let rawText = "";
     let aborted = false;
     let abortListener = null;
+    let settleAbort = null;
+    let turnTimeout = null;
+    let abortSettleTimeout = null;
+    // Buffer for incremental ANSI stripping and streaming
+    let streamedLen = 0;
 
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
+    child.onData((chunk) => {
+      rawText += chunk;
+      // Stream cleaned incremental output to caller
+      if (onOutput) {
+        const cleaned = stripAnsi(rawText);
+        const delta = cleaned.slice(streamedLen);
+        if (delta) {
+          streamedLen = cleaned.length;
+          onOutput(delta);
+        }
+      }
     });
 
     if (signal) {
       abortListener = () => {
         aborted = true;
-        if (process.platform === "win32" && child.pid !== undefined) {
-          try {
+        try {
+          if (process.platform === "win32" && child.pid !== undefined) {
             spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-          } catch {
+          } else {
             child.kill();
           }
-          return;
-        }
-        child.kill();
+        } catch {}
+        abortSettleTimeout = setTimeout(() => settleAbort?.(null), CLI_ABORT_SETTLE_MS);
       };
       signal.addEventListener("abort", abortListener, { once: true });
     }
 
-    child.stdout.on("data", (chunk) => {
-      const text = chunk.toString("utf8");
-      fullText += text;
-      if (onOutput) {
-        onOutput(text);
-      }
-    });
-
     try {
       const exitCode = await Promise.race([
-        new Promise((resolve) => child.once("close", resolve)),
-        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS)),
+        new Promise((resolve) => child.onExit(({ exitCode: c }) => resolve(c))),
+        new Promise((resolve) => {
+          settleAbort = resolve;
+          turnTimeout = setTimeout(() => resolve(null), CLI_TURN_TIMEOUT_MS);
+        }),
       ]);
 
       if (aborted) {
+        const fullText = stripAnsi(rawText);
         throw new InterruptError("Request interrupted.", fullText);
       }
 
-      if (exitCode !== 0) {
-        throw new Error(`agy CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
+      if (exitCode !== 0 && exitCode !== null) {
+        throw new Error(`agy CLI failed with exit code ${exitCode}`);
       }
+
+      const fullText = stripAnsi(rawText);
 
       const sessionMatch = fullText.match(/session id:\s*([a-f0-9-]+)/i);
       if (sessionMatch) {
@@ -741,11 +779,13 @@ class AgyCliProvider {
         this.sessionMode = "resume_id";
       }
 
-      return fullText || "(No response from agy CLI.)";
+      return fullText.trim() || "(No response from agy CLI.)";
     } finally {
       if (signal && abortListener) {
         signal.removeEventListener("abort", abortListener);
       }
+      clearTimeout(turnTimeout);
+      clearTimeout(abortSettleTimeout);
     }
   }
 

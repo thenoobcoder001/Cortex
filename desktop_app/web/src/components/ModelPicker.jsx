@@ -62,26 +62,22 @@ export default function ModelPicker({
                     key={group}
                     type="button"
                     className={
-                      group === "Antigravity"
+                      !modelGroupStates.get(group)?.connected
                         ? "model-group-item disabled"
-                        : !modelGroupStates.get(group)?.connected
-                          ? "model-group-item disabled"
-                          : hoveredModelGroup === group
-                            ? "model-group-item active"
-                            : "model-group-item"
+                        : hoveredModelGroup === group
+                          ? "model-group-item active"
+                          : "model-group-item"
                     }
-                    disabled={group === "Antigravity" || !modelGroupStates.get(group)?.connected}
+                    disabled={!modelGroupStates.get(group)?.connected}
                     onMouseEnter={() => { onHoverGroup(group); onHoverSubGroup(""); }}
                     onFocus={() => { onHoverGroup(group); onHoverSubGroup(""); }}
                     title={
-                      group === "Antigravity"
-                        ? "Antigravity — coming soon on Windows"
-                        : modelGroupStates.get(group)?.connected ? group : `${group} is not ready`
+                      modelGroupStates.get(group)?.connected ? group : `${group} is not ready`
                     }
                   >
                     <span>{group}</span>
                     <span className="model-group-arrow">
-                      {group === "Antigravity" ? "soon" : modelGroupStates.get(group)?.connected ? ">" : "!"}
+                      {modelGroupStates.get(group)?.connected ? ">" : "!"}
                     </span>
                   </button>
                 ))}
