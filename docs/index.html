@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cortex — AI Coding Desktop App</title>
+  <meta name="description" content="Control every AI coding assistant from one desktop app. Claude, Codex, Gemini, Groq — one window, your code, all your AI tools." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --accent: #6C63FF;
+      --accent2: #a78bfa;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --win: #0078d4;
+      --mac: #555;
+      --linux: #e95420;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      padding: 80px 24px 60px;
+      background: linear-gradient(180deg, #12102a 0%, var(--bg) 100%);
+    }
+
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 80px;
+      height: 80px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #6C63FF 0%, #a78bfa 100%);
+      margin-bottom: 24px;
+      box-shadow: 0 8px 32px rgba(108,99,255,0.4);
+    }
+
+    .logo svg { width: 44px; height: 44px; }
+
+    h1 {
+      font-size: 3rem;
+      font-weight: 700;
+      letter-spacing: -1px;
+      background: linear-gradient(135deg, #fff 30%, var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 12px;
+    }
+
+    .tagline {
+      font-size: 1.25rem;
+      color: var(--muted);
+      max-width: 520px;
+      margin: 0 auto 32px;
+    }
+
+    .tagline strong { color: var(--text); }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 40px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background: var(--surface);
+      text-decoration: none;
+    }
+
+    .badge.accent { border-color: var(--accent); color: var(--accent2); }
+
+    /* ── Download buttons ── */
+    .downloads {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 24px;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity .15s, transform .15s;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn:hover { opacity: .88; transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn-win  { background: var(--win); color: #fff; }
+    .btn-mac  { background: #3a3a3a; color: #fff; border: 1px solid #555; }
+    .btn-linux { background: #2d1a12; color: #f9b9a0; border: 1px solid #7a3012; }
+
+    .btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+    .release-note {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .release-note a { color: var(--accent2); text-decoration: none; }
+    .release-note a:hover { text-decoration: underline; }
+
+    /* ── Features ── */
+    .section {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 64px 24px;
+    }
+
+    .section-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 32px;
+      color: var(--text);
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+
+    .feature-icon {
+      font-size: 1.5rem;
+      margin-bottom: 10px;
+    }
+
+    .feature h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .feature p {
+      font-size: 0.875rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* ── Providers table ── */
+    .providers {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    .providers th {
+      text-align: left;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .providers td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #1e242b;
+      vertical-align: top;
+    }
+
+    .providers tr:last-child td { border-bottom: none; }
+
+    .providers code {
+      background: #1c2128;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 0.8rem;
+      font-family: "SF Mono", "Fira Code", monospace;
+      color: #79c0ff;
+    }
+
+    .provider-name { font-weight: 600; }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    footer a { color: var(--accent2); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      h1 { font-size: 2.2rem; }
+      .btn { padding: 12px 18px; font-size: 0.875rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Hero ── -->
+<section class="hero">
+  <div class="logo">
+    <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="22" cy="22" r="18" fill="rgba(255,255,255,0.15)"/>
+      <path d="M29 16.5C27.2 14.9 24.7 14 22 14C16.5 14 12 18.5 12 24C12 29.5 16.5 34 22 34C24.7 34 27.2 33.1 29 31.5" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="33" cy="22" r="3" fill="white"/>
+      <line x1="22" y1="8" x2="22" y2="12" stroke="white" stroke-width="2" stroke-linecap="round"/>
+      <line x1="22" y1="32" x2="22" y2="36" stroke="white" stroke-width="2" stroke-linecap="round"/>
+      <line x1="8" y1="22" x2="12" y2="22" stroke="white" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </div>
+
+  <h1>Cortex</h1>
+  <p class="tagline">
+    <strong>Claude · Codex · Gemini · Groq</strong><br>
+    One window. Your code. All your AI tools.
+  </p>
+
+  <div class="badges">
+    <span class="badge accent">v0.0.6</span>
+    <span class="badge">Windows · macOS · Linux</span>
+    <a class="badge" href="https://github.com/thenoobcoder001/Cortex" target="_blank">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+    <a class="badge" href="https://github.com/thenoobcoder001/Cortex/blob/main/LICENSE" target="_blank">MIT</a>
+  </div>
+
+  <div class="downloads">
+    <a class="btn btn-win"
+       href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+      Download for Windows
+    </a>
+    <a class="btn btn-mac"
+       href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.6-arm64.dmg">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
+      macOS (Apple Silicon)
+    </a>
+    <a class="btn btn-linux"
+       href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.6-x64.AppImage">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.ne5-.155.136-.26.268-.312.442-.05.18-.05.334.016.467.022.049.044.094.073.131.138.153.296.268.441.416.217.218.4.48.4.755v.33c0 .23.118.427.29.542.16.107.36.15.575.15h.012c.313 0 .59-.087.826-.193.242-.102.49-.249.718-.442.228-.19.45-.424.65-.73.196-.3.354-.67.446-1.07.095-.4.154-.832.132-1.247-.022-.4-.12-.8-.289-1.143-.164-.34-.4-.635-.68-.877-.276-.238-.594-.424-.922-.565a3.45 3.45 0 00-.468-.156c.019-.09.045-.178.07-.267l.003-.01.012-.044c.116-.424.268-.836.45-1.216.186-.38.398-.735.63-1.05.462-.64.988-1.16 1.51-1.587.52-.43 1.023-.777 1.454-1.117.432-.344.8-.68 1.046-1.055.246-.374.367-.784.312-1.25-.055-.467-.282-.954-.695-1.422-.413-.468-1.02-.917-1.762-1.286-.374-.18-.775-.346-1.19-.51-.418-.163-.853-.318-1.29-.48a9.524 9.524 0 01-1.257-.559 4.15 4.15 0 01-.979-.736 2.8 2.8 0 01-.577-.98c-.11-.37-.117-.78.008-1.214.126-.434.416-.886.849-1.29a5.4 5.4 0 011.622-.947 8.1 8.1 0 012.012-.47c.357-.044.712-.063 1.057-.063.574 0 1.135.072 1.668.215.538.142 1.044.366 1.505.65.461.283.877.625 1.228 1.013.352.387.638.82.848 1.282.21.462.343.946.384 1.42.04.484-.007.962-.12 1.393a4.17 4.17 0 01-.405 1.015 4.13 4.13 0 01-.65.855 4.81 4.81 0 01-.87.686c-.32.198-.655.37-.998.531-.347.16-.7.308-1.047.455l-.048.02c-.346.147-.686.296-1.014.46-.33.163-.643.342-.937.546a4.62 4.62 0 00-.78.728 3.26 3.26 0 00-.5.957c-.109.356-.152.742-.107 1.135.043.378.164.758.363 1.107a3.8 3.8 0 00.748.948c.313.27.67.487 1.052.647a4.21 4.21 0 001.267.285c.45.04.907.021 1.344-.054a5.06 5.06 0 001.236-.385 4.76 4.76 0 001.054-.679 4.28 4.28 0 00.793-.944c.217-.356.378-.748.468-1.154a4.24 4.24 0 00.063-1.266 4.38 4.38 0 00-.324-1.226 4.03 4.03 0 00-.682-1.03 4.18 4.18 0 00-1.01-.77 4.64 4.64 0 00-1.253-.456 5.01 5.01 0 00-1.36-.087c-.23.014-.455.04-.673.083z"/></svg>
+      Linux (AppImage)
+    </a>
+  </div>
+  <p class="release-note">
+    All platforms &amp; previous versions on the
+    <a href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">releases page →</a>
+  </p>
+</section>
+
+<!-- ── Features ── -->
+<section class="section">
+  <h2 class="section-title">Everything in one window</h2>
+  <div class="features">
+    <div class="feature">
+      <div class="feature-icon">🤖</div>
+      <h3>Multi-Provider</h3>
+      <p>Switch between Claude, Codex, Gemini CLI, Gemini API, and Groq without changing tools or workflows.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">📁</div>
+      <h3>Repo-Aware</h3>
+      <p>AI runs in context of your actual files on disk. Reads, edits, and reasons about your real codebase — no copy-pasting.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">⚡</div>
+      <h3>Live Streaming</h3>
+      <p>All providers stream token-by-token with stop-anytime support. See output as it arrives.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">💾</div>
+      <h3>Persistent History</h3>
+      <p>Chat history saved per project and restored automatically on next launch. Never lose context.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">🖥️</div>
+      <h3>Built-in Terminal</h3>
+      <p>Full PTY terminal wired directly into the app. Run commands and see results without leaving Cortex.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">📱</div>
+      <h3>Mobile Access</h3>
+      <p>Cortex relay lets you drive your desktop AI from your phone. Same session, everywhere.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Providers ── -->
+<section class="section" style="padding-top: 0;">
+  <h2 class="section-title">Supported Providers</h2>
+  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;">
+    <table class="providers">
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Connection</th>
+          <th>Models</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="provider-name">🟠 Claude</td>
+          <td><code>claude</code> CLI</td>
+          <td>Sonnet 4 · Opus 4 · Haiku 4</td>
+        </tr>
+        <tr>
+          <td class="provider-name">⬛ Codex</td>
+          <td><code>codex app-server</code></td>
+          <td>GPT-5.5 · GPT-5.4 · GPT-5.4-mini · GPT-5.3-codex <br><small style="color: var(--muted)">Extra High / High / Medium / Low effort</small></td>
+        </tr>
+        <tr>
+          <td class="provider-name">🔵 Gemini CLI</td>
+          <td><code>gemini</code> CLI</td>
+          <td>Gemini 2.5 Pro · Gemini 2.5 Flash</td>
+        </tr>
+        <tr>
+          <td class="provider-name">🔵 Gemini API</td>
+          <td>Direct HTTP</td>
+          <td>Gemini 2.0 Flash · 1.5 Pro · 2.0 Thinking</td>
+        </tr>
+        <tr>
+          <td class="provider-name">🟣 Groq</td>
+          <td>Direct HTTP</td>
+          <td>Llama 4 Scout · Maverick · DeepSeek R2 · Qwen 3</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer>
+  <p>
+    <a href="https://github.com/thenoobcoder001/Cortex" target="_blank">GitHub</a> ·
+    <a href="https://github.com/thenoobcoder001/Cortex/releases" target="_blank">Releases</a> ·
+    <a href="https://github.com/thenoobcoder001/Cortex/blob/main/LICENSE" target="_blank">MIT License</a>
+  </p>
+  <p style="margin-top: 8px;">Built with Electron · Node.js · React</p>
+</footer>
+
+</body>
+</html>
