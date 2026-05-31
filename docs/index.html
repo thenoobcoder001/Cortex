@@ -4,9 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cortex — AI Coding Desktop App</title>
-  <meta name="description" content="Control every AI coding assistant from one desktop app. Claude, Codex, Gemini, Groq — one window, your code, all your AI tools." />
+  <meta name="description" content="Control every AI coding assistant from one desktop app. Claude, Codex, Gemini — one window, your code, all your AI tools." />
   <meta property="og:title" content="Cortex — AI Coding Desktop App" />
-  <meta property="og:description" content="Control every AI coding assistant from one desktop app. Claude · Codex · Gemini · Groq." />
+  <meta property="og:description" content="Control every AI coding assistant from one desktop app. Claude · Codex · Gemini." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://thenoobcoder001.github.io/Cortex/" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -881,7 +881,7 @@
     <span class="accent-line">All your AI coding tools.</span>
   </h1>
   <p class="tagline">
-    <span class="providers-inline">Claude · Codex · Gemini · Groq</span>
+    <span class="providers-inline">Claude · Codex · Gemini</span>
   </p>
   <p class="subtagline">
     A Windows-first desktop app that runs every major AI coding assistant against your local repo — with live streaming, persistent project memory, a built-in terminal, and mobile relay.
@@ -987,7 +987,7 @@
     <div class="fs-text">
       <div class="fs-eyebrow">3-level model picker</div>
       <h3>Provider, model, effort — all in one flyout.</h3>
-      <p>Codex exposes four reasoning tiers per model. Claude, Gemini, and Groq each have their own list. Pick the right brain for the task without leaving the composer.</p>
+      <p>Codex exposes four reasoning tiers per model. Claude and Gemini each have their own list. Pick the right brain for the task without leaving the composer.</p>
       <ul>
         <li>Extra High → Low effort tiers for every Codex model</li>
         <li>Auto-detects which CLIs and API keys are configured</li>
@@ -1006,8 +1006,6 @@
           <div class="mp-item">Claude <span class="arr">›</span></div>
           <div class="mp-item active">Codex <span class="arr">›</span></div>
           <div class="mp-item">Gemini CLI <span class="arr">›</span></div>
-          <div class="mp-item">Gemini API <span class="arr">›</span></div>
-          <div class="mp-item">Groq <span class="arr">›</span></div>
         </div>
         <div class="mp-col">
           <div class="h">Model</div>
@@ -1034,10 +1032,10 @@
       <h3>Every token, the moment it arrives.</h3>
       <p>All providers stream over Server-Sent Events. You see the model think in real time and can stop a run mid-generation. The chat lock releases the instant you interrupt.</p>
       <ul>
-        <li>SSE streaming for CLI providers (Claude, Codex, Gemini CLI)</li>
-        <li>Direct streaming for API providers (Gemini, Groq)</li>
+        <li>SSE streaming from Claude, Codex, and Gemini CLI subprocesses</li>
         <li>Stop button releases the lock immediately — no waiting</li>
         <li>Recovered runs after a crash continue from the last token</li>
+        <li>Per-provider error surfacing for rate limits and quota errors</li>
       </ul>
     </div>
     <div class="window">
@@ -1129,16 +1127,6 @@
       <h3>Gemini CLI</h3>
       <div class="p-conn">gemini CLI</div>
       <div class="p-models">Gemini 2.5 Pro · 2.5 Flash<small>Auto-writes <code>GEMINI.md</code> confinement context on first open of a new repo.</small></div>
-    </div>
-    <div class="provider-card reveal">
-      <h3>Gemini API</h3>
-      <div class="p-conn">Direct HTTP</div>
-      <div class="p-models">Gemini 2.0 Flash · 1.5 Pro · 2.0 Thinking<small>Uses the local tool executor for read/write/edit/run — no CLI required.</small></div>
-    </div>
-    <div class="provider-card reveal">
-      <h3>Groq</h3>
-      <div class="p-conn">Direct HTTP</div>
-      <div class="p-models">Llama 4 Scout · Maverick · DeepSeek R2 · Qwen 3<small>Fastest streaming of the bunch — great for quick refactors and explanations.</small></div>
     </div>
   </div>
 </section>

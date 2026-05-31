@@ -8,7 +8,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0d1117?style=flat-square&logo=windows&logoColor=white)](https://github.com/thenoobcoder001/Cortex/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0d1117?style=flat-square)](LICENSE)
 
-**Claude · Codex · Gemini · Groq** — one window, your code, all your AI tools.
+**Claude · Codex · Gemini** — one window, your code, all your AI tools.
 
 **⬇ Download** — [click here](https://thenoobcoder001.github.io/Cortex/) or go to [GitHub Releases](https://github.com/thenoobcoder001/Cortex/releases/latest)
 
