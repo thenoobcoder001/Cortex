@@ -5,96 +5,216 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cortex — AI Coding Desktop App</title>
   <meta name="description" content="Control every AI coding assistant from one desktop app. Claude, Codex, Gemini, Groq — one window, your code, all your AI tools." />
+  <meta property="og:title" content="Cortex — AI Coding Desktop App" />
+  <meta property="og:description" content="Control every AI coding assistant from one desktop app. Claude · Codex · Gemini · Groq." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://thenoobcoder001.github.io/Cortex/" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --accent: #6C63FF;
-      --accent2: #a78bfa;
-      --text: #e6edf3;
-      --muted: #8b949e;
+      --bg: #0a0d14;
+      --bg-elev: #0f1320;
+      --surface: #161b2c;
+      --surface-hi: #1c2238;
+      --border: #262d44;
+      --border-hi: #353e5a;
+      --accent: #7c5cff;
+      --accent2: #b794ff;
+      --accent-glow: rgba(124, 92, 255, 0.35);
+      --cyan: #5ce0ff;
+      --pink: #ff70a6;
+      --green: #6dffaa;
+      --orange: #ffb070;
+      --text: #eef0f6;
+      --text-dim: #b6bdd1;
+      --muted: #7e87a3;
       --win: #0078d4;
-      --mac: #555;
-      --linux: #e95420;
     }
 
+    html { scroll-behavior: smooth; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
       line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
     }
+
+    code, pre { font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace; }
+
+    /* ── Animated background grid ── */
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background-image:
+        linear-gradient(rgba(124, 92, 255, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(124, 92, 255, 0.06) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
+    }
+
+    .bg-blob {
+      position: fixed;
+      z-index: -1;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.4;
+      pointer-events: none;
+    }
+    .bg-blob.b1 { width: 500px; height: 500px; top: -150px; left: -100px; background: #5b3df0; }
+    .bg-blob.b2 { width: 400px; height: 400px; top: 200px; right: -100px; background: #ff5fa2; opacity: 0.18; }
+    .bg-blob.b3 { width: 600px; height: 600px; top: 60vh; left: 30%; background: #4dd5ff; opacity: 0.10; }
+
+    /* ── Nav ── */
+    nav.top {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      background: rgba(10, 13, 20, 0.7);
+      border-bottom: 1px solid rgba(38, 45, 68, 0.6);
+    }
+    .nav-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 1.05rem;
+    }
+    .nav-brand .logo-mini {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 14px var(--accent-glow);
+    }
+    .nav-brand .logo-mini svg { width: 18px; height: 18px; }
+    .nav-links { display: flex; gap: 22px; }
+    .nav-links a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color .15s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    @media (max-width: 640px) { .nav-links { display: none; } }
 
     /* ── Hero ── */
     .hero {
       text-align: center;
       padding: 80px 24px 60px;
-      background: linear-gradient(180deg, #12102a 0%, var(--bg) 100%);
+      position: relative;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--accent2);
+      background: rgba(124, 92, 255, 0.10);
+      border: 1px solid rgba(124, 92, 255, 0.30);
+      margin-bottom: 24px;
+      text-decoration: none;
+    }
+    .pill .dot {
+      width: 7px; height: 7px;
+      background: var(--accent2);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent-glow);
+      animation: pulse 2.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .55; transform: scale(0.85); }
     }
 
     .logo {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 80px;
-      height: 80px;
-      border-radius: 20px;
-      background: linear-gradient(135deg, #6C63FF 0%, #a78bfa 100%);
-      margin-bottom: 24px;
-      box-shadow: 0 8px 32px rgba(108,99,255,0.4);
+      width: 96px; height: 96px;
+      border-radius: 24px;
+      background: linear-gradient(135deg, #7c5cff 0%, #b794ff 100%);
+      margin-bottom: 28px;
+      box-shadow: 0 16px 60px rgba(124, 92, 255, 0.45), inset 0 1px 0 rgba(255,255,255,0.3);
+      position: relative;
     }
-
-    .logo svg { width: 44px; height: 44px; }
+    .logo::after {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: 26px;
+      background: linear-gradient(135deg, var(--accent), var(--cyan), var(--pink), var(--accent));
+      background-size: 300% 300%;
+      z-index: -1;
+      filter: blur(14px);
+      opacity: 0.5;
+      animation: glow 8s linear infinite;
+    }
+    @keyframes glow {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 300% 50%; }
+    }
+    .logo svg { width: 52px; height: 52px; }
 
     h1 {
-      font-size: 3rem;
-      font-weight: 700;
-      letter-spacing: -1px;
-      background: linear-gradient(135deg, #fff 30%, var(--accent2));
+      font-size: clamp(2.4rem, 6vw, 4rem);
+      font-weight: 800;
+      letter-spacing: -2px;
+      background: linear-gradient(180deg, #ffffff 0%, #c9c4ff 80%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      margin-bottom: 12px;
+      margin-bottom: 16px;
+      line-height: 1.05;
     }
 
     .tagline {
-      font-size: 1.25rem;
+      font-size: clamp(1rem, 2.2vw, 1.3rem);
+      color: var(--text-dim);
+      max-width: 620px;
+      margin: 0 auto 12px;
+    }
+    .tagline strong {
+      color: var(--text);
+      background: linear-gradient(135deg, var(--accent2), var(--cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .subtagline {
+      font-size: 0.95rem;
       color: var(--muted);
-      max-width: 520px;
-      margin: 0 auto 32px;
+      max-width: 560px;
+      margin: 0 auto 36px;
     }
 
-    .tagline strong { color: var(--text); }
-
-    .badges {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-      margin-bottom: 40px;
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 0.8rem;
-      font-weight: 500;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      background: var(--surface);
-      text-decoration: none;
-    }
-
-    .badge.accent { border-color: var(--accent); color: var(--accent2); }
-
-    /* ── Download buttons ── */
-    .downloads {
+    /* ── Download CTA ── */
+    .cta-row {
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
@@ -107,134 +227,577 @@
       align-items: center;
       gap: 10px;
       padding: 14px 24px;
-      border-radius: 10px;
+      border-radius: 12px;
       font-size: 0.95rem;
       font-weight: 600;
       text-decoration: none;
-      transition: opacity .15s, transform .15s;
+      transition: transform .15s ease, box-shadow .15s ease, background .2s ease;
       border: none;
       cursor: pointer;
+      font-family: inherit;
     }
-
-    .btn:hover { opacity: .88; transform: translateY(-1px); }
+    .btn:hover { transform: translateY(-2px); }
     .btn:active { transform: translateY(0); }
 
-    .btn-win  { background: var(--win); color: #fff; }
-    .btn-mac  { background: #3a3a3a; color: #fff; border: 1px solid #555; }
-    .btn-linux { background: #2d1a12; color: #f9b9a0; border: 1px solid #7a3012; }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #5b3df0);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(124, 92, 255, 0.40);
+    }
+    .btn-primary:hover { box-shadow: 0 12px 32px rgba(124, 92, 255, 0.55); }
 
-    .btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      border: 1px solid var(--border-hi);
+    }
+    .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); }
 
-    .release-note {
-      font-size: 0.8rem;
+    .btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+    .platform-row {
+      display: flex;
+      gap: 18px;
+      justify-content: center;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .platform-row a {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 8px 14px;
+      border-radius: 10px;
+      transition: background .15s, color .15s;
+    }
+    .platform-row a:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+    .platform-row svg { width: 16px; height: 16px; }
+
+    /* ── App preview ── */
+    .preview-wrap {
+      max-width: 1000px;
+      margin: 56px auto 0;
+      padding: 0 24px;
+    }
+    .preview {
+      border-radius: 16px;
+      background: linear-gradient(180deg, #1a2038 0%, #0f1320 100%);
+      border: 1px solid var(--border-hi);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,92,255,0.10);
+      overflow: hidden;
+      position: relative;
+    }
+    .preview::before {
+      content: "";
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 50% -20%, rgba(124,92,255,0.18), transparent 60%);
+      pointer-events: none;
+    }
+    .preview-titlebar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.25);
+      border-bottom: 1px solid var(--border);
+    }
+    .preview-titlebar .dot-r { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+    .preview-titlebar .dot-y { width: 12px; height: 12px; border-radius: 50%; background: #febc2e; }
+    .preview-titlebar .dot-g { width: 12px; height: 12px; border-radius: 50%; background: #28c840; }
+    .preview-titlebar .pt-title {
+      flex: 1; text-align: center;
+      font-size: 0.8rem; color: var(--muted);
+    }
+    .preview-body {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      min-height: 380px;
+    }
+    .preview-side {
+      background: rgba(0,0,0,0.20);
+      border-right: 1px solid var(--border);
+      padding: 14px 10px;
+      font-size: 0.78rem;
+    }
+    .preview-side .grp {
       color: var(--muted);
-      margin-top: 4px;
+      text-transform: uppercase;
+      font-size: 0.66rem;
+      letter-spacing: 0.6px;
+      padding: 10px 8px 6px;
+    }
+    .preview-side .item {
+      padding: 8px 10px;
+      border-radius: 6px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .preview-side .item.active { background: rgba(124,92,255,0.15); color: var(--text); }
+    .preview-side .item .ico { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.8; }
+    .preview-main {
+      padding: 18px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .msg {
+      max-width: 80%;
+      padding: 12px 16px;
+      border-radius: 14px;
+      font-size: 0.88rem;
+      line-height: 1.55;
+    }
+    .msg.user {
+      align-self: flex-end;
+      background: linear-gradient(135deg, var(--accent), #5b3df0);
+      color: #fff;
+    }
+    .msg.ai {
+      align-self: flex-start;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .msg.ai code {
+      background: rgba(0,0,0,0.35);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--cyan);
+      font-size: 0.82rem;
+    }
+    .typing { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+    .typing span {
+      width: 5px; height: 5px;
+      background: var(--accent2);
+      border-radius: 50%;
+      animation: type 1.4s infinite ease-in-out both;
+    }
+    .typing span:nth-child(2) { animation-delay: 0.15s; }
+    .typing span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes type {
+      0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-3px); }
     }
 
-    .release-note a { color: var(--accent2); text-decoration: none; }
-    .release-note a:hover { text-decoration: underline; }
+    .preview-composer {
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: rgba(0,0,0,0.30);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .preview-composer .pill-mini {
+      background: rgba(124,92,255,0.18);
+      color: var(--accent2);
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    @media (max-width: 720px) {
+      .preview-body { grid-template-columns: 1fr; }
+      .preview-side { display: none; }
+    }
 
-    /* ── Features ── */
+    /* ── Section base ── */
     .section {
-      max-width: 900px;
+      max-width: 1100px;
       margin: 0 auto;
-      padding: 64px 24px;
+      padding: 100px 24px 40px;
+    }
+    .section-head {
+      text-align: center;
+      max-width: 700px;
+      margin: 0 auto 56px;
+    }
+    .section-eyebrow {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      color: var(--accent2);
+      margin-bottom: 12px;
+    }
+    .section-title {
+      font-size: clamp(1.7rem, 3.5vw, 2.4rem);
+      font-weight: 800;
+      letter-spacing: -1px;
+      margin-bottom: 14px;
+      background: linear-gradient(180deg, #fff, #c9c4ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .section-sub {
+      color: var(--text-dim);
+      font-size: 1.05rem;
     }
 
-    .section-title {
-      font-size: 1.5rem;
+    /* ── Features grid ── */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+    }
+    .feature {
+      background: linear-gradient(180deg, var(--surface) 0%, rgba(22,27,44,0.5) 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .feature::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 0% 0%, rgba(124,92,255,0.10), transparent 60%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .25s;
+    }
+    .feature:hover { transform: translateY(-4px); border-color: var(--border-hi); box-shadow: 0 16px 40px rgba(0,0,0,0.35); }
+    .feature:hover::before { opacity: 1; }
+    .feature-icon {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-size: 1.4rem;
+    }
+    .fi-purple { background: rgba(124,92,255,0.15); border: 1px solid rgba(124,92,255,0.35); }
+    .fi-cyan   { background: rgba(92,224,255,0.12); border: 1px solid rgba(92,224,255,0.30); }
+    .fi-pink   { background: rgba(255,112,166,0.12); border: 1px solid rgba(255,112,166,0.30); }
+    .fi-green  { background: rgba(109,255,170,0.10); border: 1px solid rgba(109,255,170,0.28); }
+    .fi-orange { background: rgba(255,176,112,0.12); border: 1px solid rgba(255,176,112,0.30); }
+    .fi-blue   { background: rgba(120,150,255,0.12); border: 1px solid rgba(120,150,255,0.30); }
+    .feature h3 {
+      font-size: 1.1rem;
       font-weight: 700;
-      margin-bottom: 32px;
+      margin-bottom: 8px;
       color: var(--text);
     }
+    .feature p {
+      font-size: 0.92rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
 
-    .features {
+    /* ── Providers cards ── */
+    .providers-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 16px;
     }
-
-    .feature {
+    .provider-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
+      border-radius: 14px;
+      padding: 22px;
+      position: relative;
+      overflow: hidden;
     }
-
-    .feature-icon {
-      font-size: 1.5rem;
-      margin-bottom: 10px;
+    .provider-card .p-icon {
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      margin-bottom: 14px;
     }
-
-    .feature h3 {
-      font-size: 1rem;
-      font-weight: 600;
-      margin-bottom: 6px;
+    .provider-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 4px;
     }
-
-    .feature p {
-      font-size: 0.875rem;
+    .provider-card .p-conn {
+      font-size: 0.75rem;
       color: var(--muted);
+      margin-bottom: 10px;
+      font-family: "JetBrains Mono", monospace;
+    }
+    .provider-card .p-models {
+      font-size: 0.85rem;
+      color: var(--text-dim);
       line-height: 1.5;
     }
+    .provider-card .p-models small { color: var(--muted); display: block; margin-top: 4px; font-size: 0.75rem; }
 
-    /* ── Providers table ── */
-    .providers {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.875rem;
+    /* ── Release timeline ── */
+    .timeline {
+      max-width: 820px;
+      margin: 0 auto;
+      position: relative;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: 12px;
+      bottom: 12px;
+      width: 2px;
+      background: linear-gradient(180deg, var(--accent) 0%, transparent 100%);
+      opacity: 0.5;
+    }
+    @media (max-width: 640px) { .timeline::before { left: 10px; } }
+
+    .release {
+      position: relative;
+      padding-left: 56px;
+      margin-bottom: 36px;
+    }
+    @media (max-width: 640px) { .release { padding-left: 38px; } }
+
+    .release .dot-tl {
+      position: absolute;
+      left: 0;
+      top: 6px;
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), #5b3df0);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #fff;
+      box-shadow: 0 0 0 4px var(--bg), 0 6px 18px var(--accent-glow);
+    }
+    @media (max-width: 640px) {
+      .release .dot-tl { width: 22px; height: 22px; font-size: 0; }
     }
 
-    .providers th {
-      text-align: left;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      color: var(--muted);
-      font-weight: 500;
+    .release.latest .dot-tl {
+      background: linear-gradient(135deg, var(--green), #2ad88a);
+      box-shadow: 0 0 0 4px var(--bg), 0 6px 18px rgba(109,255,170,0.45);
     }
 
-    .providers td {
-      padding: 12px 16px;
-      border-bottom: 1px solid #1e242b;
-      vertical-align: top;
-    }
-
-    .providers tr:last-child td { border-bottom: none; }
-
-    .providers code {
-      background: #1c2128;
+    .release-card {
+      background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 2px 6px;
-      font-size: 0.8rem;
-      font-family: "SF Mono", "Fira Code", monospace;
-      color: #79c0ff;
+      border-radius: 14px;
+      padding: 22px 26px;
+      transition: border-color .2s;
+    }
+    .release-card:hover { border-color: var(--border-hi); }
+    .release.latest .release-card {
+      border-color: rgba(109,255,170,0.30);
+      background: linear-gradient(180deg, rgba(109,255,170,0.04), var(--surface));
     }
 
-    .provider-name { font-weight: 600; }
+    .release-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .release-version {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .release-title {
+      font-size: 0.95rem;
+      color: var(--text-dim);
+    }
+    .release-date {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-left: auto;
+      font-family: "JetBrains Mono", monospace;
+    }
+    .release-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: rgba(109,255,170,0.15);
+      color: var(--green);
+      border: 1px solid rgba(109,255,170,0.35);
+    }
+
+    .release-group {
+      margin-top: 14px;
+    }
+    .release-group h4 {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--accent2);
+      margin-bottom: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .release-group h4::before {
+      content: "";
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent2);
+    }
+    .release-group ul {
+      list-style: none;
+      padding-left: 14px;
+      border-left: 1px solid var(--border);
+    }
+    .release-group ul li {
+      font-size: 0.88rem;
+      color: var(--text-dim);
+      padding: 4px 0 4px 14px;
+      position: relative;
+      line-height: 1.55;
+    }
+    .release-group ul li::before {
+      content: "›";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .release-group code {
+      background: rgba(124,92,255,0.10);
+      border: 1px solid rgba(124,92,255,0.25);
+      color: var(--accent2);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+    }
+
+    .release-foot {
+      margin-top: 18px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .release-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-hi);
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.8rem;
+      font-weight: 500;
+      transition: background .15s, color .15s;
+    }
+    .release-link:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+    .release-link.primary {
+      background: rgba(124,92,255,0.15);
+      border-color: rgba(124,92,255,0.40);
+      color: var(--accent2);
+    }
+    .release-link.primary:hover { background: rgba(124,92,255,0.25); }
+
+    /* ── Final CTA ── */
+    .final-cta {
+      max-width: 900px;
+      margin: 40px auto 0;
+      padding: 60px 40px;
+      text-align: center;
+      background: linear-gradient(135deg, rgba(124,92,255,0.10), rgba(92,224,255,0.05));
+      border: 1px solid rgba(124,92,255,0.30);
+      border-radius: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .final-cta::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, rgba(124,92,255,0.20), transparent 60%);
+      pointer-events: none;
+    }
+    .final-cta h2 {
+      font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+      font-weight: 800;
+      letter-spacing: -1px;
+      margin-bottom: 12px;
+    }
+    .final-cta p {
+      color: var(--text-dim);
+      margin-bottom: 28px;
+    }
 
     /* ── Footer ── */
     footer {
       text-align: center;
-      padding: 40px 24px;
+      padding: 60px 24px 40px;
+      margin-top: 60px;
       border-top: 1px solid var(--border);
       color: var(--muted);
       font-size: 0.85rem;
     }
-
-    footer a { color: var(--accent2); text-decoration: none; }
-    footer a:hover { text-decoration: underline; }
-
-    @media (max-width: 600px) {
-      h1 { font-size: 2.2rem; }
-      .btn { padding: 12px 18px; font-size: 0.875rem; }
+    footer .footer-links {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
     }
+    footer a { color: var(--text-dim); text-decoration: none; transition: color .15s; }
+    footer a:hover { color: var(--accent2); }
+
+    /* fade-in on scroll */
+    .reveal { opacity: 0; transform: translateY(20px); transition: opacity .6s ease, transform .6s ease; }
+    .reveal.in { opacity: 1; transform: translateY(0); }
   </style>
 </head>
 <body>
 
+<div class="bg-grid"></div>
+<div class="bg-blob b1"></div>
+<div class="bg-blob b2"></div>
+<div class="bg-blob b3"></div>
+
+<!-- ── Nav ── -->
+<nav class="top">
+  <div class="nav-inner">
+    <a class="nav-brand" href="#top">
+      <span class="logo-mini">
+        <svg viewBox="0 0 44 44" fill="none">
+          <path d="M29 16.5C27.2 14.9 24.7 14 22 14C16.5 14 12 18.5 12 24C12 29.5 16.5 34 22 34C24.7 34 27.2 33.1 29 31.5" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="33" cy="22" r="3" fill="white"/>
+        </svg>
+      </span>
+      Cortex
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#providers">Providers</a>
+      <a href="#releases">Releases</a>
+      <a href="https://github.com/thenoobcoder001/Cortex" target="_blank">GitHub</a>
+    </div>
+  </div>
+</nav>
+
 <!-- ── Hero ── -->
-<section class="hero">
+<section class="hero" id="top">
+  <a class="pill" href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">
+    <span class="dot"></span>
+    Latest release · v0.0.6 · Relay stability & light theme
+  </a>
+
   <div class="logo">
     <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
       <circle cx="22" cy="22" r="18" fill="rgba(255,255,255,0.15)"/>
@@ -246,134 +809,484 @@
     </svg>
   </div>
 
-  <h1>Cortex</h1>
+  <h1>One window.<br>All your AI coding tools.</h1>
   <p class="tagline">
-    <strong>Claude · Codex · Gemini · Groq</strong><br>
-    One window. Your code. All your AI tools.
+    <strong>Claude · Codex · Gemini · Groq</strong>
+  </p>
+  <p class="subtagline">
+    A Windows-first desktop app that runs every major AI coding assistant against your local repo — with live streaming, persistent project memory, a built-in terminal, and mobile relay.
   </p>
 
-  <div class="badges">
-    <span class="badge accent">v0.0.6</span>
-    <span class="badge">Windows · macOS · Linux</span>
-    <a class="badge" href="https://github.com/thenoobcoder001/Cortex" target="_blank">
-      <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      GitHub
-    </a>
-    <a class="badge" href="https://github.com/thenoobcoder001/Cortex/blob/main/LICENSE" target="_blank">MIT</a>
-  </div>
-
-  <div class="downloads">
-    <a class="btn btn-win"
-       href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">
+  <div class="cta-row">
+    <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
       Download for Windows
     </a>
-    <a class="btn btn-mac"
-       href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.6-arm64.dmg">
+    <a class="btn btn-ghost" href="https://github.com/thenoobcoder001/Cortex" target="_blank">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      Star on GitHub
+    </a>
+  </div>
+
+  <div class="platform-row">
+    <a href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.6-arm64.dmg">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
       macOS (Apple Silicon)
     </a>
-    <a class="btn btn-linux"
-       href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.6-x64.AppImage">
-      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.ne5-.155.136-.26.268-.312.442-.05.18-.05.334.016.467.022.049.044.094.073.131.138.153.296.268.441.416.217.218.4.48.4.755v.33c0 .23.118.427.29.542.16.107.36.15.575.15h.012c.313 0 .59-.087.826-.193.242-.102.49-.249.718-.442.228-.19.45-.424.65-.73.196-.3.354-.67.446-1.07.095-.4.154-.832.132-1.247-.022-.4-.12-.8-.289-1.143-.164-.34-.4-.635-.68-.877-.276-.238-.594-.424-.922-.565a3.45 3.45 0 00-.468-.156c.019-.09.045-.178.07-.267l.003-.01.012-.044c.116-.424.268-.836.45-1.216.186-.38.398-.735.63-1.05.462-.64.988-1.16 1.51-1.587.52-.43 1.023-.777 1.454-1.117.432-.344.8-.68 1.046-1.055.246-.374.367-.784.312-1.25-.055-.467-.282-.954-.695-1.422-.413-.468-1.02-.917-1.762-1.286-.374-.18-.775-.346-1.19-.51-.418-.163-.853-.318-1.29-.48a9.524 9.524 0 01-1.257-.559 4.15 4.15 0 01-.979-.736 2.8 2.8 0 01-.577-.98c-.11-.37-.117-.78.008-1.214.126-.434.416-.886.849-1.29a5.4 5.4 0 011.622-.947 8.1 8.1 0 012.012-.47c.357-.044.712-.063 1.057-.063.574 0 1.135.072 1.668.215.538.142 1.044.366 1.505.65.461.283.877.625 1.228 1.013.352.387.638.82.848 1.282.21.462.343.946.384 1.42.04.484-.007.962-.12 1.393a4.17 4.17 0 01-.405 1.015 4.13 4.13 0 01-.65.855 4.81 4.81 0 01-.87.686c-.32.198-.655.37-.998.531-.347.16-.7.308-1.047.455l-.048.02c-.346.147-.686.296-1.014.46-.33.163-.643.342-.937.546a4.62 4.62 0 00-.78.728 3.26 3.26 0 00-.5.957c-.109.356-.152.742-.107 1.135.043.378.164.758.363 1.107a3.8 3.8 0 00.748.948c.313.27.67.487 1.052.647a4.21 4.21 0 001.267.285c.45.04.907.021 1.344-.054a5.06 5.06 0 001.236-.385 4.76 4.76 0 001.054-.679 4.28 4.28 0 00.793-.944c.217-.356.378-.748.468-1.154a4.24 4.24 0 00.063-1.266 4.38 4.38 0 00-.324-1.226 4.03 4.03 0 00-.682-1.03 4.18 4.18 0 00-1.01-.77 4.64 4.64 0 00-1.253-.456 5.01 5.01 0 00-1.36-.087c-.23.014-.455.04-.673.083z"/></svg>
+    <a href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.6-x64.AppImage">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
       Linux (AppImage)
     </a>
+    <a href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">
+      All downloads →
+    </a>
   </div>
-  <p class="release-note">
-    All platforms &amp; previous versions on the
-    <a href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">releases page →</a>
-  </p>
 </section>
 
+<!-- ── Animated app preview ── -->
+<div class="preview-wrap reveal">
+  <div class="preview">
+    <div class="preview-titlebar">
+      <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
+      <span class="pt-title">Cortex — gpt-tui</span>
+    </div>
+    <div class="preview-body">
+      <aside class="preview-side">
+        <div class="grp">Projects</div>
+        <div class="item active">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/></svg>
+          gpt-tui
+        </div>
+        <div class="item">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/></svg>
+          mobile-coapp
+        </div>
+        <div class="grp">Chats</div>
+        <div class="item">› Refactor session store</div>
+        <div class="item">› Add relay reconnect</div>
+        <div class="item">› Boot screen theming</div>
+      </aside>
+      <div class="preview-main">
+        <div class="msg user">Find where we initialize the relay client and add an auto-reconnect handler.</div>
+        <div class="msg ai">Found <code>cortexRelay.js</code> initializing the WebSocket in <code>connect()</code>. I'll add a backoff-reconnect handler that fires on close codes other than <code>1000</code>, with in-flight stream cleanup.<span class="typing"><span></span><span></span><span></span></span></div>
+        <div class="preview-composer">
+          <span class="pill-mini">Claude Sonnet 4.6</span>
+          <span>Ask anything about your repo…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Features ── -->
-<section class="section">
-  <h2 class="section-title">Everything in one window</h2>
+<section class="section" id="features">
+  <div class="section-head reveal">
+    <div class="section-eyebrow">Built for daily use</div>
+    <h2 class="section-title">Everything you need to ship faster</h2>
+    <p class="section-sub">Stop juggling CLIs and browser tabs. Cortex is a single window that runs every AI coding assistant against the real files on your disk.</p>
+  </div>
   <div class="features">
-    <div class="feature">
-      <div class="feature-icon">🤖</div>
-      <h3>Multi-Provider</h3>
-      <p>Switch between Claude, Codex, Gemini CLI, Gemini API, and Groq without changing tools or workflows.</p>
+    <div class="feature reveal">
+      <div class="feature-icon fi-purple">🧠</div>
+      <h3>Five providers, one UI</h3>
+      <p>Switch between Claude CLI, OpenAI Codex, Gemini CLI, Gemini API, and Groq from the same model picker. Each model has its own reasoning tier (Codex: Low → Extra High effort).</p>
     </div>
-    <div class="feature">
-      <div class="feature-icon">📁</div>
-      <h3>Repo-Aware</h3>
-      <p>AI runs in context of your actual files on disk. Reads, edits, and reasons about your real codebase — no copy-pasting.</p>
+    <div class="feature reveal">
+      <div class="feature-icon fi-cyan">📁</div>
+      <h3>Repo-aware by default</h3>
+      <p>The AI runs in the context of your project folder. It reads, edits, and reasons about real files on disk — confined to the active repo through auto-written <code>.claudeignore</code>, <code>AGENTS.md</code>, and <code>GEMINI.md</code> guardrails.</p>
     </div>
-    <div class="feature">
-      <div class="feature-icon">⚡</div>
-      <h3>Live Streaming</h3>
-      <p>All providers stream token-by-token with stop-anytime support. See output as it arrives.</p>
+    <div class="feature reveal">
+      <div class="feature-icon fi-pink">⚡</div>
+      <h3>Live token streaming</h3>
+      <p>Every provider streams output token by token over Server-Sent Events. Stop a run mid-generation and start a new one without waiting — the chat lock releases instantly.</p>
     </div>
-    <div class="feature">
-      <div class="feature-icon">💾</div>
-      <h3>Persistent History</h3>
-      <p>Chat history saved per project and restored automatically on next launch. Never lose context.</p>
+    <div class="feature reveal">
+      <div class="feature-icon fi-green">💾</div>
+      <h3>Per-project chat memory</h3>
+      <p>Chats are saved as JSON inside each project's <code>.gpt-tui/chats/</code> folder. Reopen the app and your conversations, model selections, and tool state are right where you left them.</p>
     </div>
-    <div class="feature">
-      <div class="feature-icon">🖥️</div>
-      <h3>Built-in Terminal</h3>
-      <p>Full PTY terminal wired directly into the app. Run commands and see results without leaving Cortex.</p>
+    <div class="feature reveal">
+      <div class="feature-icon fi-orange">🖥️</div>
+      <h3>Native PTY terminal</h3>
+      <p>A real ConPTY-backed terminal panel sits next to chat — same shell, same PATH, with full ANSI rendering. Run commands inline without ever leaving Cortex.</p>
     </div>
-    <div class="feature">
-      <div class="feature-icon">📱</div>
-      <h3>Mobile Access</h3>
-      <p>Cortex relay lets you drive your desktop AI from your phone. Same session, everywhere.</p>
+    <div class="feature reveal">
+      <div class="feature-icon fi-blue">📱</div>
+      <h3>Mobile access via relay</h3>
+      <p>The Cortex relay forwards encrypted requests from your phone to your desktop over a cloud WebSocket. Pair once, then drive your local AI from anywhere with rate-limited, audit-logged access.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="feature-icon fi-purple">🔒</div>
+      <h3>Security-first design</h3>
+      <p>CLI children get a scrubbed environment (no host tokens leak). API keys can't be overwritten remotely. Mobile callers can't access the terminal. All relay calls are rate-limited and written to a rotating audit log.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="feature-icon fi-cyan">🎨</div>
+      <h3>Open in editor</h3>
+      <p>One click opens the active repo in VS Code, Cursor, Visual Studio, Windows Terminal, or File Explorer — auto-detected per OS, with official brand icons.</p>
+    </div>
+    <div class="feature reveal">
+      <div class="feature-icon fi-pink">🛠️</div>
+      <h3>Live diff viewer</h3>
+      <p>A built-in git status panel shows which files the AI changed in real time, updating every 30 seconds in the background so you always see the latest delta before you click.</p>
     </div>
   </div>
 </section>
 
 <!-- ── Providers ── -->
-<section class="section" style="padding-top: 0;">
-  <h2 class="section-title">Supported Providers</h2>
-  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;">
-    <table class="providers">
-      <thead>
-        <tr>
-          <th>Provider</th>
-          <th>Connection</th>
-          <th>Models</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="provider-name">🟠 Claude</td>
-          <td><code>claude</code> CLI</td>
-          <td>Sonnet 4 · Opus 4 · Haiku 4</td>
-        </tr>
-        <tr>
-          <td class="provider-name">⬛ Codex</td>
-          <td><code>codex app-server</code></td>
-          <td>GPT-5.5 · GPT-5.4 · GPT-5.4-mini · GPT-5.3-codex <br><small style="color: var(--muted)">Extra High / High / Medium / Low effort</small></td>
-        </tr>
-        <tr>
-          <td class="provider-name">🔵 Gemini CLI</td>
-          <td><code>gemini</code> CLI</td>
-          <td>Gemini 2.5 Pro · Gemini 2.5 Flash</td>
-        </tr>
-        <tr>
-          <td class="provider-name">🔵 Gemini API</td>
-          <td>Direct HTTP</td>
-          <td>Gemini 2.0 Flash · 1.5 Pro · 2.0 Thinking</td>
-        </tr>
-        <tr>
-          <td class="provider-name">🟣 Groq</td>
-          <td>Direct HTTP</td>
-          <td>Llama 4 Scout · Maverick · DeepSeek R2 · Qwen 3</td>
-        </tr>
-      </tbody>
-    </table>
+<section class="section" id="providers">
+  <div class="section-head reveal">
+    <div class="section-eyebrow">Provider matrix</div>
+    <h2 class="section-title">Every major coding AI, ready to go</h2>
+    <p class="section-sub">Cortex auto-detects installed CLIs and direct API providers. Drop in your keys once — every model becomes available everywhere.</p>
+  </div>
+  <div class="providers-grid">
+    <div class="provider-card reveal">
+      <div class="p-icon fi-orange">🟠</div>
+      <h3>Claude</h3>
+      <div class="p-conn">claude CLI</div>
+      <div class="p-models">Sonnet 4.6 · Opus 4.7 · Haiku 4.5<small>Spawned as a subprocess with a per-repo <code>.claude/settings.json</code> for tool permissions.</small></div>
+    </div>
+    <div class="provider-card reveal">
+      <div class="p-icon fi-purple">⬛</div>
+      <h3>OpenAI Codex</h3>
+      <div class="p-conn">codex app-server</div>
+      <div class="p-models">GPT-5.5 · 5.4 · 5.4-mini · 5.3-codex<small>Each model offers four effort tiers — Extra High, High, Medium, Low — in a 3-level flyout.</small></div>
+    </div>
+    <div class="provider-card reveal">
+      <div class="p-icon fi-cyan">🔵</div>
+      <h3>Gemini CLI</h3>
+      <div class="p-conn">gemini CLI</div>
+      <div class="p-models">Gemini 2.5 Pro · 2.5 Flash<small>Auto-writes <code>GEMINI.md</code> confinement context on first open of a new repo.</small></div>
+    </div>
+    <div class="provider-card reveal">
+      <div class="p-icon fi-blue">✨</div>
+      <h3>Gemini API</h3>
+      <div class="p-conn">Direct HTTP</div>
+      <div class="p-models">Gemini 2.0 Flash · 1.5 Pro · 2.0 Thinking<small>Uses the local tool executor for read/write/edit/run — no CLI required.</small></div>
+    </div>
+    <div class="provider-card reveal">
+      <div class="p-icon fi-green">🟣</div>
+      <h3>Groq</h3>
+      <div class="p-conn">Direct HTTP</div>
+      <div class="p-models">Llama 4 Scout · Maverick · DeepSeek R2 · Qwen 3<small>Fastest streaming on the list — useful for quick refactors and explanations.</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Releases ── -->
+<section class="section" id="releases">
+  <div class="section-head reveal">
+    <div class="section-eyebrow">Changelog</div>
+    <h2 class="section-title">Release notes</h2>
+    <p class="section-sub">Every version of Cortex, with the detail you'd want from real release notes.</p>
+  </div>
+
+  <div class="timeline">
+
+    <!-- v0.0.6 -->
+    <div class="release latest reveal">
+      <div class="dot-tl">v6</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.6</span>
+          <span class="release-badge">● Latest</span>
+          <span class="release-title">Relay stability, light theme & error handling</span>
+          <span class="release-date">2026-05-30</span>
+        </div>
+
+        <div class="release-group">
+          <h4>Relay stability</h4>
+          <ul>
+            <li>Auto-reconnect after the relay WebSocket drops post-auth — no more permanent disconnects from brief network blips.</li>
+            <li>In-flight chat streams are cleanly aborted when the relay drops instead of silently hanging.</li>
+            <li>Relay auth timeout reduced from 60s to 10s for faster failure detection.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Light theme fixes</h4>
+          <ul>
+            <li>Boot screen background, text, hex spinner, and progress bar are now fully themed (were hardcoded dark).</li>
+            <li>Linked devices and pairing-request rows no longer render a dark background in light theme.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Error handling</h4>
+          <ul>
+            <li>API rate-limit and quota errors (429, "usage limit reached", etc.) now surface as clear per-provider messages — e.g. "API limits reached for Claude."</li>
+            <li>Interrupt releases the chat lock immediately so a new chat starts without waiting.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Editor &amp; settings</h4>
+          <ul>
+            <li>Fixed Antigravity editor launcher — command corrected from <code>agy</code> to <code>antigravity</code>.</li>
+            <li><code>curl</code> unblocked in Claude's per-repo settings so network reachability checks work in chat sessions.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">Download Windows installer</a>
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.6" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- v0.0.5 -->
+    <div class="release reveal">
+      <div class="dot-tl">v5</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.5</span>
+          <span class="release-title">Codex model tiers, editor launcher &amp; UI polish</span>
+          <span class="release-date">2026-05-21</span>
+        </div>
+
+        <div class="release-group">
+          <h4>Codex model tiers</h4>
+          <ul>
+            <li>Updated Codex list to <code>gpt-5.5</code>, <code>gpt-5.4</code>, <code>gpt-5.4-mini</code>, <code>gpt-5.3-codex</code> (removed unsupported <code>gpt-5.2-codex</code>).</li>
+            <li>Each model now exposes four reasoning effort tiers: Extra High, High, Medium, Low.</li>
+            <li>Model picker is now a 3-level flyout — provider → model → effort tier.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Editor launcher</h4>
+          <ul>
+            <li>Added Visual Studio, File Explorer, and Windows Terminal to the open-in-editor menu.</li>
+            <li>All editor icons replaced with official brand SVGs.</li>
+            <li>Auto-detects OS — Windows Terminal / explorer on Windows, Terminal.app / open on macOS, x-terminal-emulator / xdg-open on Linux.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>UI fixes</h4>
+          <ul>
+            <li>Fixed black screen on launch caused by a missing ModelPicker import and undefined handler refs.</li>
+            <li>Removed the model picker from the top navbar — model selection is now only in the composer.</li>
+            <li>Navbar spans the full width across sidebar and main content on all screen sizes.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Relay &amp; linked devices</h4>
+          <ul>
+            <li>Linked devices stay visible in Settings regardless of relay connection state.</li>
+            <li>Approved devices no longer disappear after relay session expiry — approvals persist until explicitly removed.</li>
+            <li>Fixed stale polling that prevented the device list from refreshing after the initial load.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.5" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- v0.0.4 -->
+    <div class="release reveal">
+      <div class="dot-tl">v4</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.4</span>
+          <span class="release-title">Desktop startup, relay &amp; mobile workspace fixes</span>
+          <span class="release-date">2026-05-19</span>
+        </div>
+
+        <div class="release-group">
+          <h4>Startup &amp; desktop stability</h4>
+          <ul>
+            <li>Backend now runs as a child process instead of blocking the Electron main process.</li>
+            <li>Fixed "Startup interrupted" by using the actual bound backend port in the renderer URL.</li>
+            <li>Fixed startup hangs and "Not Responding" cases caused by repeated synchronous config/provider checks.</li>
+            <li>Removed the extra standalone backend from the dev command so Electron owns the backend lifecycle.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Cortex relay &amp; mobile</h4>
+          <ul>
+            <li>Fixed re-pairing loops after relay reconnects by preserving signed relay sessions.</li>
+            <li>Mobile <code>/api/status</code> calls now use lite snapshots that skip expensive file trees and workspace diffs.</li>
+            <li>Mobile chat actions return lite snapshots — large repos like <code>mobile-coapp</code> open instantly.</li>
+            <li>Relay-proxied localhost requests are correctly treated as remote, not desktop-local.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Workspace &amp; chat</h4>
+          <ul>
+            <li>Fixed chat rename behavior and persistence.</li>
+            <li>Faster project chat loading via lightweight <code>/api/chats</code> responses.</li>
+            <li>Cached CLI availability checks for Codex, Gemini CLI, and Claude CLI.</li>
+            <li>Auto-written <code>.claudeignore</code> files added for repo confinement and secret exclusion.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.4" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- v0.0.3 -->
+    <div class="release reveal">
+      <div class="dot-tl">v3</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.3</span>
+          <span class="release-title">Cross-platform — macOS &amp; Linux</span>
+          <span class="release-date">2026-05-09</span>
+        </div>
+
+        <div class="release-group">
+          <h4>New features</h4>
+          <ul>
+            <li>macOS and Linux support — Cortex now runs on all three major desktop platforms.</li>
+            <li>Inline terminal panel runs directly inside the app.</li>
+            <li>Appearance / Theme selector moved to the top of Settings.</li>
+            <li>In-app update checks now report the right app version.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Critical fixes</h4>
+          <ul>
+            <li>Fixed "Not Responding" on Windows: <code>AppConfigStore.load()</code> was doing a synchronous disk read on every HTTP request inside the Electron main process. Replaced with an mtime-based in-memory cache.</li>
+            <li>Fixed relay crash on every launch — <code>isRelaySessionExpired</code> was referenced but never imported. Broken since v0.0.2.</li>
+            <li>Version strings now read from <code>package.json</code> instead of being hardcoded in the backend.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Polish</h4>
+          <ul>
+            <li>Login shells on Linux/macOS terminals so PATH includes user-installed CLIs.</li>
+            <li>Augmented PATH in <code>buildCleanEnv</code> for desktop-launcher environments.</li>
+            <li>Inline confirm/cancel UI for chat delete (replaced <code>window.confirm</code>).</li>
+            <li>Default theme is now dark; light-theme overrides for hardcoded text colors.</li>
+            <li>Relay security hardening and session expiry.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.3" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- v0.0.2 -->
+    <div class="release reveal">
+      <div class="dot-tl">v2</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.2</span>
+          <span class="release-title">Security &amp; stability</span>
+          <span class="release-date">2026-04-29</span>
+        </div>
+
+        <div class="release-group">
+          <h4>Security hardening</h4>
+          <ul>
+            <li>Relay callers can no longer overwrite API keys or sensitive config.</li>
+            <li>Device pairing guard — approvals required before any remote control of the desktop.</li>
+            <li>Rate limiting on every endpoint (30/min chat, 10/min config, 60/min default).</li>
+            <li>Relay audit log with 10 MB rotation.</li>
+            <li>CLI children no longer inherit host env vars (GitHub tokens, AWS keys, etc.).</li>
+            <li>Terminal access blocked for relay/mobile callers — desktop-only.</li>
+            <li>Auto-written <code>.claudeignore</code> and <code>.claude/settings.json</code> for per-repo AI confinement.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Fixes</h4>
+          <ul>
+            <li>Fixed Windows spawn crash for Node.js installed in paths with spaces.</li>
+            <li>Fixed CORS blocking the Vite dev renderer on <code>127.0.0.1:5173</code>.</li>
+            <li>Fixed <code>spawn cmd.exe ENOENT</code> caused by missing PATH in clean env.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.2" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- v0.0.1 -->
+    <div class="release reveal">
+      <div class="dot-tl">v1</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.1</span>
+          <span class="release-title">Initial release</span>
+          <span class="release-date">2026-04-16</span>
+        </div>
+
+        <div class="release-group">
+          <h4>Features</h4>
+          <ul>
+            <li>Multiple AI providers — Claude CLI, Gemini CLI, OpenAI Codex — from one window.</li>
+            <li>Project workspaces: pick any folder, the AI runs in context of that repo.</li>
+            <li>Persistent per-project chat sessions, restored on next launch.</li>
+            <li>Live token-by-token streaming with stop-anytime interrupt.</li>
+            <li>Prompt presets — Chat, Code, Plan, Debug, Refactor, Explain.</li>
+            <li>Read-only / write-enabled tool safety toggle.</li>
+            <li>Live git diff viewer showing what files the AI changed.</li>
+            <li>Open in editor — VS Code, Cursor, or Antigravity.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.1" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ── Final CTA ── -->
+<section class="section" style="padding-top: 40px;">
+  <div class="final-cta reveal">
+    <h2>Ready to try Cortex?</h2>
+    <p>Download v0.0.6 and have your favorite AI coding assistants running against your repo in under two minutes.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+        Download for Windows
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">
+        All platforms →
+      </a>
+    </div>
   </div>
 </section>
 
 <!-- ── Footer ── -->
 <footer>
-  <p>
-    <a href="https://github.com/thenoobcoder001/Cortex" target="_blank">GitHub</a> ·
-    <a href="https://github.com/thenoobcoder001/Cortex/releases" target="_blank">Releases</a> ·
+  <div class="footer-links">
+    <a href="https://github.com/thenoobcoder001/Cortex" target="_blank">GitHub</a>
+    <a href="https://github.com/thenoobcoder001/Cortex/releases" target="_blank">Releases</a>
+    <a href="https://github.com/thenoobcoder001/Cortex/issues" target="_blank">Issues</a>
     <a href="https://github.com/thenoobcoder001/Cortex/blob/main/LICENSE" target="_blank">MIT License</a>
-  </p>
-  <p style="margin-top: 8px;">Built with Electron · Node.js · React</p>
+  </div>
+  <p>Built with Electron · Node.js · React · Vite</p>
+  <p style="margin-top: 6px; opacity: 0.6;">© 2026 Cortex. Not affiliated with Anthropic, OpenAI, Google, or Groq.</p>
 </footer>
+
+<script>
+  // reveal-on-scroll
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+</script>
 
 </body>
 </html>
