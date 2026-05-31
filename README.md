@@ -10,7 +10,7 @@
 
 **Claude · Codex · Gemini · Groq** — one window, your code, all your AI tools.
 
-[**🌐 Project Page**](https://thenoobcoder001.github.io/Cortex/) &nbsp;·&nbsp; [**⬇ Download for Windows**](https://github.com/thenoobcoder001/Cortex/releases/latest) &nbsp;·&nbsp; [**macOS**](https://github.com/thenoobcoder001/Cortex/releases/latest) &nbsp;·&nbsp; [**Linux**](https://github.com/thenoobcoder001/Cortex/releases/latest)
+**⬇ Download** — [click here](https://thenoobcoder001.github.io/Cortex/) or go to [GitHub Releases](https://github.com/thenoobcoder001/Cortex/releases/latest)
 
 </div>
 
