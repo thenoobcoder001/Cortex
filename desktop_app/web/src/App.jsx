@@ -284,7 +284,7 @@ export default function App() {
     return pendingTurns[activeChatId] || null;
   }, [pendingTurns, snapshot?.config?.activeChatId]);
   const activeModelId = snapshot?.config?.model || "";
-  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:|^agy:/, "");
+  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:/, "");
   const activePlan = snapshot?.activePlan || null;
   const activeTerminalChatId = snapshot?.config?.activeChatId || "";
 
@@ -1027,7 +1027,7 @@ export default function App() {
               write(chunk);
             }
           } else if (event.type === "assistant") {
-            // CLI providers (claude/codex/gemini-cli/agy) already streamed the full text
+            // CLI providers (claude/codex/gemini-cli) already streamed the full text
             // via cli_output chunks — writing it again here would double the response.
             if (!hadCliOutput) {
               write(event.text || "");

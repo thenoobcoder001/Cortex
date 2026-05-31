@@ -48,15 +48,6 @@ const GEMINI_CLI_MODELS = [
   ["gemini-cli:manual", "Manual [Gemini CLI]"],
 ];
 
-const AGY_MODELS = [
-  ["agy:gemini-3.5-flash-high", "Gemini 3.5 Flash (High)"],
-  ["agy:gemini-3.5-flash-medium", "Gemini 3.5 Flash (Medium)"],
-  ["agy:gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"],
-  ["agy:gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"],
-  ["agy:claude-sonnet-4.6-thinking", "Claude Sonnet 4.6 (Thinking)"],
-  ["agy:claude-opus-4.6-thinking", "Claude Opus 4.6 (Thinking)"],
-  ["agy:gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"],
-];
 
 const CLAUDE_MODELS = [
   ["claude:sonnet", "Claude Sonnet"],
@@ -100,7 +91,6 @@ module.exports = {
   ANDROID_EMULATOR_SYSTEM_PROMPT,
   GEMINI_MODELS,
   GEMINI_CLI_MODELS,
-  AGY_MODELS,
   CLAUDE_MODELS,
   GROQ_MODELS,
   CODEX_MODELS,

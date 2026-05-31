@@ -141,7 +141,6 @@ function createService(repoRoot, overrides = {}) {
     repoRoot,
     codexProvider: overrides.codexProvider || new FakeCliProvider(),
     geminiCliProvider: overrides.geminiCliProvider || new FakeCliProvider(),
-    agyProvider: overrides.agyProvider || new FakeCliProvider(),
     claudeProvider: overrides.claudeProvider || new FakeCliProvider(),
     groqProvider: new FakeApiProvider(),
     geminiProvider: new FakeApiProvider(),
@@ -617,24 +616,6 @@ test("gemini CLI connection test reports executable readiness without starting a
   assert.equal(result.message, "Gemini CLI is available.");
 });
 
-test("agy connection test reports executable readiness without starting a chat", async () => {
-  const repoRoot = makeTempRepo();
-  const agyProvider = new FakeCliProvider({ chunks: ["unexpected"], delayMs: 1 });
-  agyProvider.chatCompletion = async () => {
-    throw new Error("Agy readiness test should not start a chat.");
-  };
-  const service = createService(repoRoot, {
-    agyProvider,
-  });
-
-  const result = await service.testProviderConnection({
-    providerId: "agy",
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.providerId, "agy");
-  assert.equal(result.message, "Agy CLI is available.");
-});
 
 test("plan mode saves a markdown plan file and exposes it on the active snapshot", async () => {
   const repoRoot = makeTempRepo();

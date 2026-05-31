@@ -63,7 +63,6 @@ class AppConfigStore {
     this.remoteAccessEnabled = false;
     this.recentRepoRoots = [];
     this.geminiSessionId = "";
-    this.agySessionId = "";
     this.codexSessionId = "";
     this.activeRuns = [];
     this.interruptedRuns = [];
@@ -117,7 +116,6 @@ class AppConfigStore {
         config.remoteAccessEnabled = Boolean(raw.remote_access_enabled ?? raw.remoteAccessEnabled);
         config.recentRepoRoots = normalizeRecentRepoRoots(raw.recent_repo_roots ?? raw.recentRepoRoots);
         config.geminiSessionId = String(raw.gemini_session_id || raw.geminiSessionId || "");
-        config.agySessionId = String(raw.agy_session_id || raw.agySessionId || "");
         config.codexSessionId = String(raw.codex_session_id || raw.codexSessionId || "");
         config.activeRuns = Array.isArray(raw.active_runs || raw.activeRuns) ? raw.active_runs || raw.activeRuns : [];
         config.interruptedRuns = Array.isArray(raw.interrupted_runs || raw.interruptedRuns)
@@ -177,7 +175,6 @@ class AppConfigStore {
           remote_access_enabled: this.remoteAccessEnabled,
           recent_repo_roots: normalizeRecentRepoRoots(this.recentRepoRoots),
           gemini_session_id: this.geminiSessionId,
-          agy_session_id: this.agySessionId,
           codex_session_id: this.codexSessionId,
           active_runs: this.activeRuns,
           interrupted_runs: this.interruptedRuns,
@@ -215,7 +212,6 @@ class AppConfigStore {
     this.remoteAccessEnabled = false;
     this.recentRepoRoots = [];
     this.geminiSessionId = "";
-    this.agySessionId = "";
     this.codexSessionId = "";
     this.activeRuns = [];
     this.interruptedRuns = [];

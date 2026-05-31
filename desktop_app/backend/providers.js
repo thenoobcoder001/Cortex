@@ -613,190 +613,6 @@ class GeminiCliProvider {
   }
 }
 
-class AgyCliProvider {
-  constructor(repoRoot) {
-    this.repoRoot = path.resolve(repoRoot);
-    this.sessionId = "";
-    this.sessionMode = "fresh";
-    this._available = null;
-  }
-
-  setRepoRoot(repoRoot) {
-    const resolved = path.resolve(repoRoot);
-    if (resolved !== this.repoRoot) {
-      this.sessionId = "";
-      this.sessionMode = "fresh";
-    }
-    this.repoRoot = resolved;
-  }
-
-  resolveCli() {
-    const shim =
-      which("agy.cmd")
-      || which("agy.ps1")
-      || which("agy")
-      || which("agy.exe");
-    if (shim) {
-      return shim;
-    }
-    if (process.platform === "win32") {
-      const fallback = path.join(process.env.LOCALAPPDATA || "C:\\Users\\CHIRAG\\AppData\\Local", "agy", "bin", "agy.exe");
-      if (require("node:fs").existsSync(fallback)) {
-        return fallback;
-      }
-    }
-    return null;
-  }
-
-  get available() {
-    if (this._available === null) {
-      this._available = Boolean(this.resolveCli());
-    }
-    return this._available;
-  }
-
-  get connected() {
-    return this.available;
-  }
-
-  cliModelName(model) {
-    const raw = String(model || "").startsWith("agy:") ? String(model).split(":", 2)[1] : model;
-    return raw || "";
-  }
-
-  buildArgs(prompt) {
-    const args = [
-      "--print",
-      "--dangerously-skip-permissions",
-    ];
-    args.push("--add-dir", this.repoRoot);
-    if (this.sessionMode === "resume_id" && this.sessionId) {
-      args.push("--conversation", this.sessionId);
-    }
-    // AGY requires the prompt as a positional argument, not stdin
-    if (prompt) {
-      args.push(prompt);
-    }
-    return args;
-  }
-
-  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
-    if (signal?.aborted) {
-      throw new InterruptError("Request interrupted.");
-    }
-    const command = this.resolveCli();
-    if (!command) {
-      throw new Error("agy CLI not found");
-    }
-    const prompt = buildCompactPrompt(messages, {
-      head: [
-        "You are running in non-interactive print mode.",
-        "Return only the final answer to the user's request.",
-        "Do not output planning or tool chatter.",
-      ].join("\n"),
-    });
-
-    const env = buildCleanEnv({
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      // Suppress the account info header agy prints at startup
-      AGY_CLI_HIDE_ACCOUNT_INFO: "1",
-    });
-
-    // agy requires a real PTY — it detects piped stdio and produces no output
-    if (!pty) {
-      throw new Error("node-pty is not available; cannot run agy CLI");
-    }
-
-    const child = pty.spawn(command, this.buildArgs(prompt), {
-      name: "xterm-256color",
-      cols: 220,
-      rows: 50,
-      cwd: this.repoRoot,
-      env,
-    });
-
-    let rawText = "";
-    let aborted = false;
-    let abortListener = null;
-    let settleAbort = null;
-    let turnTimeout = null;
-    let abortSettleTimeout = null;
-    // Buffer for incremental ANSI stripping and streaming
-    let streamedLen = 0;
-
-    child.onData((chunk) => {
-      rawText += chunk;
-      // Stream cleaned incremental output to caller
-      if (onOutput) {
-        const cleaned = stripAnsi(rawText);
-        const delta = cleaned.slice(streamedLen);
-        if (delta) {
-          streamedLen = cleaned.length;
-          onOutput(delta);
-        }
-      }
-    });
-
-    if (signal) {
-      abortListener = () => {
-        aborted = true;
-        try {
-          if (process.platform === "win32" && child.pid !== undefined) {
-            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-          } else {
-            child.kill();
-          }
-        } catch {}
-        abortSettleTimeout = setTimeout(() => settleAbort?.(null), CLI_ABORT_SETTLE_MS);
-      };
-      signal.addEventListener("abort", abortListener, { once: true });
-    }
-
-    try {
-      const exitCode = await Promise.race([
-        new Promise((resolve) => child.onExit(({ exitCode: c }) => resolve(c))),
-        new Promise((resolve) => {
-          settleAbort = resolve;
-          turnTimeout = setTimeout(() => resolve(null), CLI_TURN_TIMEOUT_MS);
-        }),
-      ]);
-
-      if (aborted) {
-        const fullText = stripAnsi(rawText);
-        throw new InterruptError("Request interrupted.", fullText);
-      }
-
-      if (exitCode !== 0 && exitCode !== null) {
-        throw new Error(`agy CLI failed with exit code ${exitCode}`);
-      }
-
-      const fullText = stripAnsi(rawText);
-
-      const sessionMatch = fullText.match(/session id:\s*([a-f0-9-]+)/i);
-      if (sessionMatch) {
-        this.sessionId = sessionMatch[1].trim();
-        this.sessionMode = "resume_id";
-      }
-
-      return fullText.trim() || "(No response from agy CLI.)";
-    } finally {
-      if (signal && abortListener) {
-        signal.removeEventListener("abort", abortListener);
-      }
-      clearTimeout(turnTimeout);
-      clearTimeout(abortSettleTimeout);
-    }
-  }
-
-  async chatCompletion(messages, model, options = {}) {
-    return this.chatCompletionStreamRaw(messages, model, options);
-  }
-
-  async chatWithTools(messages, model, _tools, options = {}) {
-    return [await this.chatCompletion(messages, model, options), null, null];
-  }
-}
 
 class ClaudeCliProvider {
   constructor(repoRoot) {
@@ -872,7 +688,13 @@ class ClaudeCliProvider {
   }
 
   buildArgs(model) {
-    const args = ["--print", "--verbose", "--output-format", "stream-json"];
+    const args = [
+      "--print",
+      "--verbose",
+      "--output-format",
+      "stream-json",
+      "--dangerously-skip-permissions",
+    ];
 
     // Restrict Claude Code's native tools to the active repo directory only.
     // --add-dir tells Claude Code that this is the only filesystem path its
@@ -1229,7 +1051,6 @@ class GeminiApiProvider {
 module.exports = {
   CodexProvider,
   GeminiCliProvider,
-  AgyCliProvider,
   ClaudeCliProvider,
   GroqProvider,
   GeminiApiProvider,

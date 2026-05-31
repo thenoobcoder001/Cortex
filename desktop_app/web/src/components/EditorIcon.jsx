@@ -26,17 +26,7 @@ export default function EditorIcon({ editorId }) {
     );
   }
 
-  // Antigravity (AGY) — Google-style multicolor diamond
-  if (editorId === "antigravity") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 2 4 9l3 9h10l3-9z" fill="#4285F4" />
-        <path d="M12 2l8 7-3 9h-5V2z" fill="#34A853" />
-        <path d="M12 2 4 9l3 9h5V2z" fill="#FBBC04" />
-        <path d="M7 18l5 4 5-4H7z" fill="#EA4335" />
-      </svg>
-    );
-  }
+
 
   // File Explorer — Windows folder
   if (editorId === "fileexplorer") {

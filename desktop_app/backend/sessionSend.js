@@ -118,7 +118,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   if (
     existingModel
     && service.modelFamily(existingModel) !== service.modelFamily(requestModel)
-    && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:") || requestModel.startsWith("agy:") || requestModel.startsWith("claude:"))
+    && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:") || requestModel.startsWith("claude:"))
   ) {
     baseMessages = service.recentChatContext(baseMessages, service.config.contextCarryMessages ?? 5);
     if (requestModel.startsWith("codex:")) {
@@ -128,10 +128,6 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     if (requestModel.startsWith("gemini-cli:")) {
       service.geminiCliProvider.sessionId = "";
       service.geminiCliProvider.sessionMode = "fresh";
-    }
-    if (requestModel.startsWith("agy:")) {
-      service.agyProvider.sessionId = "";
-      service.agyProvider.sessionMode = "fresh";
     }
     if (requestModel.startsWith("claude:")) {
       service.claudeProvider.sessionId = "";
@@ -238,36 +234,6 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         yield next.value;
       }
       providerState.gemini_cli_session_id = service.geminiCliProvider.sessionId || "";
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
-      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
-      const snapshot = service.saveCompletedChat({
-        chatStore: requestChatStore,
-        chatId,
-        messages: [...baseMessages, { role: "assistant", content: finalText }],
-        model: requestModel,
-        providerState,
-        toolSafetyMode: requestToolSafetyMode,
-        repoRoot: requestRepoRoot,
-        changes: finalChanges,
-        plan,
-      });
-      yield service.event("assistant", { text: finalText, chatId });
-      yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-      return;
-    }
-
-    if (requestModel.startsWith("agy:")) {
-      let finalText = "";
-      const agyStream = runCliRequest(service.agyProvider, baseForProvider, requestModel, service, chatId);
-      while (true) {
-        const next = await agyStream.next();
-        if (next.done) {
-          finalText = String(next.value || "");
-          break;
-        }
-        yield next.value;
-      }
-      providerState.agy_session_id = service.agyProvider.sessionId || "";
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
       const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({

@@ -14,7 +14,7 @@ const { AppConfigStore, normalizeContextCarryMessages, normalizeRecentRepoRoots 
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
-const { CodexProvider, GeminiCliProvider, AgyCliProvider, ClaudeCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
+const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
 const { normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
 const {
@@ -71,13 +71,10 @@ class DesktopSessionService {
     this.groqProvider = overrides.groqProvider || new GroqProvider(this.config.apiKey || process.env.GROQ_API_KEY || "");
     this.geminiProvider = overrides.geminiProvider || new GeminiApiProvider(this.config.geminiApiKey || process.env.GEMINI_API_KEY || "");
     this.geminiCliProvider = overrides.geminiCliProvider || new GeminiCliProvider(this.repoRoot);
-    this.agyProvider = overrides.agyProvider || new AgyCliProvider(this.repoRoot);
     this.claudeProvider = overrides.claudeProvider || new ClaudeCliProvider(this.repoRoot);
     this.codexProvider = overrides.codexProvider || new CodexProvider(this.repoRoot, this.config.openaiApiKey || process.env.OPENAI_API_KEY || "");
     this.geminiCliProvider.sessionId = this.config.geminiSessionId || "";
     this.geminiCliProvider.sessionMode = this.geminiCliProvider.sessionId ? "resume_id" : "fresh";
-    this.agyProvider.sessionId = this.config.agySessionId || "";
-    this.agyProvider.sessionMode = this.agyProvider.sessionId ? "resume_id" : "fresh";
     this.codexProvider.sessionId = this.config.codexSessionId || "";
     this.codexProvider.sessionMode = this.codexProvider.sessionId ? "resume_id" : "fresh";
     this.model = this.config.model || DEFAULT_MODEL;
@@ -204,7 +201,6 @@ class DesktopSessionService {
     this.chatStore.setRepoRoot(this.repoRoot);
     this.toolExecutor.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.setRepoRoot(this.repoRoot);
-    this.agyProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
     this.activeChatId = "";
@@ -363,10 +359,6 @@ class DesktopSessionService {
       const sessionId = String(this.geminiCliProvider.sessionId || providerState.gemini_cli_session_id || "").trim();
       return sessionId ? `gemini --resume ${quoteShellArg(sessionId)}` : "gemini";
     }
-    if (model.startsWith("agy:")) {
-      const sessionId = String(this.agyProvider.sessionId || providerState.agy_session_id || "").trim();
-      return sessionId ? `agy --conversation ${quoteShellArg(sessionId)}` : "agy";
-    }
     return "";
   }
 
@@ -418,8 +410,6 @@ class DesktopSessionService {
     this.activeChatModel = this.model || DEFAULT_MODEL;
     this.geminiCliProvider.sessionId = "";
     this.geminiCliProvider.sessionMode = "fresh";
-    this.agyProvider.sessionId = "";
-    this.agyProvider.sessionMode = "fresh";
     this.claudeProvider.sessionId = "";
     this.claudeProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
@@ -534,13 +524,10 @@ class DesktopSessionService {
     this.chatStore.setRepoRoot(this.repoRoot);
     this.toolExecutor.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.setRepoRoot(this.repoRoot);
-    this.agyProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.sessionId = "";
     this.geminiCliProvider.sessionMode = "fresh";
-    this.agyProvider.sessionId = "";
-    this.agyProvider.sessionMode = "fresh";
     this.claudeProvider.sessionId = "";
     this.claudeProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
@@ -589,8 +576,6 @@ class DesktopSessionService {
     this.codexProvider.setApiKey("");
     this.geminiCliProvider.sessionId = "";
     this.geminiCliProvider.sessionMode = "fresh";
-    this.agyProvider.sessionId = "";
-    this.agyProvider.sessionMode = "fresh";
     this.claudeProvider.sessionId = "";
     this.claudeProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
@@ -686,14 +671,13 @@ class DesktopSessionService {
   providerForRequest(model) {
     if (String(model).startsWith("claude:")) return this.claudeProvider;
     if (String(model).startsWith("gemini-cli:")) return this.geminiCliProvider;
-    if (String(model).startsWith("agy:")) return this.agyProvider;
     if (String(model).startsWith("gemini")) return this.geminiProvider;
     if (String(model).startsWith("codex:")) return this.codexProvider;
     return this.groqProvider;
   }
 
   requestUsesTools(model, message, preset) {
-    if (String(model).startsWith("gemini-cli:") || String(model).startsWith("agy:") || String(model).startsWith("codex:") || String(model).startsWith("claude:")) {
+    if (String(model).startsWith("gemini-cli:") || String(model).startsWith("codex:") || String(model).startsWith("claude:")) {
       return false;
     }
     if (preset === "chat") {
@@ -876,17 +860,6 @@ class DesktopSessionService {
           ok: true,
           providerId: normalized,
           message: "Gemini CLI is available.",
-        };
-      }
-
-      if (normalized === "agy") {
-        if (!this.agyProvider.available) {
-          throw new Error("Agy CLI is not available in PATH.");
-        }
-        return {
-          ok: true,
-          providerId: normalized,
-          message: "Agy CLI is available.",
         };
       }
 

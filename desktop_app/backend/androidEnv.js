@@ -174,11 +174,15 @@ const CLI_ALLOWED_ENV_KEYS = new Set([
   "TEMP", "TMP", "TERM", "COLORTERM", "TERM_PROGRAM",
   // Node / npm
   "NODE_ENV", "npm_config_cache",
+  // Network proxy — needed by MCP sub-servers spawned by AI CLIs
+  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "no_proxy",
   // AI CLI keys — only what each tool actually needs
   "ANTHROPIC_API_KEY",   // Claude Code
   "OPENAI_API_KEY",      // Codex
   "GEMINI_API_KEY",      // Gemini CLI
   "GOOGLE_API_KEY",      // Gemini CLI alternate
+  "GOOGLE_APPLICATION_CREDENTIALS",  // Google service account / OAuth helper
   // Android SDK (populated by resolveAndroidEnv)
   "ANDROID_HOME", "ANDROID_SDK_ROOT", "ANDROID_USER_HOME",
   "ANDROID_AVD_HOME", "ADB_VENDOR_KEYS",
