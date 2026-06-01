@@ -53,4 +53,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_PRE_RELEASE: "false"
           EP_DRAFT: "false"
+          EP_GH_IGNORE_TIME: "true"
         run: npx electron-builder --publish always --config.publish.releaseType=release
