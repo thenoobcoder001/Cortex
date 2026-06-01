@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish artifacts to (e.g. v0.0.6)"
+        required: true
+        default: "v0.0.6"
   push:
     tags:
       - "v*.*.*"
