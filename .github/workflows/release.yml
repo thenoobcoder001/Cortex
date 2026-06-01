@@ -51,4 +51,6 @@ jobs:
         working-directory: desktop_app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --publish always
+          EP_PRE_RELEASE: "false"
+          EP_DRAFT: "false"
+        run: npx electron-builder --publish always --config.publish.releaseType=release
