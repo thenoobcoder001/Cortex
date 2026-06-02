@@ -871,7 +871,7 @@
 <!-- ── Hero ── -->
 <section class="hero" id="top">
   <a class="pill" href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">
-    <span class="pill-tag">v0.0.6</span>
+    <span class="pill-tag">v0.0.7</span>
     Relay stability &amp; light theme fixes
     <span class="arrow">→</span>
   </a>
@@ -888,21 +888,21 @@
   </p>
 
   <div class="cta-row">
-    <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">
+    <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.7.exe">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
       Download for Windows
     </a>
-    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.6-arm64.dmg">
+    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.7-arm64.dmg">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
       Download for macOS
     </a>
-    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.6-x86_64.AppImage">
+    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.7-x86_64.AppImage">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.480.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.020-0.885 1.051-2.127 2.750-2.716 4.521-.278.832-.41 1.684-.287 2.489.226 1.482 1.225 2.797 2.450 4.022 1.226 1.226 2.546 2.225 3.840 2.225 1.346 0 2.673-.852 3.770-2.029 1.098-1.176 2.005-2.775 2.230-4.218.123-.805-.009-1.657-.287-2.489-.589-1.771-1.831-3.470-2.716-4.521-.75-1.067-.974-1.928-1.050-3.020-.065-1.491 1.056-5.965-3.170-6.298-.165-.013-.325-.021-.480-.021z"/></svg>
       Download for Linux
     </a>
   </div>
   <p class="release-link-row">
-    Click any button for the v0.0.6 build · or browse <a href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">all releases</a>
+    Click any button for the v0.0.7 build · or browse <a href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">all releases</a>
   </p>
 </section>
 
@@ -1142,11 +1142,54 @@
   <div class="timeline">
 
     <div class="release latest reveal">
+      <div class="dot-tl">v7</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.7</span>
+          <span class="release-badge">Latest</span>
+          <span class="release-title">Antigravity removed, CI fixes &amp; landing page</span>
+          <span class="release-date">2026-06-02</span>
+        </div>
+
+        <div class="release-group">
+          <h4>Provider changes</h4>
+          <ul>
+            <li>Removed Antigravity (AGY) as a chat provider — the CLI always runs a full workspace investigation before answering, making it unsuitable for interactive chat. The editor launcher is unaffected.</li>
+            <li>AGY no longer appears in the provider status list or model picker.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>CI / build fixes</h4>
+          <ul>
+            <li>Set <code>EP_GH_IGNORE_TIME</code> so electron-builder correctly uploads artifacts to existing GitHub releases.</li>
+            <li>Release artifacts now publish as <code>release</code> instead of <code>draft</code>.</li>
+            <li>Added manual <code>workflow_dispatch</code> trigger to the release workflow.</li>
+            <li>Fixed Linux AppImage filename to use the correct <code>x86_64</code> suffix.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Landing page &amp; docs</h4>
+          <ul>
+            <li>Redesigned landing page with monochrome palette, equal CTA buttons, and window mockups.</li>
+            <li>Removed Gemini API and Groq from landing page — providers not actively supported.</li>
+            <li>Simplified README download links and added GitHub Pages link.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.7.exe">Download Windows installer</a>
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.7" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="release reveal">
       <div class="dot-tl">v6</div>
       <div class="release-card">
         <div class="release-head">
           <span class="release-version">v0.0.6</span>
-          <span class="release-badge">Latest</span>
           <span class="release-title">Relay stability, light theme &amp; error handling</span>
           <span class="release-date">2026-05-30</span>
         </div>
@@ -1161,31 +1204,16 @@
         </div>
 
         <div class="release-group">
-          <h4>Light theme fixes</h4>
+          <h4>Light theme &amp; error handling</h4>
           <ul>
             <li>Boot screen background, text, hex spinner, and progress bar are now fully themed (were hardcoded dark).</li>
             <li>Linked devices and pairing-request rows no longer render a dark background in light theme.</li>
-          </ul>
-        </div>
-
-        <div class="release-group">
-          <h4>Error handling</h4>
-          <ul>
-            <li>API rate-limit and quota errors (429, "usage limit reached", etc.) now surface as clear per-provider messages — e.g. "API limits reached for Claude."</li>
+            <li>API rate-limit and quota errors now surface as clear per-provider messages.</li>
             <li>Interrupt releases the chat lock immediately so a new chat starts without waiting.</li>
           </ul>
         </div>
 
-        <div class="release-group">
-          <h4>Editor &amp; settings</h4>
-          <ul>
-            <li>Fixed Antigravity editor launcher — command corrected from <code>agy</code> to <code>antigravity</code>.</li>
-            <li><code>curl</code> unblocked in Claude's per-repo settings so network reachability checks work in chat sessions.</li>
-          </ul>
-        </div>
-
         <div class="release-foot">
-          <a class="release-link primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">Download Windows installer</a>
           <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.6" target="_blank">View on GitHub</a>
         </div>
       </div>
@@ -1405,17 +1433,17 @@
 <section class="section" style="padding-top: 40px;">
   <div class="final-cta reveal">
     <h2>Ready to try Cortex?</h2>
-    <p>Download v0.0.6 and have your favorite AI coding assistants running against your repo in under two minutes.</p>
+    <p>Download v0.0.7 and have your favorite AI coding assistants running against your repo in under two minutes.</p>
     <div class="cta-row">
-      <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.6.exe">
+      <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.7.exe">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
         Windows
       </a>
-      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.6-arm64.dmg">
+      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.7-arm64.dmg">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
         macOS
       </a>
-      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.6-x86_64.AppImage">
+      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.7-x86_64.AppImage">
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
         Linux
       </a>

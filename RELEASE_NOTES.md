@@ -3,7 +3,7 @@
 > ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
 
 ### Provider changes
-- **Removed Antigravity (AGY) as a chat provider** — the `agy` CLI always runs a full agentic workspace investigation before answering (5+ minutes per response, no flag to disable). It is not suitable for interactive chat. The Antigravity *editor launcher* (open repo in Antigravity IDE) is unaffected.
+- **Removed Antigravity (AGY) as a chat provider** — the `agy` CLI always runs a full agentic workspace investigation before answering (5+ minutes per response, no flag to disable). It is not suitable for interactive chat. The Antigravity *editor launcher* (open repo in Antigravity IDE) is unaffected
 - AGY no longer appears in the provider status list or model picker
 
 ### CI / build fixes
@@ -12,10 +12,16 @@
 - Added manual `workflow_dispatch` trigger to the release workflow
 - Fixed Linux AppImage filename to use the correct `x86_64` suffix
 
-### Docs
-- Removed Gemini API and Groq from the landing page (providers not actively supported)
-- Simplified README download links and added GitHub Pages link
+### Landing page & docs
 - Redesigned landing page with monochrome palette, equal CTA buttons, and window mockups
+- Removed Gemini API and Groq from landing page — providers not actively supported
+- Simplified README download links and added GitHub Pages link
+
+**Downloads:**
+- Windows installer — `Cortex-Setup-0.0.7.exe`
+- macOS (Apple Silicon) — `Cortex-Mac-0.0.7-arm64.dmg`
+- Linux AppImage — `Cortex-Linux-0.0.7-x86_64.AppImage`
+- Linux Debian package — `Cortex-Linux-0.0.7-amd64.deb`
 
 ---
 
