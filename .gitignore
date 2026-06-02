@@ -45,6 +45,12 @@ images/
 CLAUDE.md
 metro-start.err
 
+# Media files
+*.mp3
+*.mp4
+*.srt
+*.wav
+
 # Scratch / local notes
 *.txt
 MOBILE_TODO.md
