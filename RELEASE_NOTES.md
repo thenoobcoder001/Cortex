@@ -1,3 +1,24 @@
+## Cortex v0.0.7 — Antigravity Removed, CI Fixes, Landing Page
+
+> ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
+
+### Provider changes
+- **Removed Antigravity (AGY) as a chat provider** — the `agy` CLI always runs a full agentic workspace investigation before answering (5+ minutes per response, no flag to disable). It is not suitable for interactive chat. The Antigravity *editor launcher* (open repo in Antigravity IDE) is unaffected.
+- AGY no longer appears in the provider status list or model picker
+
+### CI / build fixes
+- Set `EP_GH_IGNORE_TIME` so electron-builder correctly uploads artifacts to existing GitHub releases
+- Release artifacts now publish as `release` instead of `draft`
+- Added manual `workflow_dispatch` trigger to the release workflow
+- Fixed Linux AppImage filename to use the correct `x86_64` suffix
+
+### Docs
+- Removed Gemini API and Groq from the landing page (providers not actively supported)
+- Simplified README download links and added GitHub Pages link
+- Redesigned landing page with monochrome palette, equal CTA buttons, and window mockups
+
+---
+
 ## Cortex v0.0.6 — Relay Stability, Light Theme, and Error Handling
 
 > ⚠️ **Windows SmartScreen warning:** Windows may block the installer on first run. Click **"More info" → "Run anyway"** — the app is safe to run. This happens because the installer is not yet code signed.
