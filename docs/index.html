@@ -864,6 +864,39 @@
     @media (max-width: 820px) { .hero-phone-strip { flex-direction: column; } .phone-aside { flex-direction: row; align-items: flex-start; } }
     @media (max-width: 560px) { .phone-aside { display: none; } }
 
+    .device-col { display: flex; flex-direction: column; align-items: stretch; }
+    .device-col.phone-col { align-items: center; flex-shrink: 0; }
+    .device-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-align: center;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .sync-bridge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-shrink: 0;
+      padding-top: 32px;
+    }
+    .sync-bridge .s-line { width: 1px; height: 36px; background: linear-gradient(180deg, transparent, var(--border-hi2), transparent); }
+    .sync-badge {
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      background: var(--surface-2);
+      border: 1px solid var(--border-hi2);
+      border-radius: 999px;
+      padding: 4px 12px;
+      white-space: nowrap;
+      letter-spacing: 0.2px;
+    }
+
     /* ── Phone frame ── */
     .phone-frame {
       width: 210px;
@@ -1118,41 +1151,55 @@
 
 <!-- ── Hero window + phone ── -->
 <div class="hero-phone-strip reveal">
-  <div class="window">
-    <div class="win-bar">
-      <span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span>
-      <span class="win-title">Cortex — gpt-tui</span>
-    </div>
-    <div class="preview-body">
-      <aside class="pv-side">
-        <div class="grp">Projects</div>
-        <div class="item active">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/></svg>
-          gpt-tui
-        </div>
-        <div class="item">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/></svg>
-          mobile-coapp
-        </div>
-        <div class="grp">Recent Chats</div>
-        <div class="item">Refactor session store</div>
-        <div class="item">Add relay reconnect</div>
-        <div class="item">Boot screen theming</div>
-        <div class="item">Codex effort tiers</div>
-      </aside>
-      <div class="pv-main">
-        <div class="msg user">Find where we initialize the relay client and add an auto-reconnect handler.</div>
-        <div class="msg ai">Found <code>cortexRelay.js</code> initializing the WebSocket in <code>connect()</code>. I'll add a backoff-reconnect handler that fires on close codes other than <code>1000</code>, with in-flight stream cleanup<span class="stream-cursor"></span></div>
-        <div class="pv-composer">
-          <span class="model-chip"><span class="live-dot"></span>Claude Sonnet 4.6</span>
-          <span>Ask anything about your repo…</span>
+
+  <!-- Desktop -->
+  <div class="device-col">
+    <div class="device-label">Desktop — Cortex</div>
+    <div class="window">
+      <div class="win-bar">
+        <span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span>
+        <span class="win-title">Cortex — gpt-tui</span>
+      </div>
+      <div class="preview-body">
+        <aside class="pv-side">
+          <div class="grp">Projects</div>
+          <div class="item active">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/></svg>
+            gpt-tui
+          </div>
+          <div class="item">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/></svg>
+            mobile-coapp
+          </div>
+          <div class="grp">Recent Chats</div>
+          <div class="item active">Auth refactor</div>
+          <div class="item">Add relay reconnect</div>
+          <div class="item">Boot screen theming</div>
+        </aside>
+        <div class="pv-main">
+          <div class="msg user">Refactor the auth middleware to use JWT refresh tokens</div>
+          <div class="msg ai">
+            Reading <code>middleware/auth.js</code>, <code>routes/user.js</code>, <code>tests/auth.test.js</code>...<br>
+            Found 3 files to update. Rewriting token logic and updating tests now.<span class="stream-cursor"></span>
+          </div>
+          <div class="pv-composer">
+            <span class="model-chip"><span class="live-dot"></span>Editing · middleware/auth.js</span>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Phone mockup — PocketAI -->
-  <div class="phone-aside">
+  <!-- Sync bridge -->
+  <div class="sync-bridge">
+    <div class="s-line"></div>
+    <div class="sync-badge">↔ same session</div>
+    <div class="s-line"></div>
+  </div>
+
+  <!-- Phone -->
+  <div class="device-col phone-col">
+    <div class="device-label">Mobile — PocketAI</div>
     <div class="phone-frame">
       <div class="phone-notch-bar"></div>
       <div class="phone-topbar">
@@ -1176,11 +1223,11 @@
         </div>
         <div class="p-msg ai">
           <div class="p-role">Assistant</div>
-          Found 3 files. Should I edit <code style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;font-size:7px;">middleware/auth.js</code> and update tests?
+          Reading <code style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;font-size:7px;">middleware/auth.js</code>... Found 3 files to update. Rewriting token logic now.
         </div>
         <div class="p-msg user2">
-          <div class="p-role">You</div>
-          ✓ Approve — go ahead
+          <div class="p-role">You · from phone</div>
+          ✓ Looks good — continue
         </div>
         <div class="p-msg ok">
           <div class="p-role">Tool result</div>
@@ -1194,8 +1241,8 @@
         </div>
       </div>
     </div>
-    <p class="phone-aside-label">PocketAI — control from anywhere</p>
   </div>
+
 </div>
 
 <!-- ── Spotlights ── -->
