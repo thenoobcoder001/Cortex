@@ -42,7 +42,7 @@ export default function ConversationSection({
           </div>
         ))
       )}
-      {activePendingTurn?.running && (
+      {activePendingTurn?.running && !activePendingTurn?.assistantText && (
         <div className="message-row assistant">
           <div className="thinking-dots">
             <span></span>

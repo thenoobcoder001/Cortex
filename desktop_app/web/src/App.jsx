@@ -306,7 +306,7 @@ export default function App() {
       visible.push({ role: "user", content: activePendingTurn.userMessage, pending: true });
     }
     if (activePendingTurn?.assistantText) {
-      visible.push({ role: "assistant", content: activePendingTurn.assistantText, pending: true });
+      visible.push({ role: "assistant", content: activePendingTurn.assistantText });
     }
     return visible;
   }, [activePendingTurn, snapshot]);
