@@ -837,6 +837,211 @@
     footer a { color: var(--text-dim); text-decoration: none; transition: color .15s; }
     footer a:hover { color: var(--text); }
 
+    /* ── Hero phone strip ── */
+    .hero-phone-strip {
+      max-width: 1000px;
+      margin: 32px auto 0;
+      padding: 0 24px;
+      display: flex;
+      align-items: flex-start;
+      gap: 28px;
+    }
+    .hero-phone-strip .window { flex: 1; min-width: 0; }
+    .phone-aside {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .phone-aside-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-align: center;
+      letter-spacing: 0.3px;
+      max-width: 160px;
+    }
+    @media (max-width: 820px) { .hero-phone-strip { flex-direction: column; } .phone-aside { flex-direction: row; align-items: flex-start; } }
+    @media (max-width: 560px) { .phone-aside { display: none; } }
+
+    /* ── Phone frame ── */
+    .phone-frame {
+      width: 210px;
+      background: #080C14;
+      border-radius: 30px;
+      border: 1.5px solid #2A3448;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.02) inset;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .phone-notch-bar {
+      height: 20px;
+      background: #080C14;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .phone-notch-bar::after {
+      content: "";
+      width: 48px; height: 5px;
+      background: #111c28;
+      border-radius: 999px;
+    }
+    .phone-topbar {
+      display: flex;
+      align-items: center;
+      padding: 5px 7px;
+      background: #111620;
+      border-bottom: 1px solid #2A3448;
+      gap: 3px;
+    }
+    .p-nav-btn {
+      flex: 1;
+      text-align: center;
+      padding: 4px 2px;
+      border-radius: 6px;
+      font-size: 7.5px;
+      font-weight: 600;
+      color: #60708A;
+      letter-spacing: 0.2px;
+    }
+    .p-nav-btn.mid {
+      color: #EEF1FA;
+      background: #222C3C;
+      border: 1px solid #2A3448;
+      border-radius: 7px;
+    }
+    .phone-modebar {
+      display: flex;
+      gap: 4px;
+      padding: 5px 7px;
+      background: #0a0f18;
+      border-bottom: 1px solid #1a2536;
+      overflow: hidden;
+    }
+    .p-mode {
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 7px;
+      font-weight: 600;
+      color: #60708A;
+      background: #111620;
+      border: 1px solid #2A3448;
+      white-space: nowrap;
+    }
+    .p-mode.active {
+      background: rgba(240,112,64,0.15);
+      border-color: rgba(240,112,64,0.4);
+      color: #F07040;
+    }
+    .phone-msgs {
+      min-height: 210px;
+      padding: 9px 7px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: #080C14;
+    }
+    .p-msg {
+      max-width: 88%;
+      padding: 6px 9px;
+      border-radius: 11px;
+      font-size: 8px;
+      line-height: 1.55;
+      opacity: 0;
+      animation-fill-mode: forwards;
+      animation-duration: 0.4s;
+      animation-timing-function: ease;
+      animation-name: pmsgIn;
+    }
+    @keyframes pmsgIn {
+      from { opacity: 0; transform: translateY(5px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .p-msg.user  { align-self: flex-end; background: #192030; border: 1px solid #2A3448; color: #EEF1FA; animation-delay: 0.7s; }
+    .p-msg.dots  { align-self: flex-start; background: #111620; border: 1px solid #2A3448; color: #8E9AB4; animation-delay: 1.5s; }
+    .p-msg.ai    { align-self: flex-start; background: #111620; border: 1px solid #2A3448; color: #8E9AB4; animation-delay: 3s; }
+    .p-msg.user2 { align-self: flex-end; background: rgba(240,112,64,0.12); border: 1px solid rgba(240,112,64,0.35); color: #F07040; font-weight: 600; animation-delay: 4.8s; }
+    .p-msg.ok    { align-self: flex-start; background: rgba(80,200,136,0.08); border: 1px solid rgba(80,200,136,0.28); color: #50C888; font-weight: 600; animation-delay: 5.6s; }
+    .p-role {
+      font-size: 6px;
+      color: #3A4860;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .p-dots { display: inline-flex; gap: 3px; align-items: center; }
+    .p-dots span { width: 3.5px; height: 3.5px; background: #60708A; border-radius: 50%; animation: type 1.4s infinite ease-in-out both; }
+    .p-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .p-dots span:nth-child(3) { animation-delay: 0.3s; }
+    .phone-inputbar {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 7px;
+      background: #111620;
+      border-top: 1px solid #2A3448;
+    }
+    .p-input-field {
+      flex: 1;
+      background: #0d1420;
+      border: 1px solid #2A3448;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 7.5px;
+      color: #3A4860;
+    }
+    .p-send-btn {
+      width: 24px; height: 24px;
+      background: #F07040;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .p-send-btn svg { width: 10px; height: 10px; fill: #fff; }
+
+    /* ── Mobile steps ── */
+    .steps-list {
+      max-width: 780px;
+      margin: 0 auto;
+      position: relative;
+    }
+    .steps-list::before {
+      content: "";
+      position: absolute;
+      left: 18px; top: 28px; bottom: 28px;
+      width: 1px;
+      background: linear-gradient(180deg, var(--border-hi2) 0%, transparent 100%);
+    }
+    .step-row {
+      display: flex;
+      gap: 22px;
+      align-items: flex-start;
+      padding-bottom: 28px;
+      position: relative;
+    }
+    .step-num {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--surface-2);
+      border: 1px solid var(--border-hi2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.78rem; font-weight: 700;
+      color: var(--text-dim);
+      flex-shrink: 0;
+      box-shadow: 0 0 0 4px var(--bg);
+      font-family: "JetBrains Mono", monospace;
+      z-index: 1;
+    }
+    .step-num.hi { background: #fff; color: #000; border-color: #fff; }
+    .step-body { padding-top: 7px; }
+    .step-body h4 { font-size: 0.98rem; font-weight: 600; color: var(--text); letter-spacing: -0.3px; margin-bottom: 4px; }
+    .step-body p { font-size: 0.875rem; color: var(--text-dim); line-height: 1.6; }
+    .step-body code { background: var(--surface-3); border: 1px solid var(--border-hi); color: var(--text); padding: 1px 6px; border-radius: 4px; font-size: 0.78rem; font-family: "JetBrains Mono", monospace; }
+
     /* fade-in on scroll */
     .reveal { opacity: 0; transform: translateY(16px); transition: opacity .55s ease, transform .55s ease; }
     .reveal.in { opacity: 1; transform: translateY(0); }
@@ -861,6 +1066,7 @@
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
+      <a href="#mobile">Mobile</a>
       <a href="#providers">Providers</a>
       <a href="#releases">Releases</a>
       <a href="https://github.com/thenoobcoder001/Cortex" target="_blank">GitHub</a>
@@ -910,8 +1116,8 @@
   </p>
 </section>
 
-<!-- ── Hero window ── -->
-<div class="preview-wrap reveal">
+<!-- ── Hero window + phone ── -->
+<div class="hero-phone-strip reveal">
   <div class="window">
     <div class="win-bar">
       <span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span>
@@ -943,6 +1149,52 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Phone mockup — PocketAI -->
+  <div class="phone-aside">
+    <div class="phone-frame">
+      <div class="phone-notch-bar"></div>
+      <div class="phone-topbar">
+        <span class="p-nav-btn">Projects</span>
+        <span class="p-nav-btn mid">gpt-tui ▾</span>
+        <span class="p-nav-btn">Settings</span>
+      </div>
+      <div class="phone-modebar">
+        <span class="p-mode active">Programmer</span>
+        <span class="p-mode">Planner</span>
+        <span class="p-mode">Debug</span>
+      </div>
+      <div class="phone-msgs">
+        <div class="p-msg user">
+          <div class="p-role">You</div>
+          Refactor auth middleware to use JWT refresh tokens
+        </div>
+        <div class="p-msg dots">
+          <div class="p-role">Assistant</div>
+          <span class="p-dots"><span></span><span></span><span></span></span>
+        </div>
+        <div class="p-msg ai">
+          <div class="p-role">Assistant</div>
+          Found 3 files. Should I edit <code style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;font-size:7px;">middleware/auth.js</code> and update tests?
+        </div>
+        <div class="p-msg user2">
+          <div class="p-role">You</div>
+          ✓ Approve — go ahead
+        </div>
+        <div class="p-msg ok">
+          <div class="p-role">Tool result</div>
+          ✓ 3 files updated successfully
+        </div>
+      </div>
+      <div class="phone-inputbar">
+        <div class="p-input-field">Message…</div>
+        <div class="p-send-btn">
+          <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </div>
+      </div>
+    </div>
+    <p class="phone-aside-label">PocketAI — control from anywhere</p>
   </div>
 </div>
 
@@ -1106,6 +1358,90 @@
       <h4>Open in editor</h4>
       <p>One click opens the repo in VS Code, Cursor, Visual Studio, Windows Terminal, or File Explorer — auto-detected per OS with official brand icons.</p>
     </div>
+  </div>
+</section>
+
+<!-- ── Mobile how-to ── -->
+<section class="section" id="mobile">
+  <div class="section-head reveal">
+    <div class="section-eyebrow">PocketAI for Android</div>
+    <h2 class="section-title">Control your agent from anywhere</h2>
+    <p class="section-sub">Out of town, at the grocery store, on a walk — approve tool calls, steer the conversation, and get notified the moment your agent needs you.</p>
+  </div>
+
+  <div class="steps-list">
+
+    <div class="step-row reveal">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Install Cortex on your desktop</h4>
+        <p>Download and run the installer for Windows, macOS, or Linux. Open a project folder — Cortex sets up the AI environment automatically.</p>
+      </div>
+    </div>
+
+    <div class="step-row reveal">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Enable Remote Access in Settings</h4>
+        <p>Open Cortex → Settings → scroll to <code>Remote Access</code> → toggle on <code>Cortex Relay</code>. The relay connects your desktop to the cloud gateway — nothing is stored or logged there.</p>
+      </div>
+    </div>
+
+    <div class="step-row reveal">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Copy your relay token</h4>
+        <p>Once the relay connects, your unique token appears under <code>Relay Token</code> in Settings. Copy it — you'll paste it into PocketAI in the next step.</p>
+      </div>
+    </div>
+
+    <div class="step-row reveal">
+      <div class="step-num hi">4</div>
+      <div class="step-body">
+        <h4>Install PocketAI on Android</h4>
+        <p>Download <strong>PocketAI</strong> from the <a href="https://play.google.com/store/apps/details?id=com.bchirag.pocketai" target="_blank" rel="noopener" style="color:var(--text);border-bottom:1px dashed var(--muted-2);text-decoration:none;">Google Play Store</a>. Open it and tap <strong>Connect via Relay</strong>.</p>
+      </div>
+    </div>
+
+    <div class="step-row reveal">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Paste your token and connect</h4>
+        <p>Enter the relay token from step 3 and tap Connect. PocketAI establishes an encrypted WebSocket tunnel to your desktop through the relay.</p>
+      </div>
+    </div>
+
+    <div class="step-row reveal">
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <h4>Approve the device pairing on your desktop</h4>
+        <p>A pairing request appears in Cortex on your desktop — click <strong>Approve</strong>. This one-time step registers your phone as a trusted device. Approval persists until you remove it.</p>
+      </div>
+    </div>
+
+    <div class="step-row reveal">
+      <div class="step-num">7</div>
+      <div class="step-body">
+        <h4>Open a workspace</h4>
+        <p>Your recent projects appear automatically. Tap one to activate it — the agent picks up exactly where you left off, including chat history and model selection.</p>
+      </div>
+    </div>
+
+    <div class="step-row reveal">
+      <div class="step-num hi">8</div>
+      <div class="step-body">
+        <h4>Chat, steer, and approve from anywhere</h4>
+        <p>Send messages, switch presets (Programmer · Planner · Troubleshooter), approve tool calls, or stop a run — all from your phone while your desktop does the work. Your code never leaves your machine.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="text-align:center; margin-top: 40px;" class="reveal">
+    <a class="btn btn-primary" href="https://play.google.com/store/apps/details?id=com.bchirag.pocketai" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;"><path d="M3.18 23.76c.28.16.6.2.93.1l12.46-7.2-2.79-2.79L3.18 23.76zm-1.1-19.7C2.04 4.24 2 4.43 2 4.63v14.74c0 .2.04.39.08.57l.06.06 8.26-8.26v-.2L2.08 3.98l-.01.08zm17.43 8.56-2.65-1.53-3.05 3.05 3.06 3.06 2.64-1.52c.75-.44.75-1.14 0-1.57l.01.01zM3.18.24l10.6 10.6-2.79 2.79L.93.34C.6.24.28.28 0 .44L3.18.24z"/></svg>
+      Get PocketAI on Google Play
+    </a>
   </div>
 </section>
 
