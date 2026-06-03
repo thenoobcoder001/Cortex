@@ -1150,6 +1150,11 @@
 </section>
 
 <!-- ── Hero window + phone ── -->
+<div style="text-align:center; margin: 48px auto 16px; max-width: 640px; padding: 0 24px;">
+  <div class="section-eyebrow" style="margin-bottom:12px;">Desktop + Mobile</div>
+  <p style="font-size:clamp(1.05rem,2vw,1.25rem); font-weight:600; color:var(--text); letter-spacing:-0.4px; margin-bottom:8px;">Your agent runs on your desktop. You control it from anywhere.</p>
+  <p style="font-size:0.92rem; color:var(--text-dim); line-height:1.6;">Start a task on Cortex, step away, and pick it up on your phone — same session, same conversation, same agent.</p>
+</div>
 <div class="hero-phone-strip reveal">
 
   <!-- Desktop -->
@@ -1180,10 +1185,15 @@
           <div class="msg user">Refactor the auth middleware to use JWT refresh tokens</div>
           <div class="msg ai">
             Reading <code>middleware/auth.js</code>, <code>routes/user.js</code>, <code>tests/auth.test.js</code>...<br>
-            Found 3 files to update. Rewriting token logic and updating tests now.<span class="stream-cursor"></span>
+            Found 3 files to update. Rewriting token logic now.
+          </div>
+          <div class="msg user" style="background:rgba(255,255,255,0.07);color:var(--text);border:1px solid var(--border-hi2);font-weight:500;">✓ Looks good — continue</div>
+          <div class="msg ai" style="border-color:rgba(80,200,136,0.3);color:#50C888;">
+            ✓ 3 files updated successfully
           </div>
           <div class="pv-composer">
-            <span class="model-chip"><span class="live-dot"></span>Editing · middleware/auth.js</span>
+            <span class="model-chip" style="background:rgba(80,200,136,0.1);border-color:rgba(80,200,136,0.3);color:#50C888;">✓ Done</span>
+            <span>Ask anything about your repo…</span>
           </div>
         </div>
       </div>
