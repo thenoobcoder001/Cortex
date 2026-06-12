@@ -14,7 +14,7 @@ const { AppConfigStore, normalizeContextCarryMessages, normalizeRecentRepoRoots 
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
-const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
+const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
 const { normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
 const {
@@ -72,6 +72,7 @@ class DesktopSessionService {
     this.geminiProvider = overrides.geminiProvider || new GeminiApiProvider(this.config.geminiApiKey || process.env.GEMINI_API_KEY || "");
     this.geminiCliProvider = overrides.geminiCliProvider || new GeminiCliProvider(this.repoRoot);
     this.claudeProvider = overrides.claudeProvider || new ClaudeCliProvider(this.repoRoot);
+    this.hermesProvider = overrides.hermesProvider || new HermesCliProvider(this.repoRoot);
     this.codexProvider = overrides.codexProvider || new CodexProvider(this.repoRoot, this.config.openaiApiKey || process.env.OPENAI_API_KEY || "");
     this.geminiCliProvider.sessionId = this.config.geminiSessionId || "";
     this.geminiCliProvider.sessionMode = this.geminiCliProvider.sessionId ? "resume_id" : "fresh";
@@ -202,6 +203,7 @@ class DesktopSessionService {
     this.toolExecutor.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
+    this.hermesProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
     this.activeChatId = "";
     this.activeChatModel = "";
@@ -355,6 +357,10 @@ class DesktopSessionService {
       const sessionId = String(this.claudeProvider.sessionId || providerState.claude_session_id || "").trim();
       return sessionId ? `claude --resume ${quoteShellArg(sessionId)}` : "claude";
     }
+    if (model.startsWith("hermes:")) {
+      const sessionId = String(this.hermesProvider.sessionId || providerState.hermes_session_id || "").trim();
+      return sessionId ? `hermes chat --resume ${quoteShellArg(sessionId)}` : "hermes";
+    }
     if (model.startsWith("gemini-cli:")) {
       const sessionId = String(this.geminiCliProvider.sessionId || providerState.gemini_cli_session_id || "").trim();
       return sessionId ? `gemini --resume ${quoteShellArg(sessionId)}` : "gemini";
@@ -412,6 +418,8 @@ class DesktopSessionService {
     this.geminiCliProvider.sessionMode = "fresh";
     this.claudeProvider.sessionId = "";
     this.claudeProvider.sessionMode = "fresh";
+    this.hermesProvider.sessionId = "";
+    this.hermesProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
     this.codexProvider.sessionMode = "fresh";
     this.invalidateSnapshotCaches(this.repoRoot);
@@ -525,11 +533,14 @@ class DesktopSessionService {
     this.toolExecutor.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
+    this.hermesProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.sessionId = "";
     this.geminiCliProvider.sessionMode = "fresh";
     this.claudeProvider.sessionId = "";
     this.claudeProvider.sessionMode = "fresh";
+    this.hermesProvider.sessionId = "";
+    this.hermesProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
     this.codexProvider.sessionMode = "fresh";
     this.groqProvider.setApiKey("");
@@ -578,6 +589,8 @@ class DesktopSessionService {
     this.geminiCliProvider.sessionMode = "fresh";
     this.claudeProvider.sessionId = "";
     this.claudeProvider.sessionMode = "fresh";
+    this.hermesProvider.sessionId = "";
+    this.hermesProvider.sessionMode = "fresh";
     this.codexProvider.sessionId = "";
     this.codexProvider.sessionMode = "fresh";
     this.model = DEFAULT_MODEL;
@@ -670,6 +683,7 @@ class DesktopSessionService {
 
   providerForRequest(model) {
     if (String(model).startsWith("claude:")) return this.claudeProvider;
+    if (String(model).startsWith("hermes:")) return this.hermesProvider;
     if (String(model).startsWith("gemini-cli:")) return this.geminiCliProvider;
     if (String(model).startsWith("gemini")) return this.geminiProvider;
     if (String(model).startsWith("codex:")) return this.codexProvider;
@@ -677,7 +691,7 @@ class DesktopSessionService {
   }
 
   requestUsesTools(model, message, preset) {
-    if (String(model).startsWith("gemini-cli:") || String(model).startsWith("codex:") || String(model).startsWith("claude:")) {
+    if (String(model).startsWith("gemini-cli:") || String(model).startsWith("codex:") || String(model).startsWith("claude:") || String(model).startsWith("hermes:")) {
       return false;
     }
     if (preset === "chat") {
@@ -874,6 +888,17 @@ class DesktopSessionService {
           ok: true,
           providerId: normalized,
           message: String(reply || "OK").trim().slice(0, 120),
+        };
+      }
+
+      if (normalized === "hermes") {
+        if (!this.hermesProvider.available) {
+          throw new Error("Hermes CLI is not available in PATH.");
+        }
+        return {
+          ok: true,
+          providerId: normalized,
+          message: "Hermes CLI is available.",
         };
       }
 

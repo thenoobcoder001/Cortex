@@ -3,11 +3,13 @@ const {
   VERSION,
   GEMINI_CLI_MODELS,
   CLAUDE_MODELS,
+  HERMES_MODELS,
   CODEX_MODELS,
 } = require("./constants");
 
 function modelFamily(model) {
   if (String(model).startsWith("claude:")) return "claude";
+  if (String(model).startsWith("hermes:")) return "hermes";
   if (String(model).startsWith("gemini-cli:")) return "gemini-cli";
   if (String(model).startsWith("gemini")) return "gemini";
   if (String(model).startsWith("codex:")) return "codex";
@@ -16,6 +18,7 @@ function modelFamily(model) {
 
 function providerNameForModel(model) {
   if (String(model).startsWith("claude:")) return "Claude";
+  if (String(model).startsWith("hermes:")) return "Hermes";
   if (String(model).startsWith("gemini-cli:")) return "Gemini CLI";
   if (String(model).startsWith("gemini")) return "Gemini";
   if (String(model).startsWith("codex:")) return "Codex";
@@ -30,6 +33,7 @@ function models() {
       return { id, label, group: "Codex", ...(subGroup ? { subGroup } : {}) };
     }),
     ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
+    ...HERMES_MODELS.map(([id, label]) => ({ id, label, group: "Hermes" })),
     ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI (Legacy)" })),
   ];
 }
@@ -37,6 +41,7 @@ function models() {
 function providersSnapshot(service) {
   return {
     claude: { available: service.claudeProvider.available, connected: service.claudeProvider.connected },
+    hermes: { available: service.hermesProvider?.available || false, connected: service.hermesProvider?.connected || false },
     codex: { available: service.codexProvider.available, connected: service.codexProvider.connected },
     geminiCli: { available: service.geminiCliProvider.available, connected: service.geminiCliProvider.connected },
   };

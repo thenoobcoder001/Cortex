@@ -155,6 +155,7 @@ function providerDisplayName(model) {
   if (value.startsWith("codex:")) return "Codex";
   if (value.startsWith("gemini-cli:")) return "Gemini CLI";
   if (value.startsWith("claude:")) return "Claude";
+  if (value.startsWith("hermes:")) return "Hermes";
   if (value.startsWith("agy:")) return "Agy";
   if (value.startsWith("gemini")) return "Gemini";
   return "API";
@@ -835,6 +836,139 @@ class ClaudeCliProvider {
   }
 }
 
+class HermesCliProvider {
+  constructor(repoRoot) {
+    this.repoRoot = path.resolve(repoRoot);
+    this.sessionId = "";
+    this.sessionMode = "fresh";
+    this.toolReadOnly = false;
+    this._available = null;
+  }
+
+  setRepoRoot(repoRoot) {
+    const resolved = path.resolve(repoRoot);
+    if (resolved !== this.repoRoot) {
+      this.sessionId = "";
+      this.sessionMode = "fresh";
+    }
+    this.repoRoot = resolved;
+  }
+
+  resolveCli() {
+    return which("hermes.exe") || which("hermes.cmd") || which("hermes");
+  }
+
+  get available() {
+    if (this._available === null) {
+      this._available = Boolean(this.resolveCli());
+    }
+    return this._available;
+  }
+
+  get connected() {
+    return this.available;
+  }
+
+  buildArgs(prompt) {
+    const args = ["chat", "-Q", "-q", prompt];
+    if (this.sessionMode === "resume_id" && this.sessionId) {
+      args.push("--resume", this.sessionId);
+    }
+    return args;
+  }
+
+  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
+    if (signal?.aborted) {
+      throw new InterruptError("Request interrupted.");
+    }
+    const cli = this.resolveCli();
+    if (!cli) {
+      throw new Error("hermes CLI not found in PATH");
+    }
+    const prompt = buildCompactPrompt(messages, {
+      head: [
+        "You are running in non-interactive single-query mode.",
+        "Return only the final answer to the user's request.",
+      ].join("\n"),
+    });
+    // Spawn the hermes executable directly (not through cmd.exe) so the
+    // multi-line prompt survives as a single -q argument; cmd.exe would
+    // truncate the command line at the first newline.
+    const child = spawn(cli, this.buildArgs(prompt), {
+      cwd: this.repoRoot,
+      env: buildCleanEnv(),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      shell: false,
+    });
+    let stdout = "";
+    let stderr = "";
+    let aborted = false;
+    let abortListener = null;
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    if (signal) {
+      abortListener = () => {
+        aborted = true;
+        platform.killProcessTree(child);
+      };
+      signal.addEventListener("abort", abortListener, { once: true });
+    }
+    try {
+      const exitCode = await Promise.race([
+        new Promise((resolve) => child.once("close", resolve)),
+        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS)),
+      ]);
+      // Quiet mode prints the answer to stdout and a "session_id: <id>"
+      // line to stderr. Resumed turns prepend an ANSI-colored
+      // "↻ Resumed session <id> (...)" banner line — drop it.
+      let fullText = stripAnsi(String(stdout || ""))
+        .replace(/^\s*↻?\s*Resumed session \S+[^\n]*\n?/, "")
+        .trim();
+      const sessionMatch = String(stderr || "").match(/session_id:\s*(\S+)/);
+      if (sessionMatch) {
+        this.sessionId = sessionMatch[1];
+        this.sessionMode = "resume_id";
+      }
+      if (aborted) {
+        throw new InterruptError("Request interrupted.", fullText);
+      }
+      if (exitCode !== 0) {
+        // A stale --resume ID can fail the run; clear the session and retry fresh.
+        if (this.sessionMode === "resume_id" && this.sessionId) {
+          this.sessionId = "";
+          this.sessionMode = "fresh";
+          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal });
+        }
+        throw new Error(`hermes CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
+      }
+      // Simulate streaming: hermes -Q buffers the full answer, so emit
+      // word-by-word like the Claude CLI provider does.
+      if (onOutput && fullText) {
+        const tokens = fullText.match(/\S+\s*/g) || [fullText];
+        for (const token of tokens) {
+          if (signal?.aborted) break;
+          onOutput(token);
+          await new Promise((r) => setTimeout(r, 18));
+        }
+      }
+      return fullText || "(No response from Hermes.)";
+    } finally {
+      if (signal && abortListener) {
+        signal.removeEventListener("abort", abortListener);
+      }
+    }
+  }
+
+  async chatCompletion(messages, model, options = {}) {
+    return this.chatCompletionStreamRaw(messages, model, options);
+  }
+
+  async chatWithTools(messages, model, _tools, options = {}) {
+    return [await this.chatCompletion(messages, model, options), null, null];
+  }
+}
+
 class GroqProvider {
   constructor(apiKey = "") {
     this.apiKey = String(apiKey || "").trim();
@@ -1052,6 +1186,7 @@ module.exports = {
   CodexProvider,
   GeminiCliProvider,
   ClaudeCliProvider,
+  HermesCliProvider,
   GroqProvider,
   GeminiApiProvider,
   InterruptError,

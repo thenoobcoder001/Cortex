@@ -20,6 +20,7 @@ export function providerCliCommand(modelId) {
   if (!modelId) return "claude";
   if (modelId.startsWith("gemini-cli:")) return "gemini";
   if (modelId.startsWith("codex:")) return "codex";
+  if (modelId.startsWith("hermes:")) return "hermes";
   return "claude";
 }
 

@@ -108,6 +108,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   service.geminiCliProvider.sessionMode = service.geminiCliProvider.sessionId ? "resume_id" : "fresh";
   service.claudeProvider.sessionId = String(existingProviderState.claude_session_id || "");
   service.claudeProvider.sessionMode = service.claudeProvider.sessionId ? "resume_id" : "fresh";
+  service.hermesProvider.sessionId = String(existingProviderState.hermes_session_id || "");
+  service.hermesProvider.sessionMode = service.hermesProvider.sessionId ? "resume_id" : "fresh";
   if (
     service.codexProvider.sessionId
     && String(existingProviderState.codex_tool_safety_mode || "") !== requestToolSafetyMode
@@ -118,7 +120,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   if (
     existingModel
     && service.modelFamily(existingModel) !== service.modelFamily(requestModel)
-    && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:") || requestModel.startsWith("claude:"))
+    && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:") || requestModel.startsWith("claude:") || requestModel.startsWith("hermes:"))
   ) {
     baseMessages = service.recentChatContext(baseMessages, service.config.contextCarryMessages ?? 5);
     if (requestModel.startsWith("codex:")) {
@@ -132,6 +134,10 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     if (requestModel.startsWith("claude:")) {
       service.claudeProvider.sessionId = "";
       service.claudeProvider.sessionMode = "fresh";
+    }
+    if (requestModel.startsWith("hermes:")) {
+      service.hermesProvider.sessionId = "";
+      service.hermesProvider.sessionMode = "fresh";
     }
   }
 
@@ -264,6 +270,36 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         yield next.value;
       }
       providerState.claude_session_id = service.claudeProvider.sessionId || "";
+      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
+      const snapshot = service.saveCompletedChat({
+        chatStore: requestChatStore,
+        chatId,
+        messages: [...baseMessages, { role: "assistant", content: finalText }],
+        model: requestModel,
+        providerState,
+        toolSafetyMode: requestToolSafetyMode,
+        repoRoot: requestRepoRoot,
+        changes: finalChanges,
+        plan,
+      });
+      yield service.event("assistant", { text: finalText, chatId });
+      yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
+      return;
+    }
+
+    if (requestModel.startsWith("hermes:")) {
+      let finalText = "";
+      const hermesStream = runCliRequest(service.hermesProvider, baseForProvider, requestModel, service, chatId);
+      while (true) {
+        const next = await hermesStream.next();
+        if (next.done) {
+          finalText = String(next.value || "");
+          break;
+        }
+        yield next.value;
+      }
+      providerState.hermes_session_id = service.hermesProvider.sessionId || "";
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
       const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({

@@ -284,7 +284,7 @@ export default function App() {
     return pendingTurns[activeChatId] || null;
   }, [pendingTurns, snapshot?.config?.activeChatId]);
   const activeModelId = snapshot?.config?.model || "";
-  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:/, "");
+  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:|^hermes:/, "");
   const activePlan = snapshot?.activePlan || null;
   const activeTerminalChatId = snapshot?.config?.activeChatId || "";
 
