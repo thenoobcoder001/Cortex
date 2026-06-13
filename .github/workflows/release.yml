@@ -20,7 +20,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-2022, macos-latest]
 
     steps:
       - name: Checkout
@@ -38,6 +38,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libarchive-dev fakeroot
+
 
       - name: Install dependencies
         working-directory: desktop_app
