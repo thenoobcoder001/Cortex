@@ -55,6 +55,10 @@ const CLAUDE_MODELS = [
   ["claude:haiku", "Claude Haiku"],
 ];
 
+const HERMES_MODELS = [
+  ["hermes:default", "Hermes Agent"],
+];
+
 const GROQ_MODELS = [
   ["llama-3.3-70b-versatile", "Llama 3.3 70B"],
   ["llama-3.1-8b-instant", "Llama 3.1 8B"],
@@ -92,6 +96,7 @@ module.exports = {
   GEMINI_MODELS,
   GEMINI_CLI_MODELS,
   CLAUDE_MODELS,
+  HERMES_MODELS,
   GROQ_MODELS,
   CODEX_MODELS,
   TOOLS,

@@ -183,6 +183,8 @@ const CLI_ALLOWED_ENV_KEYS = new Set([
   "GEMINI_API_KEY",      // Gemini CLI
   "GOOGLE_API_KEY",      // Gemini CLI alternate
   "GOOGLE_APPLICATION_CREDENTIALS",  // Google service account / OAuth helper
+  "HERMES_HOME",         // Hermes Agent config dir (config.yaml, provider keys)
+  "HERMES_GIT_BASH_PATH", // Hermes Agent shell tool on Windows
   // Android SDK (populated by resolveAndroidEnv)
   "ANDROID_HOME", "ANDROID_SDK_ROOT", "ANDROID_USER_HOME",
   "ANDROID_AVD_HOME", "ADB_VENDOR_KEYS",

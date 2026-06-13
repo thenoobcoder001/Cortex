@@ -20,6 +20,7 @@ export function providerCliCommand(modelId) {
   if (!modelId) return "claude";
   if (modelId.startsWith("gemini-cli:")) return "gemini";
   if (modelId.startsWith("codex:")) return "codex";
+  if (modelId.startsWith("hermes:")) return "hermes";
   return "claude";
 }
 
@@ -94,6 +95,9 @@ export function providerStateForGroup(group, providers) {
   }
   if (group === "Codex") {
     return providers?.codex || { available: false, connected: false };
+  }
+  if (group === "Hermes") {
+    return providers?.hermes || { available: false, connected: false };
   }
   if (group === "Groq") {
     return providers?.groq || { available: false, connected: false };
