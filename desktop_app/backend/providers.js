@@ -841,7 +841,6 @@ class HermesCliProvider {
     this.repoRoot = path.resolve(repoRoot);
     this.sessionId = "";
     this.sessionMode = "fresh";
-    this.toolReadOnly = false;
     this._available = null;
   }
 

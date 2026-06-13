@@ -39,18 +39,14 @@ async function *runCliRequest(provider, messages, model, service, chatId) {
   const waiter = { current: null };
   let cliError = null;
   let finalText = "";
-  const worker = {
-    done: false,
-  };
+  const worker = { done: false };
 
   const job = (async () => {
     try {
       finalText = await provider.chatCompletionStreamRaw(messages, model, {
         signal: service.requestRegistry.get(chatId)?.controller.signal || null,
         onOutput: (chunk) => {
-          if (!chunk) {
-            return;
-          }
+          if (!chunk) return;
           queue.push(service.event("cli_output", { stream: "stdout", text: chunk, chatId }));
           waiter.current?.();
         },
@@ -68,10 +64,35 @@ async function *runCliRequest(provider, messages, model, service, chatId) {
   }
 
   await job;
-  if (cliError) {
-    throw cliError;
-  }
+  if (cliError) throw cliError;
   return finalText;
+}
+
+function isCliModel(model) {
+  return (
+    model.startsWith("codex:")
+    || model.startsWith("gemini-cli:")
+    || model.startsWith("claude:")
+    || model.startsWith("hermes:")
+  );
+}
+
+function restoreCliSession(provider, storedId) {
+  provider.sessionId = String(storedId || "");
+  provider.sessionMode = provider.sessionId ? "resume_id" : "fresh";
+}
+
+function clearCliSession(provider) {
+  provider.sessionId = "";
+  provider.sessionMode = "fresh";
+}
+
+function cliProviderEntry(model, service) {
+  if (model.startsWith("codex:"))      return { provider: service.codexProvider,    sessionKey: "codex_session_id" };
+  if (model.startsWith("gemini-cli:")) return { provider: service.geminiCliProvider, sessionKey: "gemini_cli_session_id" };
+  if (model.startsWith("claude:"))     return { provider: service.claudeProvider,    sessionKey: "claude_session_id" };
+  if (model.startsWith("hermes:"))     return { provider: service.hermesProvider,    sessionKey: "hermes_session_id" };
+  return null;
 }
 
 async function *sendMessageEvents(service, text, { chatId = null, repoRoot = null, model = null, promptPreset = null, toolSafetyMode = null } = {}) {
@@ -102,43 +123,24 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   let baseMessages = existingPayload ? normalizeMessages(existingPayload.messages) : [];
   let storedChanges = existingPayload ? normalizeChanges(existingPayload.changes) : [];
   const existingModel = existingPayload ? String(existingPayload.model || "") : "";
-  service.codexProvider.sessionId = String(existingProviderState.codex_session_id || "");
-  service.codexProvider.sessionMode = service.codexProvider.sessionId ? "resume_id" : "fresh";
-  service.geminiCliProvider.sessionId = String(existingProviderState.gemini_cli_session_id || "");
-  service.geminiCliProvider.sessionMode = service.geminiCliProvider.sessionId ? "resume_id" : "fresh";
-  service.claudeProvider.sessionId = String(existingProviderState.claude_session_id || "");
-  service.claudeProvider.sessionMode = service.claudeProvider.sessionId ? "resume_id" : "fresh";
-  service.hermesProvider.sessionId = String(existingProviderState.hermes_session_id || "");
-  service.hermesProvider.sessionMode = service.hermesProvider.sessionId ? "resume_id" : "fresh";
-  if (
-    service.codexProvider.sessionId
-    && String(existingProviderState.codex_tool_safety_mode || "") !== requestToolSafetyMode
-  ) {
-    service.codexProvider.sessionId = "";
-    service.codexProvider.sessionMode = "fresh";
+
+  // Restore per-provider CLI session IDs from the chat's persisted state.
+  restoreCliSession(service.codexProvider,    existingProviderState.codex_session_id);
+  restoreCliSession(service.geminiCliProvider, existingProviderState.gemini_cli_session_id);
+  restoreCliSession(service.claudeProvider,    existingProviderState.claude_session_id);
+  restoreCliSession(service.hermesProvider,    existingProviderState.hermes_session_id);
+
+  // Codex sessions are coupled to tool safety mode; reset when mode changes.
+  if (service.codexProvider.sessionId && existingProviderState.codex_tool_safety_mode !== requestToolSafetyMode) {
+    clearCliSession(service.codexProvider);
   }
-  if (
-    existingModel
-    && service.modelFamily(existingModel) !== service.modelFamily(requestModel)
-    && (requestModel.startsWith("codex:") || requestModel.startsWith("gemini-cli:") || requestModel.startsWith("claude:") || requestModel.startsWith("hermes:"))
-  ) {
+
+  // When the user switches provider families, start the new provider fresh
+  // and trim context to avoid confusing it with another provider's history.
+  if (existingModel && service.modelFamily(existingModel) !== service.modelFamily(requestModel) && isCliModel(requestModel)) {
     baseMessages = service.recentChatContext(baseMessages, service.config.contextCarryMessages ?? 5);
-    if (requestModel.startsWith("codex:")) {
-      service.codexProvider.sessionId = "";
-      service.codexProvider.sessionMode = "fresh";
-    }
-    if (requestModel.startsWith("gemini-cli:")) {
-      service.geminiCliProvider.sessionId = "";
-      service.geminiCliProvider.sessionMode = "fresh";
-    }
-    if (requestModel.startsWith("claude:")) {
-      service.claudeProvider.sessionId = "";
-      service.claudeProvider.sessionMode = "fresh";
-    }
-    if (requestModel.startsWith("hermes:")) {
-      service.hermesProvider.sessionId = "";
-      service.hermesProvider.sessionMode = "fresh";
-    }
+    const entry = cliProviderEntry(requestModel, service);
+    if (entry) clearCliSession(entry.provider);
   }
 
   baseMessages = [...baseMessages, { role: "user", content: message }];
@@ -176,10 +178,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     service.activeChatModel = requestModel;
   }
 
-  service.requestRegistry.start(chatId, {
-    repoRoot: requestRepoRoot,
-    model: requestModel,
-  });
+  service.requestRegistry.start(chatId, { repoRoot: requestRepoRoot, model: requestModel });
   service.trackActiveRun({ chatId, repoRoot: requestRepoRoot, model: requestModel, lastUserMessage: message });
   const startSnapshot = service.snapshot();
 
@@ -189,117 +188,23 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   try {
     const providerState = {};
     const baseForProvider = service.messagesWithContext([...baseMessages], effectivePromptPreset);
-    const requestOptions = {
-      signal: service.requestRegistry.get(chatId)?.controller.signal || null,
-    };
+    const requestOptions = { signal: service.requestRegistry.get(chatId)?.controller.signal || null };
 
-    if (requestModel.startsWith("claude:")) {
-      service.claudeProvider.toolReadOnly = requestToolReadOnly;
-    }
-    if (requestModel.startsWith("codex:")) {
-      service.codexProvider.toolReadOnly = requestToolReadOnly;
+    // Pass tool-safety mode to providers that honour it.
+    if (requestModel.startsWith("claude:")) service.claudeProvider.toolReadOnly = requestToolReadOnly;
+    if (requestModel.startsWith("codex:"))  service.codexProvider.toolReadOnly  = requestToolReadOnly;
+
+    const cliEntry = cliProviderEntry(requestModel, service);
+    if (cliEntry) {
       let finalText = "";
-      const codexStream = runCliRequest(service.codexProvider, baseForProvider, requestModel, service, chatId);
+      const cliStream = runCliRequest(cliEntry.provider, baseForProvider, requestModel, service, chatId);
       while (true) {
-        const next = await codexStream.next();
-        if (next.done) {
-          finalText = String(next.value || "");
-          break;
-        }
+        const next = await cliStream.next();
+        if (next.done) { finalText = String(next.value || ""); break; }
         yield next.value;
       }
-      providerState.codex_session_id = service.codexProvider.sessionId || "";
-      providerState.codex_tool_safety_mode = requestToolSafetyMode;
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
-      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
-      const snapshot = service.saveCompletedChat({
-        chatStore: requestChatStore,
-        chatId,
-        messages: [...baseMessages, { role: "assistant", content: finalText }],
-        model: requestModel,
-        providerState,
-        toolSafetyMode: requestToolSafetyMode,
-        repoRoot: requestRepoRoot,
-        changes: finalChanges,
-        plan,
-      });
-      yield service.event("assistant", { text: finalText, chatId });
-      yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-      return;
-    }
-
-    if (requestModel.startsWith("gemini-cli:")) {
-      let finalText = "";
-      const geminiStream = runCliRequest(service.geminiCliProvider, baseForProvider, requestModel, service, chatId);
-      while (true) {
-        const next = await geminiStream.next();
-        if (next.done) {
-          finalText = String(next.value || "");
-          break;
-        }
-        yield next.value;
-      }
-      providerState.gemini_cli_session_id = service.geminiCliProvider.sessionId || "";
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
-      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
-      const snapshot = service.saveCompletedChat({
-        chatStore: requestChatStore,
-        chatId,
-        messages: [...baseMessages, { role: "assistant", content: finalText }],
-        model: requestModel,
-        providerState,
-        toolSafetyMode: requestToolSafetyMode,
-        repoRoot: requestRepoRoot,
-        changes: finalChanges,
-        plan,
-      });
-      yield service.event("assistant", { text: finalText, chatId });
-      yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-      return;
-    }
-
-    if (requestModel.startsWith("claude:")) {
-      let finalText = "";
-      const claudeStream = runCliRequest(service.claudeProvider, baseForProvider, requestModel, service, chatId);
-      while (true) {
-        const next = await claudeStream.next();
-        if (next.done) {
-          finalText = String(next.value || "");
-          break;
-        }
-        yield next.value;
-      }
-      providerState.claude_session_id = service.claudeProvider.sessionId || "";
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
-      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
-      const snapshot = service.saveCompletedChat({
-        chatStore: requestChatStore,
-        chatId,
-        messages: [...baseMessages, { role: "assistant", content: finalText }],
-        model: requestModel,
-        providerState,
-        toolSafetyMode: requestToolSafetyMode,
-        repoRoot: requestRepoRoot,
-        changes: finalChanges,
-        plan,
-      });
-      yield service.event("assistant", { text: finalText, chatId });
-      yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
-      return;
-    }
-
-    if (requestModel.startsWith("hermes:")) {
-      let finalText = "";
-      const hermesStream = runCliRequest(service.hermesProvider, baseForProvider, requestModel, service, chatId);
-      while (true) {
-        const next = await hermesStream.next();
-        if (next.done) {
-          finalText = String(next.value || "");
-          break;
-        }
-        yield next.value;
-      }
-      providerState.hermes_session_id = service.hermesProvider.sessionId || "";
+      providerState[cliEntry.sessionKey] = cliEntry.provider.sessionId || "";
+      if (requestModel.startsWith("codex:")) providerState.codex_tool_safety_mode = requestToolSafetyMode;
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
       const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({
@@ -361,21 +266,15 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools, snapshot, chatId });
         return;
       }
-      if (assistantMessage) {
-        workingMessages.push(assistantMessage);
-      }
-      if (!Array.isArray(toolCalls) || !toolCalls.length) {
-        break;
-      }
+      if (assistantMessage) workingMessages.push(assistantMessage);
+      if (!Array.isArray(toolCalls) || !toolCalls.length) break;
       for (const toolCall of toolCalls) {
         usedTools += 1;
         const args = JSON.parse(toolCall.function.arguments || "{}");
         yield service.event("tool_call", { name: toolCall.function.name, args, chatId });
         service.toolExecutor.readOnly = requestToolReadOnly;
         const [result, change] = await service.toolExecutor.executeWithMetadata(toolCall.function.name, args);
-        if (change) {
-          storedChanges = [...storedChanges, change];
-        }
+        if (change) storedChanges = [...storedChanges, change];
         yield service.event("tool_result", { name: toolCall.function.name, result, change, chatId });
         workingMessages.push({
           role: "tool",
@@ -424,7 +323,6 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     });
     service.persistConfig();
     yield service.event("error", { message: String(error?.message || error), chatId });
-    return;
   }
 }
 

@@ -96,6 +96,9 @@ export function providerStateForGroup(group, providers) {
   if (group === "Codex") {
     return providers?.codex || { available: false, connected: false };
   }
+  if (group === "Hermes") {
+    return providers?.hermes || { available: false, connected: false };
+  }
   if (group === "Groq") {
     return providers?.groq || { available: false, connected: false };
   }

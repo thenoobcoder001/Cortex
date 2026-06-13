@@ -368,6 +368,13 @@ class DesktopSessionService {
     return "";
   }
 
+  _resetAllCliSessions() {
+    for (const provider of [this.claudeProvider, this.hermesProvider, this.codexProvider, this.geminiCliProvider]) {
+      provider.sessionId = "";
+      provider.sessionMode = "fresh";
+    }
+  }
+
   listChats(repoRoot = null) {
     const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
     return this.chatItems(store);
@@ -414,14 +421,7 @@ class DesktopSessionService {
     });
     this.activeChatId = nextChatId;
     this.activeChatModel = this.model || DEFAULT_MODEL;
-    this.geminiCliProvider.sessionId = "";
-    this.geminiCliProvider.sessionMode = "fresh";
-    this.claudeProvider.sessionId = "";
-    this.claudeProvider.sessionMode = "fresh";
-    this.hermesProvider.sessionId = "";
-    this.hermesProvider.sessionMode = "fresh";
-    this.codexProvider.sessionId = "";
-    this.codexProvider.sessionMode = "fresh";
+    this._resetAllCliSessions();
     this.invalidateSnapshotCaches(this.repoRoot);
     this.persistConfig();
     return this.snapshot({ lite });
@@ -535,14 +535,7 @@ class DesktopSessionService {
     this.claudeProvider.setRepoRoot(this.repoRoot);
     this.hermesProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
-    this.geminiCliProvider.sessionId = "";
-    this.geminiCliProvider.sessionMode = "fresh";
-    this.claudeProvider.sessionId = "";
-    this.claudeProvider.sessionMode = "fresh";
-    this.hermesProvider.sessionId = "";
-    this.hermesProvider.sessionMode = "fresh";
-    this.codexProvider.sessionId = "";
-    this.codexProvider.sessionMode = "fresh";
+    this._resetAllCliSessions();
     this.groqProvider.setApiKey("");
     this.geminiProvider.setApiKey("");
     this.codexProvider.setApiKey("");
@@ -585,14 +578,7 @@ class DesktopSessionService {
     this.groqProvider.setApiKey("");
     this.geminiProvider.setApiKey("");
     this.codexProvider.setApiKey("");
-    this.geminiCliProvider.sessionId = "";
-    this.geminiCliProvider.sessionMode = "fresh";
-    this.claudeProvider.sessionId = "";
-    this.claudeProvider.sessionMode = "fresh";
-    this.hermesProvider.sessionId = "";
-    this.hermesProvider.sessionMode = "fresh";
-    this.codexProvider.sessionId = "";
-    this.codexProvider.sessionMode = "fresh";
+    this._resetAllCliSessions();
     this.model = DEFAULT_MODEL;
     this.promptPreset = "code";
     this.toolReadOnly = false;
