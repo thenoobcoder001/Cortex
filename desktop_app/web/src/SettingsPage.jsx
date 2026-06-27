@@ -1,4 +1,5 @@
-import React, { useEffect, useReducer, useRef, useState } from "react";
+import React, { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import qrcode from "qrcode-generator";
 
 function UpdateSection() {
   const [status, setStatus] = useState(null); // { state, version, error, currentVersion }
@@ -448,10 +449,47 @@ function CortexRelaySection({ backendUrl }) {
   );
 }
 
+function QrCode({ value, size = 176 }) {
+  const data = useMemo(() => {
+    if (!value) return null;
+    const qr = qrcode(0, "M");
+    qr.addData(value);
+    qr.make();
+    const count = qr.getModuleCount();
+    const margin = 4; // quiet zone
+    const cells = [];
+    for (let r = 0; r < count; r += 1) {
+      for (let c = 0; c < count; c += 1) {
+        if (qr.isDark(r, c)) {
+          cells.push(<rect key={`${r}-${c}`} x={c + margin} y={r + margin} width={1} height={1} />);
+        }
+      }
+    }
+    return { total: count + margin * 2, cells };
+  }, [value]);
+
+  if (!data) return null;
+  return (
+    <svg
+      className="tailscale-qr"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${data.total} ${data.total}`}
+      shapeRendering="crispEdges"
+      role="img"
+      aria-label="Tailscale address QR code"
+    >
+      <rect width={data.total} height={data.total} fill="#ffffff" />
+      <g fill="#000000">{data.cells}</g>
+    </svg>
+  );
+}
+
 function TailscaleSection({ backendUrl, remoteAccessEnabledDraft, setRemoteAccessEnabledDraft }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
@@ -509,6 +547,20 @@ function TailscaleSection({ backendUrl, remoteAccessEnabledDraft, setRemoteAcces
           </label>
           {status.magicDNS && status.ip && (
             <div className="theme-hint">Also reachable by IP at {status.ip}.</div>
+          )}
+          <button
+            type="button"
+            className="secondary-button"
+            style={{ alignSelf: "flex-start" }}
+            onClick={() => setShowQr((value) => !value)}
+          >
+            {showQr ? "Hide QR code" : "Show QR code"}
+          </button>
+          {showQr && (
+            <div className="tailscale-qr-wrap">
+              <QrCode value={url} />
+              <div className="theme-hint">Scan in the mobile app's Direct connect screen.</div>
+            </div>
           )}
           <label className="field">
             <span>Network exposure</span>

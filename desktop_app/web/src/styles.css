@@ -2609,6 +2609,21 @@ button:disabled {
   line-height: 1.5;
 }
 
+.tailscale-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.tailscale-qr {
+  border-radius: 12px;
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+}
+
 .connection-guide {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
