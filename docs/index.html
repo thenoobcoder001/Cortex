@@ -1112,8 +1112,8 @@
 <!-- ── Hero ── -->
 <section class="hero" id="top">
   <a class="pill" href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">
-    <span class="pill-tag">v0.0.7</span>
-    Relay stability &amp; light theme fixes
+    <span class="pill-tag">v0.0.9</span>
+    Tailscale direct connect &amp; settings overhaul
     <span class="arrow">→</span>
   </a>
 
@@ -1129,15 +1129,15 @@
   </p>
 
   <div class="cta-row">
-    <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.7.exe">
+    <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.9.exe">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
       Download for Windows
     </a>
-    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.7-arm64.dmg">
+    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.9-arm64.dmg">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
       Download for macOS
     </a>
-    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.7-x86_64.AppImage">
+    <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.9-x86_64.AppImage">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.480.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.020-0.885 1.051-2.127 2.750-2.716 4.521-.278.832-.41 1.684-.287 2.489.226 1.482 1.225 2.797 2.450 4.022 1.226 1.226 2.546 2.225 3.840 2.225 1.346 0 2.673-.852 3.770-2.029 1.098-1.176 2.005-2.775 2.230-4.218.123-.805-.009-1.657-.287-2.489-.589-1.771-1.831-3.470-2.716-4.521-.75-1.067-.974-1.928-1.050-3.020-.065-1.491 1.056-5.965-3.170-6.298-.165-.013-.325-.021-.480-.021z"/></svg>
       Download for Linux
     </a>
@@ -1147,7 +1147,7 @@
     </a>
   </div>
   <p class="release-link-row">
-    Click any button for the v0.0.7 build · or browse <a href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">all releases</a>
+    Click any button for the v0.0.9 build · or browse <a href="https://github.com/thenoobcoder001/Cortex/releases/latest" target="_blank">all releases</a>
   </p>
 </section>
 
@@ -1578,11 +1578,97 @@
   <div class="timeline">
 
     <div class="release latest reveal">
+      <div class="dot-tl">v9</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.9</span>
+          <span class="release-badge">Latest</span>
+          <span class="release-title">Tailscale direct connect &amp; settings overhaul</span>
+          <span class="release-date">2026-06-27</span>
+        </div>
+
+        <div class="release-group">
+          <h4>Tailscale direct connect</h4>
+          <ul>
+            <li>Cortex now detects when a Tailscale peer is running and exposes a <code>/api/tailscale/status</code> route with your device's Tailscale address.</li>
+            <li>New Tailscale card in Settings → Connections shows your direct address and connection status.</li>
+            <li>QR code for the Tailscale address — scan from PocketAI to switch to a direct (no-relay) connection with no re-entry of credentials.</li>
+            <li>The QR code encodes the <code>pairUrl</code> with an embedded <code>mobileToken</code> so PocketAI authenticates automatically on connect.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Settings overhaul</h4>
+          <ul>
+            <li>Settings panel redesigned with a persistent sidebar nav — sections: General, Appearance, Connections, Behavior.</li>
+            <li>New Display &amp; Behavior preferences panel for per-session options.</li>
+            <li>Visual polish: sidebar layout, resource dashboard card, terminal variable display, select chevron styling.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Resource dashboard</h4>
+          <ul>
+            <li>New collapsible resource dashboard in the sidebar showing live CPU, memory, and active processes.</li>
+            <li>Backend tracks per-request PID for resource attribution across concurrent sessions.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Terminal &amp; CI</h4>
+          <ul>
+            <li>xterm.js colors are now theme-aware — terminal renders in dark or light palette matching the app theme.</li>
+            <li>Switched Windows CI runner to <code>windows-2022</code> (ships VS Build Tools required for <code>node-pty</code>).</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link primary" href="https://github.com/thenoobcoder001/Cortex/releases/download/v0.0.9/Cortex-Setup-0.0.9.exe">Download Windows installer</a>
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.9" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="release reveal">
+      <div class="dot-tl">v8</div>
+      <div class="release-card">
+        <div class="release-head">
+          <span class="release-version">v0.0.8</span>
+          <span class="release-title">Hermes agent provider</span>
+          <span class="release-date">2026-06-13</span>
+        </div>
+
+        <div class="release-group">
+          <h4>New provider: Hermes Agent</h4>
+          <ul>
+            <li>Hermes Agent CLI is now a first-class provider under the Hermes group in the model picker.</li>
+            <li>Uses your existing Hermes installation and whatever model/provider you have configured there.</li>
+            <li>Supports session resume — follow-up messages continue the same Hermes session; the Offload to Terminal button opens <code>hermes chat --resume &lt;id&gt;</code>.</li>
+            <li>Quiet mode (<code>hermes chat -Q -q</code>) used for programmatic access; the "↻ Resumed session" banner is stripped from responses.</li>
+          </ul>
+        </div>
+
+        <div class="release-group">
+          <h4>Bug fixes &amp; code quality</h4>
+          <ul>
+            <li>Fixed Hermes group showing as disabled in the model picker — <code>providerStateForGroup</code> was missing the Hermes case.</li>
+            <li>Fixed model name display in the picker — <code>hermes:</code> prefix is now stripped like <code>claude:</code> / <code>codex:</code>.</li>
+            <li>Collapsed four near-identical CLI streaming blocks (codex / gemini-cli / claude / hermes) into one generic block — removed ~130 lines of duplication.</li>
+            <li>Added <code>HERMES_HOME</code> and <code>HERMES_GIT_BASH_PATH</code> to the CLI environment allowlist.</li>
+          </ul>
+        </div>
+
+        <div class="release-foot">
+          <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.8" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="release reveal">
       <div class="dot-tl">v7</div>
       <div class="release-card">
         <div class="release-head">
           <span class="release-version">v0.0.7</span>
-          <span class="release-badge">Latest</span>
           <span class="release-title">Antigravity removed, CI fixes &amp; landing page</span>
           <span class="release-date">2026-06-02</span>
         </div>
@@ -1615,7 +1701,6 @@
         </div>
 
         <div class="release-foot">
-          <a class="release-link primary" href="https://github.com/thenoobcoder001/Cortex/releases/download/v0.0.7/Cortex-Setup-0.0.7.exe">Download Windows installer</a>
           <a class="release-link" href="https://github.com/thenoobcoder001/Cortex/releases/tag/v0.0.7" target="_blank">View on GitHub</a>
         </div>
       </div>
@@ -1869,17 +1954,17 @@
 <section class="section" style="padding-top: 40px;">
   <div class="final-cta reveal">
     <h2>Ready to try Cortex?</h2>
-    <p>Download v0.0.7 and have your favorite AI coding assistants running against your repo in under two minutes.</p>
+    <p>Download v0.0.9 and have your favorite AI coding assistants running against your repo in under two minutes.</p>
     <div class="cta-row">
-      <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.7.exe">
+      <a class="btn btn-primary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Setup-0.0.9.exe">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
         Windows
       </a>
-      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.7-arm64.dmg">
+      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Mac-0.0.9-arm64.dmg">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
         macOS
       </a>
-      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.7-x86_64.AppImage">
+      <a class="btn btn-secondary" href="https://github.com/thenoobcoder001/Cortex/releases/latest/download/Cortex-Linux-0.0.9-x86_64.AppImage">
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
         Linux
       </a>
