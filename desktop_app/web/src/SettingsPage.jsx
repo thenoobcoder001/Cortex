@@ -448,6 +448,102 @@ function CortexRelaySection({ backendUrl }) {
   );
 }
 
+function TailscaleSection({ backendUrl, remoteAccessEnabledDraft, setRemoteAccessEnabledDraft }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${backendUrl}/api/tailscale/status`);
+      setStatus(await res.json());
+    } catch {
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, [backendUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const copyUrl = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const url = status?.url || "";
+  const available = Boolean(status?.available);
+
+  return (
+    <section className="settings-section-card">
+      <div className="settings-block-title">Tailscale</div>
+      <div className="danger-zone-copy">
+        Reach this desktop from your phone over your tailnet — no relay account required.
+        In the mobile app choose <strong>Direct</strong> and paste the address below.
+      </div>
+
+      {loading ? (
+        <div className="provider-test-result">Checking Tailscale…</div>
+      ) : available ? (
+        <>
+          <div className="provider-test-result ok">
+            {status.online ? "Connected to tailnet" : "Tailscale address detected"}
+            {status.cliAvailable ? "" : " · install the Tailscale CLI for a MagicDNS name"}
+          </div>
+          <label className="field">
+            <span>Direct address</span>
+            <div className="field-row">
+              <input readOnly value={url} onFocus={(event) => event.target.select()} />
+              <button type="button" onClick={() => copyUrl(url)}>
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </label>
+          {status.magicDNS && status.ip && (
+            <div className="theme-hint">Also reachable by IP at {status.ip}.</div>
+          )}
+          <label className="field">
+            <span>Network exposure</span>
+            <select
+              value={remoteAccessEnabledDraft ? "enabled" : "disabled"}
+              onChange={(event) => setRemoteAccessEnabledDraft(event.target.value === "enabled")}
+            >
+              <option value="disabled">Disabled</option>
+              <option value="enabled">Enabled</option>
+            </select>
+          </label>
+          <div className="theme-hint">
+            {remoteAccessEnabledDraft
+              ? "Save settings so the backend listens on your tailnet."
+              : "Enable exposure (then save) to accept Tailscale connections."}
+          </div>
+        </>
+      ) : (
+        <div className="provider-test-result error">
+          No Tailscale address found. Install Tailscale and sign in on this machine, then refresh.
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="secondary-button"
+        style={{ alignSelf: "flex-start" }}
+        onClick={() => void refresh()}
+      >
+        Refresh
+      </button>
+    </section>
+  );
+}
+
 const SETTINGS_NAV = [
   { id: "general", label: "General", icon: "sliders" },
   { id: "workspace", label: "Workspace", icon: "folder" },
@@ -748,6 +844,14 @@ export default function SettingsPage({
 
           {activeSection === "connections" && (
           <CortexRelaySection backendUrl={backendUrl} />
+          )}
+
+          {activeSection === "connections" && (
+          <TailscaleSection
+            backendUrl={backendUrl}
+            remoteAccessEnabledDraft={remoteAccessEnabledDraft}
+            setRemoteAccessEnabledDraft={setRemoteAccessEnabledDraft}
+          />
           )}
 
           {activeSection === "updates" && (
