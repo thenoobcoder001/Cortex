@@ -558,8 +558,11 @@ function TailscaleSection({ backendUrl, remoteAccessEnabledDraft, setRemoteAcces
           </button>
           {showQr && (
             <div className="tailscale-qr-wrap">
-              <QrCode value={url} />
-              <div className="theme-hint">Scan in the mobile app's Direct connect screen.</div>
+              <QrCode value={status.pairUrl || url} />
+              <div className="theme-hint">
+                Scan in the mobile app's Direct connect screen. The code includes a
+                one-time access token so the phone can pair without the relay.
+              </div>
             </div>
           )}
           <label className="field">
