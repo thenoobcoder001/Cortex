@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { AppConfigStore } = require("../backend/configStore");
+const { getTailscaleInfo, tailscaleUrl } = require("../backend/tailscale");
 const { autoUpdater } = require("electron-updater");
 
 // ── auto-updater setup ────────────────────────────────────────────────────────
@@ -159,6 +160,12 @@ function getNetworkUrl(port, tailscale = false) {
   return "";
 }
 
+// Prefer the CLI-derived Tailscale URL (MagicDNS) for relay registration,
+// falling back to the interface scan above.
+async function getTailscaleBackendUrl(port) {
+  return tailscaleUrl(await getTailscaleInfo(), port) || getNetworkUrl(port, true);
+}
+
 async function startBackend() {
   remoteAccessEnabled = loadRemoteAccessPreference();
   const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
@@ -178,7 +185,7 @@ async function startBackend() {
           deviceId:         config.cortexDeviceId         || undefined,
           reconnectSecret:  config.cortexReconnectSecret  || undefined,
           localUrl:         getNetworkUrl(backendPort, false),
-          tailscaleUrl:     getNetworkUrl(backendPort, true),
+          tailscaleUrl:     await getTailscaleBackendUrl(backendPort),
           localBackendPort: backendPort,
         });
         const cfg = AppConfigStore.load();
@@ -406,7 +413,7 @@ if (ipcMain) {
     const result = await workerSend("relay:connect", {
       token, deviceId, reconnectSecret,
       localUrl:         getNetworkUrl(backendPort, false),
-      tailscaleUrl:     getNetworkUrl(backendPort, true),
+      tailscaleUrl:     await getTailscaleBackendUrl(backendPort),
       localBackendPort: backendPort,
     });
     const config = AppConfigStore.load();

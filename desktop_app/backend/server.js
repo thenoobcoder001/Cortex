@@ -18,6 +18,7 @@ const chatsRoutes    = require("./routes/chats");
 const configRoutes   = require("./routes/config");
 const terminalRoutes = require("./routes/terminal");
 const cortexRoutes   = require("./routes/cortex");
+const tailscaleRoutes = require("./routes/tailscale");
 const fileRoutes     = require("./routes/file");
 const androidRoutes  = require("./routes/android");
 
@@ -280,6 +281,7 @@ const ROUTE_HANDLERS = [
   chatRoutes,
   terminalRoutes,
   cortexRoutes,
+  tailscaleRoutes,
   androidRoutes,
 ];
 

@@ -1,6 +1,7 @@
 const os = require("node:os");
 const { startBackendServer, relayConnect } = require("./server");
 const { AppConfigStore } = require("./configStore");
+const { getTailscaleInfo, tailscaleUrl } = require("./tailscale");
 
 function getLocalUrl(port) {
   for (const addrs of Object.values(os.networkInterfaces() || {})) {
@@ -13,15 +14,8 @@ function getLocalUrl(port) {
   return "";
 }
 
-function getTailscaleUrl(port) {
-  for (const addrs of Object.values(os.networkInterfaces() || {})) {
-    for (const addr of addrs || []) {
-      if (!addr.internal && addr.family === "IPv4" && addr.address.startsWith("100.")) {
-        return `http://${addr.address}:${port}`;
-      }
-    }
-  }
-  return "";
+async function getTailscaleUrl(port) {
+  return tailscaleUrl(await getTailscaleInfo(), port);
 }
 
 async function main() {
@@ -41,8 +35,8 @@ async function main() {
   // Auto-connect Cortex relay if credentials are saved
   const config = AppConfigStore.load();
   if (config.cortexToken) {
-    const localUrl     = getLocalUrl(port);
-    const tailscaleUrl = getTailscaleUrl(port);
+    const localUrl    = getLocalUrl(port);
+    const tsUrl       = await getTailscaleUrl(port);
     console.log("Cortex relay: connecting...");
     try {
       const result = await relayConnect({
@@ -50,7 +44,7 @@ async function main() {
         deviceId:        config.cortexDeviceId      || undefined,
         reconnectSecret: config.cortexReconnectSecret || undefined,
         localUrl,
-        tailscaleUrl,
+        tailscaleUrl:    tsUrl,
         localBackendPort: port,
       });
       config.cortexDeviceId        = result.deviceId;
