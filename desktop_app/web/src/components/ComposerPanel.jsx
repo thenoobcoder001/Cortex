@@ -18,6 +18,7 @@ export default function ComposerPanel({
   onHoverSubGroup,
   onPromptPresetChange,
   onSend,
+  enterToSend = true,
   onToggleModelMenu,
   onToolSafetyChange,
   sendingDisabled,
@@ -39,7 +40,11 @@ export default function ComposerPanel({
         onClick={(event) => event.stopPropagation()}
         onChange={(event) => onChangeDraft(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
+          if (event.key !== "Enter") return;
+          // "Send message" mode: Enter sends, Shift+Enter inserts a newline.
+          // "Insert newline" mode: Enter is a newline, Ctrl/Cmd+Enter sends.
+          const shouldSend = enterToSend ? !event.shiftKey : event.metaKey || event.ctrlKey;
+          if (shouldSend) {
             event.preventDefault();
             void onSend();
           }

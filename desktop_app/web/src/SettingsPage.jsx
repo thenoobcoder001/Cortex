@@ -448,6 +448,84 @@ function CortexRelaySection({ backendUrl }) {
   );
 }
 
+const SETTINGS_NAV = [
+  { id: "general", label: "General", icon: "sliders" },
+  { id: "workspace", label: "Workspace", icon: "folder" },
+  { id: "memory", label: "Memory", icon: "brain" },
+  { id: "connections", label: "Connections", icon: "link" },
+  { id: "providers", label: "Providers", icon: "bot" },
+  { id: "updates", label: "Updates", icon: "refresh" },
+  { id: "danger", label: "Danger Zone", icon: "alert" },
+];
+
+function NavIcon({ name }) {
+  const common = {
+    width: 16,
+    height: 16,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+  };
+  switch (name) {
+    case "sliders":
+      return (
+        <svg {...common}>
+          <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" />
+          <line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" />
+          <line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
+          <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" />
+        </svg>
+      );
+    case "folder":
+      return (
+        <svg {...common}>
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+      );
+    case "brain":
+      return (
+        <svg {...common}>
+          <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.04Z" />
+          <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.04Z" />
+        </svg>
+      );
+    case "link":
+      return (
+        <svg {...common}>
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+      );
+    case "bot":
+      return (
+        <svg {...common}>
+          <rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" />
+          <path d="M12 7v4" /><line x1="8" y1="16" x2="8" y2="16" /><line x1="16" y1="16" x2="16" y2="16" />
+        </svg>
+      );
+    case "refresh":
+      return (
+        <svg {...common}>
+          <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+      );
+    case "alert":
+      return (
+        <svg {...common}>
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+          <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12" y2="17" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
 function splitRemoteAccessUrls(remoteAccessUrls) {
   const entries = Array.isArray(remoteAccessUrls) ? remoteAccessUrls : [];
   return {
@@ -478,6 +556,11 @@ export default function SettingsPage({
   themeMode,
   setThemeMode,
   resolvedTheme,
+  showResourceDashboard,
+  setShowResourceDashboard,
+  uiPrefs,
+  updateUiPref,
+  onRestoreDisplayDefaults,
   remoteAccessEnabledDraft,
   setRemoteAccessEnabledDraft,
   remoteAccessUrls,
@@ -494,28 +577,48 @@ export default function SettingsPage({
   backendUrl,
 }) {
   const { tailscaleUrls, localNetworkUrls } = splitRemoteAccessUrls(remoteAccessUrls);
+  const [activeSection, setActiveSection] = useState("general");
+  const activeLabel = SETTINGS_NAV.find((item) => item.id === activeSection)?.label ?? "Settings";
 
   return (
     <div className="settings-screen">
-      <div className="settings-page">
-        <header className="settings-page-header">
-          <div className="settings-page-heading">
-            <button type="button" className="secondary-button settings-back" onClick={onBack}>
-              Back
-            </button>
+      <div className="settings-page settings-page--nav">
+        <aside className="settings-nav">
+          <button type="button" className="settings-nav-back" onClick={onBack}>
+            <span className="settings-nav-back-arrow" aria-hidden="true"></span>
+            Back
+          </button>
+          <div className="settings-nav-title">Settings</div>
+          <nav className="settings-nav-list">
+            {SETTINGS_NAV.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className={activeSection === item.id ? "settings-nav-item active" : "settings-nav-item"}
+                onClick={() => setActiveSection(item.id)}
+              >
+                <NavIcon name={item.icon} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <div className="settings-content">
+          <header className="settings-content-header">
             <div>
-              <div className="settings-title">Settings</div>
+              <div className="settings-title">{activeLabel}</div>
               <div className="settings-subtitle">Provider access, memory, and workspace behavior</div>
             </div>
-          </div>
-          <button type="button" className="primary-button" onClick={onSave}>
-            {networkSettingsSaving ? "Saving..." : "Save settings"}
-          </button>
-        </header>
+            <button type="button" className="primary-button" onClick={onSave}>
+              {networkSettingsSaving ? "Saving..." : "Save settings"}
+            </button>
+          </header>
 
-        {error && <div className="error-banner">{error}</div>}
+          {error && <div className="error-banner">{error}</div>}
 
-        <div className="settings-page-grid">
+          <div className="settings-content-stack">
+          {activeSection === "general" && (
           <section className="settings-section-card">
             <div className="settings-block-title">Appearance</div>
             <label className="field">
@@ -529,8 +632,56 @@ export default function SettingsPage({
             <div className="theme-hint">
               Applies instantly. Current theme: {resolvedTheme}.
             </div>
+            <label className="field">
+              <span>Resources panel</span>
+              <select
+                value={showResourceDashboard ? "shown" : "hidden"}
+                onChange={(event) => setShowResourceDashboard(event.target.value === "shown")}
+              >
+                <option value="hidden">Hidden</option>
+                <option value="shown">Shown</option>
+              </select>
+            </label>
+            <div className="theme-hint">
+              Show the memory and active-agent dashboard above the conversation.
+            </div>
+            <label className="field">
+              <span>Code wrapping</span>
+              <select
+                value={uiPrefs.codeWrap ? "wrap" : "scroll"}
+                onChange={(event) => updateUiPref({ codeWrap: event.target.value === "wrap" })}
+              >
+                <option value="scroll">Scroll long lines</option>
+                <option value="wrap">Wrap to width</option>
+              </select>
+            </label>
+            <div className="theme-hint">
+              Wrap long lines in code blocks instead of scrolling them sideways.
+            </div>
+            <label className="field">
+              <span>Enter key</span>
+              <select
+                value={uiPrefs.enterToSend ? "send" : "newline"}
+                onChange={(event) => updateUiPref({ enterToSend: event.target.value === "send" })}
+              >
+                <option value="send">Sends the message</option>
+                <option value="newline">Inserts a newline</option>
+              </select>
+            </label>
+            <div className="theme-hint">
+              {uiPrefs.enterToSend
+                ? "Shift+Enter adds a newline."
+                : "Ctrl/Cmd+Enter sends the message."}
+            </div>
+            <div className="settings-actions">
+              <button type="button" className="secondary-button" onClick={onRestoreDisplayDefaults}>
+                Restore display defaults
+              </button>
+            </div>
           </section>
+          )}
 
+          {activeSection === "workspace" && (
           <section className="settings-section-card">
             <div className="settings-block-title">Workspace</div>
             <label className="field">
@@ -556,8 +707,23 @@ export default function SettingsPage({
                 ))}
               </select>
             </label>
+            <label className="field">
+              <span>Confirm chat deletion</span>
+              <select
+                value={uiPrefs.confirmChatDelete ? "ask" : "instant"}
+                onChange={(event) => updateUiPref({ confirmChatDelete: event.target.value === "ask" })}
+              >
+                <option value="ask">Ask first</option>
+                <option value="instant">Delete immediately</option>
+              </select>
+            </label>
+            <div className="theme-hint">
+              When set to ask, deleting a chat opens a confirmation dialog.
+            </div>
           </section>
+          )}
 
+          {activeSection === "memory" && (
           <section className="settings-section-card">
             <div className="settings-block-title">Memory</div>
             <label className="field">
@@ -578,10 +744,17 @@ export default function SettingsPage({
               />
             </label>
           </section>
+          )}
 
+          {activeSection === "connections" && (
           <CortexRelaySection backendUrl={backendUrl} />
-          <UpdateSection />
+          )}
 
+          {activeSection === "updates" && (
+          <UpdateSection />
+          )}
+
+          {activeSection === "connections" && (
           <section className="settings-section-card settings-section-wide">
             <div className="settings-block-title">Remote Access</div>
             <div className="danger-zone-copy">
@@ -657,7 +830,9 @@ export default function SettingsPage({
               </div>
             )}
           </section>
+          )}
 
+          {activeSection === "providers" && (
           <section className="settings-section-card settings-section-wide">
             <div className="settings-block-title">Providers</div>
             <div className="provider-grid">
@@ -697,7 +872,9 @@ export default function SettingsPage({
               ))}
             </div>
           </section>
+          )}
 
+          {activeSection === "danger" && (
           <section className="settings-section-card settings-section-wide">
             <div className="settings-block-title">Danger Zone</div>
             <div className="danger-zone-copy">
@@ -713,6 +890,8 @@ export default function SettingsPage({
               </button>
             </div>
           </section>
+          )}
+          </div>
         </div>
       </div>
 

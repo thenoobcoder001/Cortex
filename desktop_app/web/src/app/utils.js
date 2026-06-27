@@ -1,4 +1,10 @@
-import { SAVED_PROJECTS_KEY, THEME_MODE_STORAGE_KEY } from "./constants.js";
+import {
+  DEFAULT_UI_PREFS,
+  RESOURCE_DASHBOARD_STORAGE_KEY,
+  SAVED_PROJECTS_KEY,
+  THEME_MODE_STORAGE_KEY,
+  UI_PREFS_STORAGE_KEY,
+} from "./constants.js";
 
 function prefersWindowsPaths() {
   if (typeof navigator === "undefined") {
@@ -47,6 +53,46 @@ export function loadThemeMode() {
 export function saveThemeMode(mode) {
   try {
     window.localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
+
+export function loadShowResourceDashboard() {
+  try {
+    return window.localStorage.getItem(RESOURCE_DASHBOARD_STORAGE_KEY) === "true";
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+export function saveShowResourceDashboard(show) {
+  try {
+    window.localStorage.setItem(RESOURCE_DASHBOARD_STORAGE_KEY, show ? "true" : "false");
+  } catch {
+    // ignore
+  }
+}
+
+export function loadUiPrefs() {
+  try {
+    const raw = window.localStorage.getItem(UI_PREFS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        return { ...DEFAULT_UI_PREFS, ...parsed };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { ...DEFAULT_UI_PREFS };
+}
+
+export function saveUiPrefs(prefs) {
+  try {
+    window.localStorage.setItem(UI_PREFS_STORAGE_KEY, JSON.stringify(prefs));
   } catch {
     // ignore
   }

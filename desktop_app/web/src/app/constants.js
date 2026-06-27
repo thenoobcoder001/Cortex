@@ -51,3 +51,11 @@ export const EXTERNAL_EDITOR_OPTIONS = [
 export const FALLBACK_APP_VERSION = "0.0.7";
 export const THEME_MODE_STORAGE_KEY = "gpt-tui.theme-mode";
 export const SAVED_PROJECTS_KEY = "gpt-tui.saved-projects";
+export const RESOURCE_DASHBOARD_STORAGE_KEY = "gpt-tui.show-resource-dashboard";
+export const UI_PREFS_STORAGE_KEY = "gpt-tui.ui-prefs";
+
+export const DEFAULT_UI_PREFS = {
+  codeWrap: false,
+  enterToSend: true,
+  confirmChatDelete: true,
+};

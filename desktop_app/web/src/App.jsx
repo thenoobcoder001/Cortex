@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import SettingsPage from "./SettingsPage.jsx";
-import { EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
+import { DEFAULT_UI_PREFS, EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
 import {
   cleanResponse,
   groupedModels,
   subGroupedModels,
   loadSavedProjects,
+  loadShowResourceDashboard,
   loadThemeMode,
+  loadUiPrefs,
   normalizeProject,
   parentModelLabel,
   projectLabel,
@@ -15,7 +17,9 @@ import {
   readDesktopConfig,
   readNdjsonStream,
   saveSavedProjects,
+  saveShowResourceDashboard,
   saveThemeMode,
+  saveUiPrefs,
   stripPresetPrefix,
   upsertProject,
 } from "./app/utils.js";
@@ -24,6 +28,7 @@ import ComposerPanel from "./components/ComposerPanel.jsx";
 import ConversationSection from "./components/ConversationSection.jsx";
 import EditorIcon from "./components/EditorIcon.jsx";
 import ProjectContextMenu from "./components/ProjectContextMenu.jsx";
+import ResourceDashboard from "./components/ResourceDashboard.jsx";
 import TerminalPanelSection from "./components/TerminalPanelSection.jsx";
 import ModelPicker from "./components/ModelPicker.jsx";
 import UpdateBanner from "./components/UpdateBanner.jsx";
@@ -81,6 +86,8 @@ export default function App() {
   const [renameChatDraft, setRenameChatDraft] = useState("");
   const [confirmDeleteChat, setConfirmDeleteChat] = useState(null); // { chatId, repoRoot }
   const [themeMode, setThemeMode] = useState(() => loadThemeMode());
+  const [showResourceDashboard, setShowResourceDashboard] = useState(() => loadShowResourceDashboard());
+  const [uiPrefs, setUiPrefs] = useState(() => loadUiPrefs());
   const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
   const [terminalSnapshot, setTerminalSnapshot] = useState(null);
   const [terminalDraft, setTerminalDraft] = useState("");
@@ -167,6 +174,22 @@ export default function App() {
     document.documentElement.style.colorScheme = resolvedTheme;
     saveThemeMode(themeMode);
   }, [resolvedTheme, themeMode]);
+
+  useEffect(() => {
+    saveShowResourceDashboard(showResourceDashboard);
+  }, [showResourceDashboard]);
+
+  useEffect(() => {
+    saveUiPrefs(uiPrefs);
+    document.documentElement.dataset.codeWrap = uiPrefs.codeWrap ? "on" : "off";
+  }, [uiPrefs]);
+
+  const updateUiPref = (patch) => setUiPrefs((prev) => ({ ...prev, ...patch }));
+  const restoreDisplayDefaults = () => {
+    setThemeMode("dark");
+    setShowResourceDashboard(false);
+    setUiPrefs({ ...DEFAULT_UI_PREFS });
+  };
 
   useEffect(() => {
     if (!activeRepoRoot || !snapshot?.chats) {
@@ -422,7 +445,7 @@ export default function App() {
     return chats;
   };
 
-  const refreshStatus = async (urlOverride) => {
+  const refreshStatus = async (urlOverride, { preserveLiveStatus = false } = {}) => {
     const targetUrl = urlOverride || backendUrl;
     if (!targetUrl) return;
     const response = await fetch(`${targetUrl}/api/status`);
@@ -432,7 +455,9 @@ export default function App() {
     const nextSnapshot = await response.json();
     setSnapshot(nextSnapshot);
     setRepoDraft(nextSnapshot.config.repoRoot);
-    setLiveStatus("Idle");
+    if (!preserveLiveStatus) {
+      setLiveStatus("Idle");
+    }
     syncSavedProjects(nextSnapshot.config.repoRoot);
   };
 
@@ -482,6 +507,27 @@ export default function App() {
       window.clearInterval(interval);
     };
   }, [backendUrl]);
+
+  useEffect(() => {
+    if (!backendUrl || (runningChatIds.length === 0 && sendingChatIds.length === 0)) {
+      return undefined;
+    }
+    let alive = true;
+    const tick = async () => {
+      try {
+        if (alive) {
+          await refreshStatus(undefined, { preserveLiveStatus: true });
+        }
+      } catch {
+        // Resource polling should not interrupt the active chat stream.
+      }
+    };
+    const interval = window.setInterval(() => void tick(), 2500);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+    };
+  }, [backendUrl, runningChatIds.length, sendingChatIds.length]);
 
   useEffect(() => {
     if (!backendUrl) {
@@ -1548,6 +1594,11 @@ export default function App() {
         themeMode={themeMode}
         setThemeMode={setThemeMode}
         resolvedTheme={resolvedTheme}
+        showResourceDashboard={showResourceDashboard}
+        setShowResourceDashboard={setShowResourceDashboard}
+        uiPrefs={uiPrefs}
+        updateUiPref={updateUiPref}
+        onRestoreDisplayDefaults={restoreDisplayDefaults}
         remoteAccessEnabledDraft={remoteAccessEnabledDraft}
         setRemoteAccessEnabledDraft={setRemoteAccessEnabledDraft}
         remoteAccessUrls={remoteAccessUrls}
@@ -1566,12 +1617,18 @@ export default function App() {
     );
   }
 
+  const workspaceShellStyle = {
+    ...(updateBanner ? { paddingTop: 40 } : {}),
+    ...(resolvedTheme === "light" ? { "--sidebar-bg": "#f8f8f8" } : {}),
+  };
+
   return (
     <>
       <UpdateBanner updateBanner={updateBanner} onDismiss={() => setUpdateBanner(null)} />
       <div
         className={`workspace-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
-        style={updateBanner ? { paddingTop: 40 } : undefined}
+        data-theme={resolvedTheme}
+        style={workspaceShellStyle}
         onClick={() => {
           setProjectMenuPath("");
           setModelMenuOpen(false);
@@ -1814,8 +1871,12 @@ export default function App() {
                       title={project.path}
                     >
                       <span className="project-name">
-                        <span className={expandedRepos.has(project.path) ? "chevron-icon expanded" : "chevron-icon"}>&gt;</span>{" "}
+                        <span className="project-folder-icon" aria-hidden="true"></span>
                         {project.name}
+                        <span
+                          className={expandedRepos.has(project.path) ? "project-disclosure expanded" : "project-disclosure"}
+                          aria-hidden="true"
+                        ></span>
                       </span>
                     </button>
                     <div className="project-actions" onClick={(event) => event.stopPropagation()}>
@@ -1950,7 +2011,14 @@ export default function App() {
                                 <button
                                   type="button"
                                   className="chat-delete-btn"
-                                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteChat({ chatId: chat.chatId, repoRoot: project.path }); }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (uiPrefs.confirmChatDelete) {
+                                      setConfirmDeleteChat({ chatId: chat.chatId, repoRoot: project.path });
+                                    } else {
+                                      void handleDeleteChat(e, chat.chatId, project.path);
+                                    }
+                                  }}
                                   title="Delete chat"
                                   aria-label="Delete chat"
                                 >
@@ -2062,6 +2130,10 @@ export default function App() {
             </section>
           )}
 
+          {showResourceDashboard && (
+            <ResourceDashboard resources={snapshot.resources} chats={snapshot.chats || []} />
+          )}
+
           <ConversationSection
             activePendingTurn={activePendingTurn}
             copyText={copyText}
@@ -2091,6 +2163,7 @@ export default function App() {
             onHoverSubGroup={setHoveredModelSubGroup}
             onPromptPresetChange={handlePromptPresetChange}
             onSend={handleSend}
+            enterToSend={uiPrefs.enterToSend}
             onToggleModelMenu={toggleModelMenu}
             onToolSafetyChange={handleToolSafetyChange}
             promptPreset={snapshot.config.promptPreset}
