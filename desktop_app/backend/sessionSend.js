@@ -45,6 +45,7 @@ async function *runCliRequest(provider, messages, model, service, chatId) {
     try {
       finalText = await provider.chatCompletionStreamRaw(messages, model, {
         signal: service.requestRegistry.get(chatId)?.controller.signal || null,
+        onProcessStart: (pid) => service.requestRegistry.attachProcess(chatId, pid),
         onOutput: (chunk) => {
           if (!chunk) return;
           queue.push(service.event("cli_output", { stream: "stdout", text: chunk, chatId }));

@@ -6,6 +6,7 @@ const {
   HERMES_MODELS,
   CODEX_MODELS,
 } = require("./constants");
+const { buildResourceSnapshot } = require("./resourceMonitor");
 
 function modelFamily(model) {
   if (String(model).startsWith("claude:")) return "claude";
@@ -82,6 +83,7 @@ function buildSnapshot(service, { lite = false } = {}) {
       : "",
     providerName: providerNameForModel(service.model),
     runningChatIds: service.requestRegistry.ids(),
+    resources: buildResourceSnapshot(service.requestRegistry),
     interruptedChatIds: [...service.interruptedRuns.keys()].sort(),
     interruptedRuns: [...service.interruptedRuns.values()].map((entry) => ({
       chatId: entry.chat_id,

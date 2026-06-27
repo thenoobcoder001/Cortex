@@ -230,7 +230,7 @@ class CodexProvider {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  async chatCompletionAppServerStream(messages, model, { onOutput = null, signal = null } = {}) {
+  async chatCompletionAppServerStream(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -242,6 +242,7 @@ class CodexProvider {
       cwd: this.repoRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    onProcessStart?.(child.pid);
     const output = readline.createInterface({ input: child.stdout });
     let nextRequestId = 1;
     const pending = new Map();
@@ -513,7 +514,7 @@ class GeminiCliProvider {
     return args;
   }
 
-  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
+  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -532,6 +533,7 @@ class GeminiCliProvider {
       cwd: this.repoRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    onProcessStart?.(child.pid);
     child.stdin.write(prompt);
     child.stdin.end();
     let stderr = "";
@@ -591,7 +593,7 @@ class GeminiCliProvider {
         if (this.sessionMode === "resume_id") {
           this.sessionId = "";
           this.sessionMode = "fresh";
-          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal });
+          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal, onProcessStart });
         }
         throw new Error(`gemini CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
       }
@@ -720,7 +722,7 @@ class ClaudeCliProvider {
     return args;
   }
 
-  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
+  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -739,6 +741,7 @@ class ClaudeCliProvider {
       cwd: this.repoRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    onProcessStart?.(child.pid);
     child.stdin.write(prompt);
     child.stdin.end();
     let stderr = "";
@@ -803,7 +806,7 @@ class ClaudeCliProvider {
         ) {
           this.sessionId = "";
           this.sessionMode = "fresh";
-          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal });
+          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal, onProcessStart });
         }
         throw new Error(`claude CLI failed: ${(cliErrorMessage || stderr || `exit code ${exitCode}`).trim()}`);
       }
@@ -876,7 +879,7 @@ class HermesCliProvider {
     return args;
   }
 
-  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null } = {}) {
+  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -900,6 +903,7 @@ class HermesCliProvider {
       windowsHide: true,
       shell: false,
     });
+    onProcessStart?.(child.pid);
     let stdout = "";
     let stderr = "";
     let aborted = false;
@@ -937,7 +941,7 @@ class HermesCliProvider {
         if (this.sessionMode === "resume_id" && this.sessionId) {
           this.sessionId = "";
           this.sessionMode = "fresh";
-          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal });
+          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal, onProcessStart });
         }
         throw new Error(`hermes CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
       }
