@@ -13,32 +13,38 @@ export default function XtermPanel({ backendUrl, chatId, repoRoot, onReady, onUn
   useEffect(() => {
     if (!containerRef.current || !backendUrl || !chatId) return;
 
+    const readTerminalTheme = () => {
+      const styles = getComputedStyle(document.documentElement);
+      const css = (name, fallback) => styles.getPropertyValue(name).trim() || fallback;
+      return {
+        background: css("--terminal-bg", "#091016"),
+        foreground: css("--terminal-fg", "#d8f3e6"),
+        cursor: css("--terminal-cursor", "#76d7a7"),
+        selectionBackground: css("--terminal-selection", "rgba(112,214,255,0.24)"),
+        black: css("--bg-soft", "#101820"),
+        red: css("--danger", "#ef7d7d"),
+        green: css("--success", "#76d7a7"),
+        yellow: css("--accent-warm", "#f2c36c"),
+        blue: css("--accent", "#70d6ff"),
+        magenta: "#b68cff",
+        cyan: "#64e0d2",
+        white: css("--text-muted", "#98a8b7"),
+        brightBlack: css("--text-faint", "#647889"),
+        brightRed: "#ff9a9a",
+        brightGreen: "#9bf0c2",
+        brightYellow: "#ffd98a",
+        brightBlue: "#9be4ff",
+        brightMagenta: "#d3b7ff",
+        brightCyan: "#9cf3ea",
+        brightWhite: css("--text", "#e6edf3"),
+      };
+    };
+
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: "\"IBM Plex Mono\", \"Cascadia Code\", Consolas, monospace",
-      theme: {
-        background: "#0d0d0d",
-        foreground: "#c8f2d6",
-        cursor: "#7ed2a2",
-        selectionBackground: "rgba(126,210,162,0.25)",
-        black: "#1a1a1a",
-        red: "#e06c75",
-        green: "#7ed2a2",
-        yellow: "#e5c07b",
-        blue: "#61afef",
-        magenta: "#c678dd",
-        cyan: "#56b6c2",
-        white: "#abb2bf",
-        brightBlack: "#5c6370",
-        brightRed: "#e06c75",
-        brightGreen: "#98c379",
-        brightYellow: "#e5c07b",
-        brightBlue: "#61afef",
-        brightMagenta: "#c678dd",
-        brightCyan: "#56b6c2",
-        brightWhite: "#ffffff",
-      },
+      fontFamily: "\"SFMono-Regular\", \"Cascadia Mono\", \"Cascadia Code\", Consolas, \"Liberation Mono\", monospace",
+      theme: readTerminalTheme(),
       scrollback: 5000,
       allowTransparency: true,
       convertEol: true,
@@ -154,9 +160,18 @@ export default function XtermPanel({ backendUrl, chatId, repoRoot, onReady, onUn
     });
     resizeObserver.observe(containerRef.current);
 
+    const themeObserver = new MutationObserver(() => {
+      term.options.theme = readTerminalTheme();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
     return () => {
       window.clearInterval(pollTimer);
       resizeObserver.disconnect();
+      themeObserver.disconnect();
       es.close();
       term.dispose();
       if (onUnmount) onUnmount();
