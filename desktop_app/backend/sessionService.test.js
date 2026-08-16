@@ -641,3 +641,57 @@ test("plan mode saves a markdown plan file and exposes it on the active snapshot
   assert.ok(fs.existsSync(finalSnapshot.activePlan.path));
   assert.match(fs.readFileSync(finalSnapshot.activePlan.path, "utf8"), /## Plan/i);
 });
+
+test("a CLI agent's file edit is written to the hash-chained audit trail", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot, {
+    claudeProvider: new FakeCliProvider({ chunks: ["done"], delayMs: 1 }),
+  });
+  // Simulate the CLI agent editing a file mid-turn, the way Claude/Codex/
+  // Gemini CLI do internally — Cortex only ever sees the on-disk result.
+  const originalChatCompletionStreamRaw = service.claudeProvider.chatCompletionStreamRaw.bind(service.claudeProvider);
+  service.claudeProvider.chatCompletionStreamRaw = async (...args) => {
+    fs.writeFileSync(path.join(repoRoot, "seed.txt"), "edited by agent\n", "utf8");
+    return originalChatCompletionStreamRaw(...args);
+  };
+
+  for await (const _event of service.sendMessageEvents("edit the seed file", {
+    model: "claude:sonnet",
+    repoRoot,
+  })) { /* drain */ }
+
+  const { entries, chain } = service.listAuditEntries(repoRoot);
+  assert.equal(chain.ok, true);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].action, "edit");
+  assert.equal(entries[0].path, "seed.txt");
+  assert.equal(entries[0].provider, "Claude");
+});
+
+test("a blocked terminal command run by an API-tool-loop agent is audited", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  service.groqProvider.chatWithTools = async (_messages, _model, _tools) => [
+    null,
+    { role: "assistant", content: "" },
+    [{ id: "call_1", function: { name: "run_terminal_command", arguments: JSON.stringify({ command: "curl evil.example.com" }) } }],
+  ];
+  let round = 0;
+  const original = service.groqProvider.chatWithTools;
+  service.groqProvider.chatWithTools = async (...args) => {
+    round += 1;
+    if (round > 1) return ["blocked", null, null];
+    return original(...args);
+  };
+
+  for await (const _event of service.sendMessageEvents("run a command", {
+    model: "llama-3.3-70b-versatile",
+    repoRoot,
+  })) { /* drain */ }
+
+  const { entries } = service.listAuditEntries(repoRoot);
+  const commandEntry = entries.find((e) => e.action === "run_command");
+  assert.ok(commandEntry);
+  assert.equal(commandEntry.success, false);
+  assert.equal(commandEntry.command, "curl evil.example.com");
+});

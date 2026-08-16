@@ -10,6 +10,12 @@ class ToolExecutor {
     this.fileService = fileService;
     this.repoRoot = path.resolve(repoRoot);
     this.readOnly = false;
+    this.onAudit = null; // (entry) => void, set by DesktopSessionService
+    this.auditMeta = {}; // { provider, model, chatId } — merged into every onAudit call
+  }
+
+  _audit(entry) {
+    this.onAudit?.({ ...this.auditMeta, ...entry });
   }
 
   setRepoRoot(repoRoot) {
@@ -235,6 +241,7 @@ class ToolExecutor {
 
     for (const pattern of BLOCKED) {
       if (pattern.test(command)) {
+        this._audit({ source: "agent", action: "run_command", command, success: false, detail: "blocked by safety policy" });
         return Promise.resolve(
           `ERROR: command blocked by safety policy — operation not permitted from remote session.`,
         );
@@ -266,6 +273,7 @@ class ToolExecutor {
           return;
         }
         settled = true;
+        this._audit({ source: "agent", action: "run_command", command, exitCode: 1, success: false, detail: String(error?.message || error) });
         resolve(`STDOUT:\n${stdout}\nSTDERR:\n${stderr}${stderr ? "\n" : ""}${String(error?.message || error)}\n(Exit 1)`);
       });
       child.on("close", (exitCode) => {
@@ -273,7 +281,9 @@ class ToolExecutor {
           return;
         }
         settled = true;
-        resolve(`STDOUT:\n${stdout || ""}\nSTDERR:\n${stderr || ""}\n(Exit ${typeof exitCode === "number" ? exitCode : 0})`);
+        const code = typeof exitCode === "number" ? exitCode : 0;
+        this._audit({ source: "agent", action: "run_command", command, exitCode: code, success: code === 0 });
+        resolve(`STDOUT:\n${stdout || ""}\nSTDERR:\n${stderr || ""}\n(Exit ${code})`);
       });
     });
   }

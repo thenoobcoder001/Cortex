@@ -14,6 +14,7 @@ const { AppConfigStore, normalizeContextCarryMessages, normalizeRecentRepoRoots 
 const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
+const { AuditStore } = require("./auditStore");
 const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
 const { normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
@@ -67,7 +68,9 @@ class DesktopSessionService {
     this.repoRoot = path.resolve(explicitRoot || initialRepoRoot(this.config));
     this.files = overrides.files || new RepoFileService(this.repoRoot);
     this.chatStore = overrides.chatStore || new ProjectChatStore(this.repoRoot);
+    this.auditStore = overrides.auditStore || new AuditStore(this.repoRoot);
     this.toolExecutor = overrides.toolExecutor || new ToolExecutor(this.files, this.repoRoot);
+    this.toolExecutor.onAudit = (entry) => this.auditStore.record(entry);
     this.groqProvider = overrides.groqProvider || new GroqProvider(this.config.apiKey || process.env.GROQ_API_KEY || "");
     this.geminiProvider = overrides.geminiProvider || new GeminiApiProvider(this.config.geminiApiKey || process.env.GEMINI_API_KEY || "");
     this.geminiCliProvider = overrides.geminiCliProvider || new GeminiCliProvider(this.repoRoot);
@@ -201,6 +204,7 @@ class DesktopSessionService {
     this.repoRoot = this.files.repoRoot;
     this.chatStore.setRepoRoot(this.repoRoot);
     this.toolExecutor.setRepoRoot(this.repoRoot);
+    this.auditStore.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
     this.hermesProvider.setRepoRoot(this.repoRoot);
@@ -531,6 +535,7 @@ class DesktopSessionService {
     this.files.setRepoRoot(this.repoRoot);
     this.chatStore.setRepoRoot(this.repoRoot);
     this.toolExecutor.setRepoRoot(this.repoRoot);
+    this.auditStore.setRepoRoot(this.repoRoot);
     this.geminiCliProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
     this.hermesProvider.setRepoRoot(this.repoRoot);
@@ -726,9 +731,19 @@ class DesktopSessionService {
     return new RepoFileService(repoRoot).snapshotRepoState(repoRoot);
   }
 
-  finalRepoChanges(repoRoot, beforeState) {
+  finalRepoChanges(repoRoot, beforeState, meta = {}) {
     const fileService = new RepoFileService(repoRoot);
-    return normalizeChanges(fileService.diffRepoState(beforeState, fileService.snapshotRepoState(repoRoot)));
+    const changes = normalizeChanges(fileService.diffRepoState(beforeState, fileService.snapshotRepoState(repoRoot)));
+    if (changes.length) {
+      const store = path.resolve(repoRoot) === this.repoRoot ? this.auditStore : new AuditStore(repoRoot);
+      store.recordChanges(changes, meta);
+    }
+    return changes;
+  }
+
+  listAuditEntries(repoRoot, options = {}) {
+    const store = repoRoot && path.resolve(repoRoot) !== this.repoRoot ? new AuditStore(repoRoot) : this.auditStore;
+    return { entries: store.list(options), chain: store.verify() };
   }
 
   workspaceChanges(repoRoot = this.repoRoot, { initialize = true } = {}) {

@@ -55,6 +55,8 @@ metro-start.err
 *.txt
 MOBILE_TODO.md
 ROADMAP.md
+AUDIT_BUG_FINDINGS.md
+mock_companies/
 desktop_app/P1_SECURITY_FIXES.md
 desktop_app/P2_SECURITY_FIXES.md
 desktop_app/cortex-socket.md

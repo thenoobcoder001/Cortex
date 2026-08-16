@@ -186,6 +186,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   yield service.event("user_message", { message, chatId, snapshot: startSnapshot });
   yield service.event("status", { phase: "started", message: `Running ${service.providerNameForModel(requestModel)}...`, chatId });
 
+  const auditMeta = { provider: service.providerNameForModel(requestModel), model: requestModel, chatId };
+
   try {
     const providerState = {};
     const baseForProvider = service.messagesWithContext([...baseMessages], effectivePromptPreset);
@@ -206,7 +208,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       }
       providerState[cliEntry.sessionKey] = cliEntry.provider.sessionId || "";
       if (requestModel.startsWith("codex:")) providerState.codex_tool_safety_mode = requestToolSafetyMode;
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
       const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({
         chatStore: requestChatStore,
@@ -226,7 +228,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
 
     if (!service.requestUsesTools(requestModel, message, effectivePromptPreset)) {
       const finalText = await provider.chatCompletion(baseForProvider, requestModel, requestOptions);
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
       const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
       const snapshot = service.saveCompletedChat({
         chatStore: requestChatStore,
@@ -250,7 +252,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       yield service.event("status", { phase: "thinking", message: `Thinking... round ${roundIndex + 1}`, chatId });
       const [finalText, assistantMessage, toolCalls] = await provider.chatWithTools(workingMessages, requestModel, TOOLS, requestOptions);
       if (finalText != null) {
-        const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+        const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
         const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
         const snapshot = service.saveCompletedChat({
           chatStore: requestChatStore,
@@ -274,6 +276,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         const args = JSON.parse(toolCall.function.arguments || "{}");
         yield service.event("tool_call", { name: toolCall.function.name, args, chatId });
         service.toolExecutor.readOnly = requestToolReadOnly;
+        service.toolExecutor.auditMeta = auditMeta;
         const [result, change] = await service.toolExecutor.executeWithMetadata(toolCall.function.name, args);
         if (change) storedChanges = [...storedChanges, change];
         yield service.event("tool_result", { name: toolCall.function.name, result, change, chatId });
@@ -287,7 +290,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     }
 
     const fallbackText = await provider.chatCompletion(workingMessages, requestModel, requestOptions);
-    const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore);
+    const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
     const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, fallbackText) : existingPlan;
     const snapshot = service.saveCompletedChat({
       chatStore: requestChatStore,
