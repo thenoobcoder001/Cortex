@@ -301,6 +301,7 @@ const ROUTE_HANDLERS = [
 function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, terminalService = null } = {}) {
   const effectiveService         = service         || new DesktopSessionService();
   const effectiveTerminalService = terminalService || new TerminalService();
+  effectiveTerminalService.onAudit = (entry) => effectiveService.recordAuditEntry(entry);
 
   const server = http.createServer(async (request, response) => {
     const origin        = corsOrigin(request);

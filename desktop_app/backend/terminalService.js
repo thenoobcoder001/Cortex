@@ -30,6 +30,7 @@ class TerminalService extends EventEmitter {
   constructor() {
     super();
     this.sessions = new Map();
+    this.onAudit = null;
   }
 
   key(chatId) {
@@ -131,7 +132,24 @@ class TerminalService extends EventEmitter {
       } else {
         session.child.stdin.write(`${text}${os.EOL}`);
       }
-    } catch {}
+      this.onAudit?.({
+        source: "terminal",
+        action: "run_command",
+        command: text,
+        chatId: id,
+        success: true,
+        detail: "submitted to interactive terminal",
+      });
+    } catch (error) {
+      this.onAudit?.({
+        source: "terminal",
+        action: "run_command",
+        command: text,
+        chatId: id,
+        success: false,
+        detail: String(error?.message || error),
+      });
+    }
     return this.snapshot(id);
   }
 
