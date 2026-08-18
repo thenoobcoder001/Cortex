@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import SettingsPage from "./SettingsPage.jsx";
+import AuditPage from "./AuditPage.jsx";
 import { DEFAULT_UI_PREFS, EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
 import {
   cleanResponse,
@@ -1617,6 +1618,16 @@ export default function App() {
     );
   }
 
+  if (currentScreen === "audit") {
+    return (
+      <AuditPage
+        backendUrl={backendUrl}
+        repoRoot={snapshot.config.repoRoot}
+        onBack={() => setCurrentScreen("chat")}
+      />
+    );
+  }
+
   const workspaceShellStyle = {
     ...(updateBanner ? { paddingTop: 40 } : {}),
     ...(resolvedTheme === "light" ? { "--sidebar-bg": "#f8f8f8" } : {}),
@@ -1759,6 +1770,9 @@ export default function App() {
                 <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
                   Settings
                 </button>
+                <button type="button" className="secondary-button" onClick={() => setCurrentScreen("audit")}>
+                  Audit
+                </button>
               </div>
               <div className="header-more-wrap" onClick={(event) => event.stopPropagation()}>
                 <button
@@ -1812,6 +1826,15 @@ export default function App() {
                         <span>Open in {editor.label}</span>
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        setCurrentScreen("audit");
+                      }}
+                    >
+                      <span>Audit trail</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
