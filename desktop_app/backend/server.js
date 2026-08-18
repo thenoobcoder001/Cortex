@@ -107,6 +107,16 @@ function sendJson(response, statusCode, payload, origin, extraHeaders = null) {
   response.end(JSON.stringify(payload));
 }
 
+function sendText(response, statusCode, payload, origin, extraHeaders = null) {
+  const headers = {
+    "Content-Type": "text/plain; charset=utf-8",
+    ...(extraHeaders || {}),
+  };
+  if (origin) headers["Access-Control-Allow-Origin"] = origin;
+  response.writeHead(statusCode, headers);
+  response.end(payload);
+}
+
 function sendError(response, error, origin, request) {
   const remote  = request?.socket?.remoteAddress || "";
   const isLocal = isLoopbackRemote(remote);
@@ -311,6 +321,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
     }
 
     const reply = (code, body) => sendJson(response, code, body, origin);
+    const replyText = (code, body, headers) => sendText(response, code, body, origin, headers);
     const fail  = (err)        => sendError(response, err, origin, request);
     const url   = new URL(request.url, `http://${request.headers.host}`);
 
@@ -354,6 +365,7 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
         origin,
         isLocal,
         reply,
+        replyText,
         fail,
         service:         effectiveService,
         terminalService: effectiveTerminalService,

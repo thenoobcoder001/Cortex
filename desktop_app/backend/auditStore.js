@@ -138,6 +138,11 @@ class AuditStore {
     if (provider) entries = entries.filter((e) => e.provider === provider);
     return entries.slice(-Math.max(1, Number(limit) || 200)).reverse();
   }
+
+  exportJsonl() {
+    if (!fs.existsSync(this.logPath)) return "";
+    return fs.readFileSync(this.logPath, "utf8");
+  }
 }
 
 module.exports = { AuditStore };

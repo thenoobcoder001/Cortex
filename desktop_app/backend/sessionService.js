@@ -746,6 +746,11 @@ class DesktopSessionService {
     return { entries: store.list(options), chain: store.verify() };
   }
 
+  exportAuditEntries(repoRoot) {
+    const store = repoRoot && path.resolve(repoRoot) !== this.repoRoot ? new AuditStore(repoRoot) : this.auditStore;
+    return store.exportJsonl();
+  }
+
   workspaceChanges(repoRoot = this.repoRoot, { initialize = true } = {}) {
     const targetRoot = path.resolve(repoRoot);
     const store = targetRoot === this.repoRoot

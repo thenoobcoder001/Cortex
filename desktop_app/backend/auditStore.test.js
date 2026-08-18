@@ -71,6 +71,17 @@ test("list() filters by action and provider", () => {
   assert.equal(store.list({ action: "delete" }).length, 0);
 });
 
+test("exportJsonl() returns the original append-only records", () => {
+  const repoRoot = tempRepo();
+  const store = new AuditStore(repoRoot);
+  store.record({ action: "create", path: "a.txt" });
+  store.record({ action: "run_command", command: "npm test" });
+
+  const lines = store.exportJsonl().trim().split("\n").map(JSON.parse);
+  assert.deepEqual(lines.map((entry) => entry.action), ["create", "run_command"]);
+  assert.equal(lines[1].prev_hash, lines[0].hash);
+});
+
 test("rotation resets the chain but keeps the archive readable", () => {
   const repoRoot = tempRepo();
   const store = new AuditStore(repoRoot);
