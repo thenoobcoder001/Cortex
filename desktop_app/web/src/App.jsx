@@ -1,4 +1,23 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderPlus,
+  Info,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  SquarePen,
+  SquareTerminal,
+  Trash2,
+  X,
+} from "lucide-react";
 import SettingsPage from "./SettingsPage.jsx";
 import AuditPage from "./AuditPage.jsx";
 import { DEFAULT_UI_PREFS, EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
@@ -33,6 +52,8 @@ import ResourceDashboard from "./components/ResourceDashboard.jsx";
 import TerminalPanelSection from "./components/TerminalPanelSection.jsx";
 import ModelPicker from "./components/ModelPicker.jsx";
 import UpdateBanner from "./components/UpdateBanner.jsx";
+
+const DISMISSED_UPDATE_KEY = "cortex.dismissed-update";
 
 export default function App() {
   const scrollRef = useRef(null);
@@ -128,6 +149,12 @@ export default function App() {
   useEffect(() => {
     const handler = (s) => {
       if (s.state === "available" || s.state === "ready") {
+        let dismissed = "";
+        try {
+          dismissed = window.localStorage.getItem(DISMISSED_UPDATE_KEY) || "";
+        } catch {}
+        // A dismissed banner stays dismissed until a newer version (or the "ready" step) arrives.
+        if (dismissed === `${s.version}:${s.state}`) return;
         setUpdateBanner({ version: s.version, state: s.state });
       } else if (s.state === "up-to-date") {
         setUpdateBanner(null);
@@ -1635,7 +1662,15 @@ export default function App() {
 
   return (
     <>
-      <UpdateBanner updateBanner={updateBanner} onDismiss={() => setUpdateBanner(null)} />
+      <UpdateBanner
+        updateBanner={updateBanner}
+        onDismiss={() => {
+          try {
+            window.localStorage.setItem(DISMISSED_UPDATE_KEY, `${updateBanner.version}:${updateBanner.state}`);
+          } catch {}
+          setUpdateBanner(null);
+        }}
+      />
       <div
         className={`workspace-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
         data-theme={resolvedTheme}
@@ -1651,8 +1686,8 @@ export default function App() {
         <div className="app-navbar">
           <div className="app-navbar-brand">
             <span className="sidebar-brand">Cortex</span>
-            <button type="button" className="icon-button" onClick={handlePickRepo} title="Add project">
-              +
+            <button type="button" className="icon-button" onClick={handlePickRepo} title="Add project" aria-label="Add project">
+              <FolderPlus size={18} className="ui-icon" />
             </button>
           </div>
           <div className="app-navbar-main">
@@ -1665,8 +1700,9 @@ export default function App() {
                   setSidebarCollapsed((prev) => !prev);
                 }}
                 title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+                aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
               >
-                {sidebarCollapsed ? ">" : "<"}
+                {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
               </button>
               <select
                 className="header-thread-select"
@@ -1677,7 +1713,7 @@ export default function App() {
                   }
                 }}
               >
-                <option value="">New thread</option>
+                <option value="">New chat</option>
                 {snapshot.chats.map((chat) => (
                   <option key={chat.chatId} value={chat.chatId}>
                     {chat.title}
@@ -1697,8 +1733,9 @@ export default function App() {
                     setHeaderInfoOpen((current) => !current);
                   }}
                   title="Context info"
+                  aria-label="Context info"
                 >
-                  <span className="info-icon">i</span>
+                  <Info size={16} />
                 </button>
                 {headerInfoOpen && (
                   <div className="header-menu header-info-menu">
@@ -1723,29 +1760,29 @@ export default function App() {
               <div className="topbar-actions-primary">
                 <button
                   type="button"
-                  className={terminalPanelOpen ? "secondary-button terminal-toggle active" : "secondary-button terminal-toggle"}
+                  className={terminalPanelOpen ? "ghost-button terminal-toggle active" : "ghost-button terminal-toggle"}
                   onClick={() => void handleToggleTerminal()}
+                  aria-pressed={terminalPanelOpen}
+                  title={terminalPanelOpen ? "Hide terminal" : "Show terminal"}
                 >
-                  {terminalPanelOpen ? "Hide terminal" : "Show terminal"}
+                  <SquareTerminal size={16} className="ui-icon" />
+                  Terminal
                 </button>
-                {activeChatRunning && (
-                  <button type="button" className="secondary-button" onClick={handleInterruptChat}>
-                    Stop
-                  </button>
-                )}
               </div>
               <div className="topbar-actions-secondary">
                 <div className="header-menu-wrap">
                   <button
                     type="button"
-                    className="secondary-button header-menu-trigger"
+                    className="ghost-button header-menu-trigger"
                     onClick={(event) => {
                       event.stopPropagation();
                       setHeaderMoreOpen(false);
                       setEditorMenuOpen((current) => !current);
                     }}
+                    aria-expanded={editorMenuOpen}
                   >
                     Open in
+                    <ChevronDown size={14} className="ui-icon" />
                   </button>
                   {editorMenuOpen && (
                     <div className="header-menu">
@@ -1764,27 +1801,33 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                <button type="button" className="secondary-button" onClick={() => void handleNewChat()}>
-                  New chat
+                <button type="button" className="ghost-button" onClick={() => setCurrentScreen("audit")} title="Audit trail">
+                  <ShieldCheck size={16} className="ui-icon" />
+                  Audit
                 </button>
-                <button type="button" className="secondary-button" onClick={() => setCurrentScreen("settings")}>
+                <button type="button" className="ghost-button" onClick={() => setCurrentScreen("settings")} title="Settings">
+                  <SettingsIcon size={16} className="ui-icon" />
                   Settings
                 </button>
-                <button type="button" className="secondary-button" onClick={() => setCurrentScreen("audit")}>
-                  Audit
+                <button type="button" className="ghost-button" onClick={() => void handleNewChat()} title="New chat">
+                  <SquarePen size={16} className="ui-icon" />
+                  New chat
                 </button>
               </div>
               <div className="header-more-wrap" onClick={(event) => event.stopPropagation()}>
                 <button
                   type="button"
-                  className="secondary-button header-more-trigger"
+                  className="icon-button header-more-trigger"
                   onClick={(event) => {
                     event.stopPropagation();
                     setEditorMenuOpen(false);
                     setHeaderMoreOpen((current) => !current);
                   }}
+                  title="More"
+                  aria-label="More"
+                  aria-expanded={headerMoreOpen}
                 >
-                  More
+                  <MoreHorizontal size={18} />
                 </button>
                 {headerMoreOpen && (
                   <div className="header-menu header-more-menu">
@@ -1894,12 +1937,13 @@ export default function App() {
                       title={project.path}
                     >
                       <span className="project-name">
-                        <span className="project-folder-icon" aria-hidden="true"></span>
+                        <Folder size={15} className="project-folder-icon" aria-hidden="true" />
                         {project.name}
-                        <span
+                        <ChevronRight
+                          size={14}
                           className={expandedRepos.has(project.path) ? "project-disclosure expanded" : "project-disclosure"}
                           aria-hidden="true"
-                        ></span>
+                        />
                       </span>
                     </button>
                     <div className="project-actions" onClick={(event) => event.stopPropagation()}>
@@ -1908,16 +1952,19 @@ export default function App() {
                         className="project-action-btn"
                         onClick={() => void handleNewChat(project.path)}
                         title="New chat in project"
+                        aria-label="New chat in project"
                       >
-                        +
+                        <SquarePen size={15} />
                       </button>
                       <div className="project-menu-wrap">
                         <button
                           type="button"
                           className="project-menu-trigger"
                           onClick={(event) => handleOpenMenu(event, project.path)}
+                          title="Project options"
+                          aria-label="Project options"
                         >
-                          ...
+                          <MoreHorizontal size={16} />
                         </button>
                       </div>
                     </div>
@@ -1992,7 +2039,7 @@ export default function App() {
                                     title="Previous response was interrupted and can be resumed from this chat."
                                     aria-hidden="true"
                                   >
-                                    !
+                                    <AlertCircle size={14} />
                                   </span>
                                 )}
                               </>
@@ -2007,7 +2054,7 @@ export default function App() {
                                   title="Confirm rename"
                                   aria-label="Confirm rename"
                                 >
-                                  ✓
+                                  <Check size={14} />
                                 </button>
                                 <button
                                   type="button"
@@ -2017,7 +2064,7 @@ export default function App() {
                                   title="Cancel rename"
                                   aria-label="Cancel rename"
                                 >
-                                  ✕
+                                  <X size={14} />
                                 </button>
                               </>
                             ) : (
@@ -2029,7 +2076,7 @@ export default function App() {
                                   title="Rename chat"
                                   aria-label="Rename chat"
                                 >
-                                  Aa
+                                  <Pencil size={13} />
                                 </button>
                                 <button
                                   type="button"
@@ -2045,7 +2092,7 @@ export default function App() {
                                   title="Delete chat"
                                   aria-label="Delete chat"
                                 >
-                                  x
+                                  <Trash2 size={13} />
                                 </button>
                               </>
                             )}
@@ -2161,6 +2208,11 @@ export default function App() {
             activePendingTurn={activePendingTurn}
             copyText={copyText}
             displayMessages={displayMessages}
+            onPickStarter={(prompt) => {
+              setDraft(prompt);
+              window.requestAnimationFrame(() => document.querySelector(".composer-panel textarea")?.focus());
+            }}
+            projectName={snapshot.config.repoRoot ? projectLabel(snapshot.config.repoRoot) : ""}
             scrollRef={scrollRef}
           />
           </div>{/* chat-main */}
@@ -2186,6 +2238,8 @@ export default function App() {
             onHoverSubGroup={setHoveredModelSubGroup}
             onPromptPresetChange={handlePromptPresetChange}
             onSend={handleSend}
+            onStop={handleInterruptChat}
+            running={terminalViewMode === "chat" && activeChatRunning}
             enterToSend={uiPrefs.enterToSend}
             onToggleModelMenu={toggleModelMenu}
             onToolSafetyChange={handleToolSafetyChange}

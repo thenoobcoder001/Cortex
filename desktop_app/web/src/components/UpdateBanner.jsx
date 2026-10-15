@@ -1,79 +1,32 @@
+import { Download, RotateCw, X } from "lucide-react";
+
 export default function UpdateBanner({ updateBanner, onDismiss }) {
   if (!updateBanner) {
     return null;
   }
 
+  const ready = updateBanner.state === "ready";
+
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 9999,
-        background: updateBanner.state === "ready" ? "#16a34a" : "#2563eb",
-        color: "#fff",
-        padding: "10px 20px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        fontSize: 13,
-        fontWeight: 600,
-      }}
-    >
-      <span>
-        {updateBanner.state === "ready"
-          ? `✓ Cortex v${updateBanner.version} downloaded — restart to install`
-          : `↑ Cortex v${updateBanner.version} is available`}
-      </span>
-      <div style={{ display: "flex", gap: 8 }}>
-        {updateBanner.state === "available" && (
-          <button
-            type="button"
-            onClick={() => window.desktopApi?.updaterDownload?.()}
-            style={{
-              background: "#fff",
-              color: "#2563eb",
-              border: "none",
-              borderRadius: 6,
-              padding: "4px 12px",
-              cursor: "pointer",
-              fontWeight: 700,
-            }}
-          >
+    <div className="update-banner" role="status">
+      <div className="update-banner-text">
+        <strong>{ready ? `Cortex ${updateBanner.version} is ready` : `Cortex ${updateBanner.version} is available`}</strong>
+        <span>{ready ? "Restart to finish installing." : "Download it now; it installs when you restart."}</span>
+      </div>
+      <div className="update-banner-actions">
+        {ready ? (
+          <button type="button" className="primary-button composer-send" onClick={() => window.desktopApi?.updaterInstall?.()}>
+            <RotateCw size={14} aria-hidden="true" />
+            Restart now
+          </button>
+        ) : (
+          <button type="button" className="primary-button composer-send" onClick={() => window.desktopApi?.updaterDownload?.()}>
+            <Download size={14} aria-hidden="true" />
             Download
           </button>
         )}
-        {updateBanner.state === "ready" && (
-          <button
-            type="button"
-            onClick={() => window.desktopApi?.updaterInstall?.()}
-            style={{
-              background: "#fff",
-              color: "#16a34a",
-              border: "none",
-              borderRadius: 6,
-              padding: "4px 12px",
-              cursor: "pointer",
-              fontWeight: 700,
-            }}
-          >
-            Restart & Install
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onDismiss}
-          style={{
-            background: "transparent",
-            color: "#fff",
-            border: "1px solid rgba(255,255,255,0.4)",
-            borderRadius: 6,
-            padding: "4px 10px",
-            cursor: "pointer",
-          }}
-        >
-          Dismiss
+        <button type="button" className="icon-button" onClick={onDismiss} title="Not now" aria-label="Not now">
+          <X size={16} aria-hidden="true" />
         </button>
       </div>
     </div>

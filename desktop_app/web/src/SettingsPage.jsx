@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import qrcode from "qrcode-generator";
+import { ArrowLeft, Bot, Brain, Folder, Link2, RefreshCw, SlidersHorizontal, TriangleAlert } from "lucide-react";
 
 function UpdateSection() {
   const [status, setStatus] = useState(null); // { state, version, error, currentVersion }
@@ -386,7 +387,7 @@ function CortexRelaySection({ backendUrl }) {
           </label>
           {error && <div className="provider-test-result error">{error}</div>}
           <button type="button" className="primary-button" disabled={loading} onClick={handleVerify}>
-            {loading ? "Verifying…" : "Verify & Connect"}
+            {loading ? "Verifying…" : "Verify and connect"}
           </button>
           <button type="button" className="secondary-button" disabled={loading} onClick={() => { setStep("form"); setError(""); setInfo(""); setCode(""); }}>
             Back
@@ -606,75 +607,22 @@ const SETTINGS_NAV = [
   { id: "connections", label: "Connections", icon: "link" },
   { id: "providers", label: "Providers", icon: "bot" },
   { id: "updates", label: "Updates", icon: "refresh" },
-  { id: "danger", label: "Danger Zone", icon: "alert" },
+  { id: "danger", label: "Danger zone", icon: "alert" },
 ];
 
+const NAV_ICONS = {
+  sliders: SlidersHorizontal,
+  folder: Folder,
+  brain: Brain,
+  link: Link2,
+  bot: Bot,
+  refresh: RefreshCw,
+  alert: TriangleAlert,
+};
+
 function NavIcon({ name }) {
-  const common = {
-    width: 16,
-    height: 16,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 1.8,
-    strokeLinecap: "round",
-    strokeLinejoin: "round",
-    "aria-hidden": true,
-  };
-  switch (name) {
-    case "sliders":
-      return (
-        <svg {...common}>
-          <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" />
-          <line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" />
-          <line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
-          <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" />
-        </svg>
-      );
-    case "folder":
-      return (
-        <svg {...common}>
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
-      );
-    case "brain":
-      return (
-        <svg {...common}>
-          <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.04Z" />
-          <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.04Z" />
-        </svg>
-      );
-    case "link":
-      return (
-        <svg {...common}>
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-        </svg>
-      );
-    case "bot":
-      return (
-        <svg {...common}>
-          <rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" />
-          <path d="M12 7v4" /><line x1="8" y1="16" x2="8" y2="16" /><line x1="16" y1="16" x2="16" y2="16" />
-        </svg>
-      );
-    case "refresh":
-      return (
-        <svg {...common}>
-          <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-        </svg>
-      );
-    case "alert":
-      return (
-        <svg {...common}>
-          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-          <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12" y2="17" />
-        </svg>
-      );
-    default:
-      return null;
-  }
+  const Icon = NAV_ICONS[name];
+  return Icon ? <Icon size={16} aria-hidden="true" /> : null;
 }
 
 function splitRemoteAccessUrls(remoteAccessUrls) {
@@ -736,7 +684,7 @@ export default function SettingsPage({
       <div className="settings-page settings-page--nav">
         <aside className="settings-nav">
           <button type="button" className="settings-nav-back" onClick={onBack}>
-            <span className="settings-nav-back-arrow" aria-hidden="true"></span>
+            <ArrowLeft size={16} aria-hidden="true" />
             Back
           </button>
           <div className="settings-nav-title">Settings</div>
@@ -1035,7 +983,7 @@ export default function SettingsPage({
 
           {activeSection === "danger" && (
           <section className="settings-section-card settings-section-wide">
-            <div className="settings-block-title">Danger Zone</div>
+            <div className="settings-block-title">Danger zone</div>
             <div className="danger-zone-copy">
               Clear cached local app data, saved project metadata, chat history, accepted diff baselines, and provider session state.
             </div>

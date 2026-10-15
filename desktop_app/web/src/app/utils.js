@@ -126,7 +126,13 @@ export function parentModelLabel(modelId, modelGroups) {
       return group;
     }
   }
-  return "Model";
+  // Saved ids can omit the effort suffix (e.g. "codex:gpt-5.4" vs "codex:gpt-5.4:high").
+  for (const [group, items] of modelGroups) {
+    if (modelId && items.some((model) => model.id.startsWith(`${modelId}:`))) {
+      return group;
+    }
+  }
+  return "Choose model";
 }
 
 export function providerStateForGroup(group, providers) {

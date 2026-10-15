@@ -13,15 +13,13 @@
 .audit-header { justify-content: space-between; gap: 24px; margin-bottom: 28px; }
 .audit-header h1 { margin: 10px 0 4px; font-size: 28px; }
 .audit-header p { max-width: 60vw; margin: 0; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
-.audit-back { padding: 0; border: 0; color: var(--text-muted); background: transparent; cursor: pointer; }
-.audit-back:hover { color: var(--text); }
 .audit-header-actions { gap: 12px; }
 .audit-chain { padding: 7px 10px; border: 1px solid; border-radius: 999px; font-size: 12px; font-weight: 700; }
 .audit-chain--ok { border-color: rgba(67, 160, 71, .35); color: #66bb6a; background: rgba(67, 160, 71, .1); }
 .audit-chain--broken { border-color: rgba(239, 83, 80, .35); color: #ef5350; background: rgba(239, 83, 80, .1); }
 
-.audit-toolbar { gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); }
-.audit-toolbar select { min-width: 150px; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 10px; color: var(--text); background: var(--bg-soft); }
+.audit-toolbar { gap: 10px; padding: 10px; border-radius: var(--radius-lg); background: var(--surface-muted); }
+.audit-toolbar select { min-width: 150px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text); background: var(--bg-soft); }
 .audit-count { margin-left: auto; color: var(--text-muted); font-size: 13px; }
 .audit-timeline { max-width: 1000px; margin: 22px auto 0; }
 .audit-event { position: relative; display: grid; grid-template-columns: 16px 1fr; gap: 14px; padding-bottom: 16px; }
@@ -44,3 +42,12 @@
   .audit-count { margin-left: 0; }
   .audit-event-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
 }
+
+.audit-chain { display: inline-flex; align-items: center; gap: 6px; }
+.audit-button { display: inline-flex; align-items: center; gap: 6px; }
+.audit-event-title { display: inline-flex; align-items: center; gap: 8px; }
+.audit-event-title svg { color: var(--text-muted); }
+.audit-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 460px; margin: 0 auto; }
+.audit-empty h2 { margin: 4px 0 0; color: var(--text); font-size: 16px; font-weight: 600; }
+.audit-empty p { margin: 0; line-height: 1.5; font-size: 14px; }
+.audit-empty-icon { color: var(--text-faint); }

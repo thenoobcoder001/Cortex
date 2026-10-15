@@ -1,3 +1,4 @@
+import { ChevronUp } from "lucide-react";
 import { createPortal } from "react-dom";
 
 export default function ModelPicker({
@@ -45,7 +46,7 @@ export default function ModelPicker({
         onClick={onToggle}
       >
         <span>{activeModelParent}</span>
-        <span className={modelMenuOpen ? "model-picker-caret open" : "model-picker-caret"}>{">"}</span>
+        <ChevronUp size={14} className={modelMenuOpen ? "model-picker-caret open" : "model-picker-caret"} aria-hidden="true" />
       </button>
       {modelMenuOpen &&
         createPortal(

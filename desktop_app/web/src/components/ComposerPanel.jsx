@@ -1,3 +1,4 @@
+import { ArrowUp, Square } from "lucide-react";
 import { PROMPT_PRESETS, TOOL_SAFETY_OPTIONS } from "../app/constants.js";
 import { providerCliCommand } from "../app/utils.js";
 import ModelPicker from "./ModelPicker.jsx";
@@ -18,6 +19,8 @@ export default function ComposerPanel({
   onHoverSubGroup,
   onPromptPresetChange,
   onSend,
+  onStop,
+  running = false,
   enterToSend = true,
   onToggleModelMenu,
   onToolSafetyChange,
@@ -95,14 +98,23 @@ export default function ComposerPanel({
             selectedModelId={selectedModelId}
           />
         </div>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={onSend}
-          disabled={sendingDisabled}
-        >
-          {terminalViewMode === "live" && terminalPanelOpen ? "Run" : "Send"}
-        </button>
+        {running && onStop && !draft.trim() ? (
+          <button type="button" className="primary-button composer-send" onClick={onStop} title="Stop the running response">
+            <Square size={14} className="ui-icon" fill="currentColor" />
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="primary-button composer-send"
+            onClick={onSend}
+            disabled={sendingDisabled || (!draft.trim() && !(terminalViewMode === "live" && terminalPanelOpen))}
+            title={enterToSend ? "Send (Enter)" : "Send (Ctrl+Enter)"}
+          >
+            <ArrowUp size={16} className="ui-icon" />
+            {terminalViewMode === "live" && terminalPanelOpen ? "Run" : "Send"}
+          </button>
+        )}
       </div>
     </div>
   );

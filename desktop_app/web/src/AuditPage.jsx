@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Download, FilePen, FilePlus, FileX, History, RefreshCw, Replace, ShieldAlert, ShieldCheck, SquareTerminal } from "lucide-react";
 import "./audit.css";
+
+const ACTION_ICONS = {
+  create: FilePlus,
+  edit: FilePen,
+  delete: FileX,
+  rename: Replace,
+  run_command: SquareTerminal,
+};
 
 const ACTION_LABELS = {
   create: "Created",
@@ -69,15 +78,22 @@ export default function AuditPage({ backendUrl, repoRoot, onBack }) {
     <main className="audit-screen">
       <header className="audit-header">
         <div>
-          <button type="button" className="audit-back" onClick={onBack}>← Back to workspace</button>
+          <button type="button" className="settings-nav-back" onClick={onBack}>
+            <ArrowLeft size={16} aria-hidden="true" />
+            Back
+          </button>
           <h1>Audit trail</h1>
           <p title={repoRoot}>{repoRoot}</p>
         </div>
         <div className="audit-header-actions">
           <span className={chain.ok ? "audit-chain audit-chain--ok" : "audit-chain audit-chain--broken"}>
+            {chain.ok ? <ShieldCheck size={14} aria-hidden="true" /> : <ShieldAlert size={14} aria-hidden="true" />}
             {chain.ok ? "Chain verified" : `Chain broken at #${chain.brokenAtSeq ?? "?"}`}
           </span>
-          <button type="button" className="secondary-button" onClick={() => void exportJsonl()}>Export JSONL</button>
+          <button type="button" className="secondary-button audit-button" onClick={() => void exportJsonl()} disabled={!entries.length && !action && !provider}>
+            <Download size={15} aria-hidden="true" />
+            Export JSONL
+          </button>
         </div>
       </header>
 
@@ -94,27 +110,50 @@ export default function AuditPage({ backendUrl, repoRoot, onBack }) {
           <option value="">All providers</option>
           {providers.map((name) => <option key={name} value={name}>{name}</option>)}
         </select>
-        <button type="button" className="secondary-button" onClick={() => void loadEntries()}>Refresh</button>
+        <button type="button" className="icon-button" onClick={() => void loadEntries()} title="Refresh" aria-label="Refresh">
+          <RefreshCw size={16} aria-hidden="true" />
+        </button>
         <span className="audit-count">{entries.length} {entries.length === 1 ? "event" : "events"}</span>
       </section>
 
       {error && <div className="error-banner">{error}</div>}
       <section className="audit-timeline" aria-live="polite">
         {loading && <div className="audit-empty">Loading audit events…</div>}
-        {!loading && !entries.length && <div className="audit-empty">No agent actions match these filters yet.</div>}
+        {!loading && !entries.length && (
+          <div className="audit-empty">
+            <History size={28} className="audit-empty-icon" aria-hidden="true" />
+            {action || provider ? (
+              <>
+                <h2>No events match these filters</h2>
+                <p>Try "All actions" and "All providers".</p>
+              </>
+            ) : (
+              <>
+                <h2>No agent actions yet</h2>
+                <p>When an agent creates, edits or deletes a file or runs a command in this project, it shows up here. Each event is chained to the one before it, so any later edit to the log is detected.</p>
+              </>
+            )}
+          </div>
+        )}
         {!loading && entries.map((entry) => (
           <article className="audit-event" key={entry.hash || `${entry.ts}-${entry.seq}`}>
             <div className={`audit-event-marker audit-event-marker--${entry.success ? "success" : "failure"}`} />
             <div className="audit-event-body">
               <div className="audit-event-heading">
-                <strong>{ACTION_LABELS[entry.action] || entry.action || "Agent action"}</strong>
+                <strong className="audit-event-title">
+                  {(() => {
+                    const Icon = ACTION_ICONS[entry.action];
+                    return Icon ? <Icon size={15} aria-hidden="true" /> : null;
+                  })()}
+                  {ACTION_LABELS[entry.action] || entry.action || "Agent action"}
+                </strong>
                 <time dateTime={entry.ts}>{new Date(entry.ts).toLocaleString()}</time>
               </div>
               <code className="audit-subject">{entrySubject(entry)}</code>
               <div className="audit-meta">
                 {entry.provider && <span>{entry.provider}</span>}
                 {entry.model && <span>{entry.model}</span>}
-                {entry.exit_code !== null && <span>exit {entry.exit_code}</span>}
+                {entry.exit_code != null && <span>exit {entry.exit_code}</span>}
                 <span>#{entry.seq}</span>
               </div>
             </div>
