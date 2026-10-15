@@ -130,7 +130,7 @@ export default function AuditPage({ backendUrl, repoRoot, onBack }) {
             ) : (
               <>
                 <h2>No agent actions yet</h2>
-                <p>When an agent creates, edits or deletes a file or runs a command in this project, it shows up here. Each event is chained to the one before it, so any later edit to the log is detected.</p>
+                <p>File changes and commands from the built-in terminal and API-key providers show up here. Claude Code and Codex actions aren't logged yet. Each event is chained to the one before it, so any later edit to the log is detected.</p>
               </>
             )}
           </div>

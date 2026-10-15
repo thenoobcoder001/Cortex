@@ -104,6 +104,19 @@ function buildCodexInitializeParams() {
   };
 }
 
+// App-server errors arrive as { message } where message may itself be a JSON
+// API error body; surface the human-readable part.
+function codexErrorText(error) {
+  const raw = String(error?.message || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    return String(parsed?.error?.message || parsed?.message || raw);
+  } catch {
+    return raw;
+  }
+}
+
 class InterruptError extends Error {
   constructor(message = "Request interrupted.", partialText = "") {
     super(message);
@@ -219,6 +232,67 @@ class CodexProvider {
     this.apiKey = String(apiKey || "").trim();
   }
 
+  /**
+   * Asks `codex app-server` which models this account can use. Returns
+   * [{ model, displayName, efforts: [..], defaultEffort, isDefault }] or
+   * null when the CLI is missing or doesn't answer in time.
+   */
+  async listModels({ timeoutMs = 20000 } = {}) {
+    const command = which("codex.cmd") || which("codex");
+    if (!command) return null;
+    const child = spawnCommand(command, ["app-server"], {
+      cwd: this.repoRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const output = readline.createInterface({ input: child.stdout });
+    try {
+      return await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), timeoutMs);
+        const done = (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        };
+        child.once("error", () => done(null));
+        child.once("exit", () => done(null));
+        output.on("line", (line) => {
+          let message;
+          try {
+            message = JSON.parse(line);
+          } catch {
+            return;
+          }
+          if (message.id === 1) {
+            this.writeAppServerMessage(child, { method: "initialized" });
+            this.writeAppServerMessage(child, { id: 2, method: "model/list", params: {} });
+            return;
+          }
+          if (message.id === 2) {
+            const data = Array.isArray(message.result?.data) ? message.result.data : null;
+            done(
+              data
+                ?.filter((entry) => entry?.model && !entry.hidden)
+                .map((entry) => ({
+                  model: String(entry.model),
+                  displayName: String(entry.displayName || entry.model),
+                  efforts: (entry.supportedReasoningEfforts || [])
+                    .map((effort) => String(effort?.reasoningEffort || ""))
+                    .filter(Boolean),
+                  defaultEffort: entry.defaultReasoningEffort ? String(entry.defaultReasoningEffort) : null,
+                  isDefault: Boolean(entry.isDefault),
+                })) || null,
+            );
+          }
+        });
+        this.writeAppServerMessage(child, { id: 1, method: "initialize", params: buildCodexInitializeParams() });
+      });
+    } catch {
+      return null;
+    } finally {
+      output.close();
+      this.killChild(child);
+    }
+  }
+
   killChild(child) {
     platform.killProcessTree(child);
   }
@@ -250,6 +324,7 @@ class CodexProvider {
     let threadId = this.sessionId || "";
     let currentTurnId = "";
     let assistantText = "";
+    let lastErrorMessage = "";
     let aborted = false;
     let abortListener = null;
 
@@ -320,10 +395,15 @@ class CodexProvider {
           }
           return;
         }
+        if (message.method === "error") {
+          lastErrorMessage = codexErrorText(message.params?.error) || lastErrorMessage;
+          return;
+        }
         if (message.method === "turn/completed") {
           const status = String(message.params?.turn?.status || "completed");
           if (status !== "completed") {
-            reject(new Error(`Codex turn failed with status: ${status}`));
+            const detail = codexErrorText(message.params?.turn?.error) || lastErrorMessage;
+            reject(new Error(detail ? `Codex: ${detail}` : `Codex turn failed with status: ${status}`));
             return;
           }
           resolve({

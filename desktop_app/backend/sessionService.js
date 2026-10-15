@@ -103,6 +103,42 @@ class DesktopSessionService {
     if (this._hasExplicitRepoRoot) {
       this._ensureClaudeSettings(this.repoRoot);
     }
+    this.codexModels = null;
+    if (!overrides.codexProvider) {
+      void this.refreshCodexModels();
+    }
+  }
+
+  /**
+   * Loads the models Codex currently offers this account. If the saved model
+   * has been retired, switches to Codex's default so sends don't fail.
+   */
+  async refreshCodexModels() {
+    if (typeof this.codexProvider.listModels !== "function" || !this.codexProvider.available) {
+      return this.codexModels;
+    }
+    const live = await this.codexProvider.listModels();
+    if (!Array.isArray(live) || !live.length) {
+      return this.codexModels;
+    }
+    this.codexModels = live;
+    const [, savedName] = String(this.model).split(":");
+    if (this.modelFamily(this.model) === "codex" && !live.some((entry) => entry.model === savedName)) {
+      this.model = this.defaultCodexModelId() || this.model;
+      this.persistConfig();
+    }
+    this.invalidateSnapshotCaches?.();
+    return this.codexModels;
+  }
+
+  defaultCodexModelId() {
+    const live = this.codexModels;
+    if (!Array.isArray(live) || !live.length) {
+      return CODEX_MODELS[0][0];
+    }
+    const entry = live.find((item) => item.isDefault) || live[0];
+    const effort = entry.defaultEffort || entry.efforts[0] || null;
+    return effort ? `codex:${entry.model}:${effort}` : `codex:${entry.model}`;
   }
 
   modelFamily(model) {
@@ -922,7 +958,7 @@ class DesktopSessionService {
           if (!this.codexProvider.available) {
             throw new Error("Codex is not available. Install the CLI or configure access.");
           }
-          const reply = await this.codexProvider.chatCompletion(messages, CODEX_MODELS[0][0], {
+          const reply = await this.codexProvider.chatCompletion(messages, this.defaultCodexModelId(), {
             signal: controller.signal,
           });
           return {

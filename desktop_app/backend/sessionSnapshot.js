@@ -26,13 +26,40 @@ function providerNameForModel(model) {
   return "Groq";
 }
 
-function models() {
+const EFFORT_LABELS = {
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra",
+};
+
+// Prefer the live list from `codex app-server`; the constant is only a fallback
+// for when the CLI hasn't answered yet.
+function codexModels(service) {
+  const live = service?.codexModels;
+  if (Array.isArray(live) && live.length) {
+    return live.flatMap((entry) =>
+      (entry.efforts.length ? entry.efforts : [null]).map((effort) => ({
+        id: effort ? `codex:${entry.model}:${effort}` : `codex:${entry.model}`,
+        label: effort ? `${entry.displayName} · ${EFFORT_LABELS[effort] || effort}` : entry.displayName,
+        group: "Codex",
+        ...(effort ? { subGroup: entry.model } : {}),
+      })),
+    );
+  }
+  return CODEX_MODELS.map(([id, label]) => {
+    const parts = id.split(":");
+    const subGroup = parts.length >= 3 ? parts[1] : null;
+    return { id, label, group: "Codex", ...(subGroup ? { subGroup } : {}) };
+  });
+}
+
+function models(service) {
   return [
-    ...CODEX_MODELS.map(([id, label]) => {
-      const parts = id.split(":");
-      const subGroup = parts.length >= 3 ? parts[1] : null;
-      return { id, label, group: "Codex", ...(subGroup ? { subGroup } : {}) };
-    }),
+    ...codexModels(service),
     ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
     ...HERMES_MODELS.map(([id, label]) => ({ id, label, group: "Hermes" })),
     ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI (Legacy)" })),
@@ -67,7 +94,7 @@ function buildSnapshot(service, { lite = false } = {}) {
       recentRepoRoots: Array.isArray(service.config.recentRepoRoots) ? service.config.recentRepoRoots : [],
     },
     providers: providersSnapshot(service),
-    models: models(),
+    models: models(service),
     chats: service.chatItems(),
     messages: lite ? [] : service.messages,
     changes: lite ? [] : service.workspaceChanges(service.repoRoot, {

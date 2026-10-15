@@ -37,7 +37,7 @@ export default function ConversationSection({
       {displayMessages.length === 0 ? (
         <div className="conversation-empty">
           <h2>{projectName ? `What should we work on in ${projectName}?` : "What should we work on?"}</h2>
-          <p>Your coding agent works in this folder. Every file change and command is logged in the audit trail.</p>
+          <p>Your coding agent works in this folder. Pick a starting point or describe what you need.</p>
           {onPickStarter && (
             <div className="starter-grid">
               {STARTERS.map(({ icon: Icon, title, prompt }) => (
