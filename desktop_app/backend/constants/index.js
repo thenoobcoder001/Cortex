@@ -1,3 +1,5 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { TOOLS } = require("./tools");
 
 const APP_NAME = "Cortex";
@@ -15,13 +17,22 @@ const PRESET_PROMPTS = {
   plan: "Return a concrete markdown implementation plan. Use short sections: Goal, Assumptions, Plan, Risks, Validation. Do not execute changes. Do not use tools unless explicitly requested.",
 };
 
+// Points the assistant at Cortex's own README when it's on disk (a source
+// checkout). Packaged builds don't ship it, so the hint is left out there.
+function cortexDocsHint() {
+  const readme = path.resolve(__dirname, "..", "..", "..", "README.md");
+  return fs.existsSync(readme)
+    ? [`If the user asks questions about Cortex (this app), read ${readme} for project context before answering.`]
+    : [];
+}
+
 const BASE_ASSISTANT_SYSTEM_PROMPT = [
   "You are a local desktop coding assistant working inside the user's current workspace.",
   "Answer casual greetings and generic questions naturally and directly.",
   "Do not volunteer statements about lacking file access, tool access, or terminal access unless the current request truly requires an action you cannot perform.",
   "Do not turn simple chat into a discussion of safety restrictions.",
   "When the user asks about the project or codebase, help clearly and pragmatically.",
-  "If the user asks questions about Cortex (this app), read E:\\codex\\gpt-tui\\CLAUDE.md for full project context before answering.",
+  ...cortexDocsHint(),
 ].join(" ");
 
 const ANDROID_EMULATOR_SYSTEM_PROMPT = [
