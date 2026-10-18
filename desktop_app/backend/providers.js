@@ -869,7 +869,9 @@ class ClaudeCliProvider {
           if (errDetail) cliErrorMessage = errDetail;
         }
         const content = (event?.type === "result" && fullText) ? "" : this.extractEventText(event);
-        if (content) fullText += content;
+        // Each assistant event is a whole message (text before a tool call,
+        // then text after it), so start a new paragraph between them.
+        if (content) fullText += (fullText && event?.type === "assistant" ? "\n\n" : "") + content;
       }
       const exitCode = await Promise.race([
         new Promise((resolve) => child.once("close", resolve)),
