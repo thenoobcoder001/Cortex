@@ -199,10 +199,15 @@ function CortexRelaySection({ backendUrl }) {
     try {
       const res = await fetch(`${backendUrl}/api/cortex/send-verification`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimEmail, password: trimPass }),
+        body: JSON.stringify({ email: trimEmail, password: trimPass, mode: "login" }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Sign in failed");
+      if (!res.ok) {
+        const detail = data.detail === "invalid credentials"
+          ? "Wrong email or password. No account yet? Use the Register tab."
+          : data.detail;
+        throw new Error(detail || "Sign in failed");
+      }
       if (data.connected) {
         setStatus({ state: "connected", deviceId: data.deviceId, socketId: data.socketId });
         reset();

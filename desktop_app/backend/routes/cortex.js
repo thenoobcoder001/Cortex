@@ -33,13 +33,17 @@ async function handle(ctx) {
   const { method, pathname, body, reply, fail, relay, port } = ctx;
 
   if (method === "POST" && pathname === "/api/cortex/send-verification") {
-    const { email, password } = body;
+    const { email, password, mode } = body;
     if (!email || !password) { fail(new Error("email and password required")); return true; }
     try {
-      const regResult = await cortexPost("/cortex/api/auth/register", { email, password });
-      if (regResult.status === 200) {
-        reply(200, { message: regResult.body?.message || `Verification code sent to ${email}` });
-        return true;
+      // The Sign In tab sends mode "login": never start a registration (and
+      // email a code) for an address that has no account.
+      if (mode !== "login") {
+        const regResult = await cortexPost("/cortex/api/auth/register", { email, password });
+        if (regResult.status === 200) {
+          reply(200, { message: regResult.body?.message || `Verification code sent to ${email}` });
+          return true;
+        }
       }
       const loginResult = await cortexPost("/cortex/api/auth/login", { email, password });
       if (loginResult.status !== 200) {
