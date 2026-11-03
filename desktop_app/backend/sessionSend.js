@@ -316,7 +316,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       });
       return;
     }
-    error = toUserFacingProviderError(error, { model: requestModel });
+    const userError = toUserFacingProviderError(error, { model: requestModel });
     service.interruptedRuns.set(chatId, {
       chat_id: chatId,
       repo_root: requestRepoRoot,
@@ -326,7 +326,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       recovered_at: "",
     });
     service.persistConfig();
-    yield service.event("error", { message: String(error?.message || error), chatId });
+    yield service.event("error", { message: String(userError?.message || userError), chatId });
   }
 }
 
