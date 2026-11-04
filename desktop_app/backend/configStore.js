@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { DEFAULT_MODEL } = require("./constants");
+const { DEFAULT_MODEL, resolveModelId } = require("./constants");
 const platform = require("./platform");
 
 function normalizeRepoRootPath(value) {
@@ -102,7 +102,7 @@ class AppConfigStore {
         const raw = JSON.parse(fs.readFileSync(config.path, "utf8"));
         config.repoRoot = normalizeRepoRootPath(raw.repo_root || raw.repoRoot || "");
         config.activeChatId = String(raw.active_chat_id || raw.activeChatId || "");
-        config.model = String(raw.model || DEFAULT_MODEL) || DEFAULT_MODEL;
+        config.model = resolveModelId(raw.model) || DEFAULT_MODEL;
         config.apiKey = String(raw.api_key || raw.apiKey || "");
         config.geminiApiKey = String(raw.gemini_api_key || raw.geminiApiKey || "");
         config.openaiApiKey = String(raw.openai_api_key || raw.openaiApiKey || "");

@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { resolveModelId } = require("./constants");
 
 function nowIso() {
   return new Date().toISOString().slice(0, 19);
@@ -125,7 +126,7 @@ class ProjectChatStore {
       title: String(item.title || "New chat"),
       updatedAt: String(item.updated_at || ""),
       createdAt: String(item.created_at || ""),
-      model: String(item.model || ""),
+      model: resolveModelId(item.model),
       changeCount: Number(item.change_count || 0),
       toolSafetyMode: String(item.tool_safety_mode || "write"),
     }));
@@ -141,7 +142,10 @@ class ProjectChatStore {
         return null;
       }
       const raw = JSON.parse(fs.readFileSync(fullPath, "utf8"));
-      return raw && typeof raw === "object" ? raw : null;
+      if (!raw || typeof raw !== "object") return null;
+      // Chats saved with a since-retired model open on its replacement.
+      if (raw.model) raw.model = resolveModelId(raw.model);
+      return raw;
     } catch {
       return null;
     }

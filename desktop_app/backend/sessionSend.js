@@ -1,6 +1,6 @@
 const { ProjectChatStore } = require("./chatStore");
 const path = require("node:path");
-const { DEFAULT_MODEL, MAX_TOOL_ROUNDS, TOOLS } = require("./constants");
+const { DEFAULT_MODEL, MAX_TOOL_ROUNDS, TOOLS, resolveModelId } = require("./constants");
 const { normalizeMessages, normalizeChanges, nowIso } = require("./sessionShared");
 const { isInterruptError, toUserFacingProviderError } = require("./providers");
 
@@ -102,7 +102,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     throw new Error("Message is required.");
   }
 
-  const requestModel = String(model || service.model).trim() || DEFAULT_MODEL;
+  const requestModel = resolveModelId(model || service.model) || DEFAULT_MODEL;
   const requestRepoRoot = repoRoot ? path.resolve(repoRoot) : service.repoRoot;
   const requestPromptPreset = String(promptPreset || service.promptPreset).trim() || "code";
   const effectivePromptPreset = service.effectivePromptPreset(message, requestPromptPreset);

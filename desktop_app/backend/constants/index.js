@@ -5,7 +5,7 @@ const { TOOLS } = require("./tools");
 const APP_NAME = "Cortex";
 const VERSION = require("../../package.json").version;
 
-const DEFAULT_MODEL = "gemini-cli:auto-gemini-2.5";
+const DEFAULT_MODEL = "gemini-cli:auto";
 const MAX_TOOL_ROUNDS = 8;
 
 const PRESET_PROMPTS = {
@@ -44,21 +44,22 @@ const ANDROID_EMULATOR_SYSTEM_PROMPT = [
   "Do not relaunch or kill/restart an emulator while boot is still in progress unless the user explicitly asks for that recovery action.",
 ].join(" ");
 
+// Gemini API model ids, checked against https://aistudio.google.com/docs/models
+// (2026-11). The 1.5 and 2.0 families are shut down.
 const GEMINI_MODELS = [
-  ["gemini-2.0-flash", "Gemini 2.0 Flash [fast]"],
-  ["gemini-2.0-flash-lite-preview", "Gemini 2.0 Flash Lite [preview]"],
-  ["gemini-1.5-flash", "Gemini 1.5 Flash [fast]"],
-  ["gemini-1.5-pro", "Gemini 1.5 Pro [smart]"],
-  ["gemini-2.0-flash-thinking-exp", "Gemini 2.0 Thinking [reasoning]"],
+  ["gemini-3.6-flash", "Gemini 3.6 Flash [fast]"],
+  ["gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite [fast]"],
+  ["gemini-3.1-pro-preview", "Gemini 3.1 Pro [smart, preview]"],
+  ["gemini-3-flash-preview", "Gemini 3 Flash [preview]"],
 ];
 
+// Gemini CLI --model values. "auto" is the CLI's own default alias: it picks
+// (and falls back between) the CLI's current Pro and Flash models.
 const GEMINI_CLI_MODELS = [
-  ["gemini-cli:auto-gemini-2.5", "Auto (Gemini 2.5)"],
-  ["gemini-cli:auto-gemini-3", "Auto (Gemini 3)"],
-  ["gemini-cli:gemini-3-flash-preview", "Gemini 3.0 Flash Preview"],
-  ["gemini-cli:manual", "Manual [Gemini CLI]"],
+  ["gemini-cli:auto", "Auto [Gemini CLI]"],
+  ["gemini-cli:gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"],
+  ["gemini-cli:gemini-3-flash-preview", "Gemini 3 Flash Preview"],
 ];
-
 
 const CLAUDE_MODELS = [
   ["claude:sonnet", "Claude Sonnet"],
@@ -70,11 +71,12 @@ const HERMES_MODELS = [
   ["hermes:default", "Hermes Agent"],
 ];
 
+// Groq production models, checked against https://console.groq.com/docs/models
+// (2026-11). Mixtral and DeepSeek R1 distill are shut down; Llama 3.x was
+// retired for free and developer tiers on 2026-08-16.
 const GROQ_MODELS = [
-  ["llama-3.3-70b-versatile", "Llama 3.3 70B"],
-  ["llama-3.1-8b-instant", "Llama 3.1 8B"],
-  ["deepseek-r1-distill-llama-70b", "DeepSeek R1 70B"],
-  ["mixtral-8x7b-32768", "Mixtral 8x7B"],
+  ["openai/gpt-oss-120b", "GPT-OSS 120B"],
+  ["openai/gpt-oss-20b", "GPT-OSS 20B [fast]"],
 ];
 
 const CODEX_MODELS = [
@@ -96,6 +98,43 @@ const CODEX_MODELS = [
   ["codex:gpt-5.3-codex:low",  "gpt-5.3-codex · Low"],
 ];
 
+// Model ids offered by earlier versions, mapped to the closest current one so
+// saved settings and chats keep working after a model is retired.
+const LEGACY_MODEL_IDS = {
+  "gemini-cli:auto-gemini-2.5": "gemini-cli:auto",
+  "gemini-cli:auto-gemini-3": "gemini-cli:auto",
+  "gemini-cli:manual": "gemini-cli:auto",
+  "gemini-2.0-flash": "gemini-3.6-flash",
+  "gemini-2.0-flash-lite": "gemini-3.5-flash-lite",
+  "gemini-2.0-flash-lite-preview": "gemini-3.5-flash-lite",
+  "gemini-2.0-flash-thinking-exp": "gemini-3.1-pro-preview",
+  "gemini-1.5-flash": "gemini-3.6-flash",
+  "gemini-1.5-pro": "gemini-3.1-pro-preview",
+  "gemini-2.5-flash": "gemini-3.6-flash",
+  "gemini-2.5-pro": "gemini-3.1-pro-preview",
+  "gemini-3-pro-preview": "gemini-3.1-pro-preview",
+  "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+  "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+  "deepseek-r1-distill-llama-70b": "openai/gpt-oss-120b",
+  "mixtral-8x7b-32768": "openai/gpt-oss-120b",
+};
+
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+// Returns the current id for `model`, mapping retired ids to their
+// replacement. Unknown ids pass through unchanged; empty input stays empty.
+function resolveModelId(model) {
+  const value = String(model || "").trim();
+  if (!value) return "";
+  if (hasOwn(LEGACY_MODEL_IDS, value)) return LEGACY_MODEL_IDS[value];
+  // Gemini CLI ids carry an API model id after the prefix; map those too.
+  const prefix = "gemini-cli:";
+  if (value.startsWith(prefix) && hasOwn(LEGACY_MODEL_IDS, value.slice(prefix.length))) {
+    return prefix + LEGACY_MODEL_IDS[value.slice(prefix.length)];
+  }
+  return value;
+}
+
 module.exports = {
   APP_NAME,
   VERSION,
@@ -110,5 +149,7 @@ module.exports = {
   HERMES_MODELS,
   GROQ_MODELS,
   CODEX_MODELS,
+  LEGACY_MODEL_IDS,
+  resolveModelId,
   TOOLS,
 };

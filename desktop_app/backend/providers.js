@@ -3,6 +3,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { buildCleanEnv } = require("./androidEnv");
 const platform = require("./platform");
+const { resolveModelId } = require("./constants");
 
 let pty;
 try {
@@ -564,8 +565,8 @@ class GeminiCliProvider {
     if (!String(model || "").startsWith("gemini-cli:")) {
       return model;
     }
-    const raw = String(model).split(":", 2)[1];
-    return raw === "auto" ? "auto-gemini-2.5" : raw;
+    // "auto" is passed through: it is the CLI's own default alias.
+    return resolveModelId(model).slice("gemini-cli:".length);
   }
 
   buildArgs(model) {

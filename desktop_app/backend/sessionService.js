@@ -9,6 +9,7 @@ const {
   GEMINI_MODELS,
   GEMINI_CLI_MODELS,
   CODEX_MODELS,
+  resolveModelId,
 } = require("./constants");
 const { AppConfigStore, normalizeContextCarryMessages, normalizeRecentRepoRoots } = require("./configStore");
 const { ProjectChatStore } = require("./chatStore");
@@ -639,7 +640,7 @@ class DesktopSessionService {
       this.setRepoRoot(repoRoot);
     }
     if (model != null) {
-      this.model = String(model || "").trim() || DEFAULT_MODEL;
+      this.model = resolveModelId(model) || DEFAULT_MODEL;
     }
     if (apiKey != null) {
       this.config.apiKey = String(apiKey || "").trim();
