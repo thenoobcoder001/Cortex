@@ -2,7 +2,7 @@
 /**
  * CortexRelayClient — desktop side of the Cortex relay.
  *
- * Connects to ws://103.180.236.74:8087/cortex/ws/desktop
+ * Connects to wss://cortex.cbproforge.com/cortex/ws/desktop (TLS only)
  * Listens for relay messages from mobile, forwards them to the local
  * backend HTTP server, and relays the responses back.
  *
@@ -22,8 +22,9 @@
 const http   = require("node:http");
 const crypto = require("node:crypto");
 
-const CORTEX_WS_URL          = "wss://cortex.cbproforge.com/cortex/ws/desktop";
-const CORTEX_WS_URL_FALLBACK = "ws://103.180.236.74:8087/cortex/ws/desktop";
+// TLS only. The auth message carries the account JWT, so there is no plain
+// ws:// fallback.
+const CORTEX_WS_URL           = "wss://cortex.cbproforge.com/cortex/ws/desktop";
 const HEARTBEAT_MS            = 5_000;
 const RELAY_AUTH_TIMEOUT_MS   = 10_000;
 const RELAY_HMAC_MAX_SKEW_MS  = 5 * 60 * 1000;
@@ -87,7 +88,7 @@ class CortexRelayClient {
 
   // ── public ──────────────────────────────────────────────────────────────
 
-  connect(useFallback = false) {
+  connect() {
     this._deliberateDisconnect = false;
     return new Promise((resolve, reject) => {
       this._teardown();
@@ -101,8 +102,8 @@ class CortexRelayClient {
         return;
       }
 
-      const url = useFallback ? CORTEX_WS_URL_FALLBACK : CORTEX_WS_URL;
-      console.log(`CortexRelayClient: connecting to ${url}${useFallback ? " (fallback)" : ""}...`);
+      const url = CORTEX_WS_URL;
+      console.log(`CortexRelayClient: connecting to ${url}...`);
 
       const ws = new WS(url);
       this._ws = ws;
@@ -110,7 +111,7 @@ class CortexRelayClient {
 
       const authTimeout = setTimeout(() => {
         this._teardown();
-        this._settle(null, new Error(`Cortex relay auth timed out (${useFallback ? "fallback" : "primary"})`));
+        this._settle(null, new Error("Cortex relay auth timed out"));
       }, RELAY_AUTH_TIMEOUT_MS);
 
       ws.addEventListener("open", () => {
@@ -162,19 +163,14 @@ class CortexRelayClient {
         this._ws = null;
         this._abortActiveStreams();
         // Code 1000 during auth = server explicitly rejected (token invalid/expired).
-        // Do not try fallback — it will also reject. Fail immediately with a clear error.
         if (wasConnecting && ev.code === 1000) {
           const err = new Error("Cortex relay auth rejected (token invalid or expired)");
           err.authFailed = true;
           this._settle(null, err);
           return;
         }
-        if (wasConnecting && !useFallback) {
-          console.warn(`CortexRelayClient: primary connection closed (code=${ev.code}), trying fallback...`);
-          this.connect(true).then(resolve).catch(reject);
-        } else if (wasConnecting) {
-          const suffix = useFallback ? " (fallback failed)" : "";
-          this._settle(null, new Error(`WebSocket closed before auth (code=${ev.code})${suffix}`));
+        if (wasConnecting) {
+          this._settle(null, new Error(`WebSocket closed before auth (code=${ev.code})`));
         } else if (!this._deliberateDisconnect) {
           // Dropped post-auth — auto-reconnect after a short delay.
           console.warn(`CortexRelayClient: connection dropped (code=${ev.code}), reconnecting in ${RECONNECT_DELAY_MS}ms...`);
@@ -188,19 +184,15 @@ class CortexRelayClient {
       ws.addEventListener("error", (err) => {
         console.warn("CortexRelayClient WebSocket error:", err);
         if (this.onAuditLog) {
-          this.onAuditLog({ source: "relay", event: "relay_error", message: String(err?.message || "connection error"), fallback: useFallback });
+          this.onAuditLog({ source: "relay", event: "relay_error", message: String(err?.message || "connection error") });
         }
         clearTimeout(authTimeout);
         const wasConnecting = this._state === "connecting" || this._state === "authenticating";
         this._stopHeartbeat();
         this._setState("disconnected");
         this._abortActiveStreams();
-        if (wasConnecting && !useFallback) {
-          console.warn("CortexRelayClient: primary connection error, trying fallback...");
-          this.connect(true).then(resolve).catch(reject);
-        } else if (wasConnecting) {
-          const suffix = useFallback ? " (fallback failed)" : "";
-          this._settle(null, new Error(`WebSocket connection error${suffix}`));
+        if (wasConnecting) {
+          this._settle(null, new Error("WebSocket connection error"));
         } else if (!this._deliberateDisconnect) {
           console.warn(`CortexRelayClient: connection error post-auth, reconnecting in ${RECONNECT_DELAY_MS}ms...`);
           this._reconnectTimer = setTimeout(() => {
