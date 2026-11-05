@@ -61,7 +61,8 @@ class CortexRelayClient {
     this.onAuditLog       = opts.onAuditLog   || null;
     // Set of device IDs approved to send commands. null = allow all (legacy).
     this.approvedDeviceIds = opts.approvedDeviceIds || null;
-    // HMAC secret for relay message signing (P2-I). null = accept unsigned (backward compat).
+    // HMAC secret for relay message signing (P2-I). Once set, approved devices
+    // must sign their requests (see _allowedUnsigned for the exceptions).
     this.hmacSecret       = opts.hmacSecret   || null;
     // Time-bound relay approval window (P2-L).
     this.sessionExpiresAt = opts.sessionExpiresAt || "";
@@ -365,18 +366,19 @@ class CortexRelayClient {
     this._relayTo(deviceId, payload);
   }
 
-  // P2-I: Verify HMAC signature on relay payload.
-  // Returns false only when an HMAC is present and invalid (tampered).
-  // Absent HMAC is allowed during the mobile→desktop rollout transition.
+  // P2-I: Verify the HMAC signature on a signed relay payload.
+  // Returns false when the signature is malformed, stale or wrong. Whether an
+  // unsigned payload is acceptable is decided in _handleRelay.
   _verifyRelayHmac(payload) {
-    if (!this.hmacSecret || !payload.hmac) return true; // skip if not configured or unsigned
+    if (!this.hmacSecret) return true; // nothing to verify against
     const { hmac, request_id, path: urlPath = "", ts = 0 } = payload;
+    if (typeof hmac !== "string" || !/^[0-9a-f]{64}$/i.test(hmac)) return false;
     // P2-I: Reject replayed relay payloads outside a short skew window.
-    if (Math.abs(Date.now() - ts) > RELAY_HMAC_MAX_SKEW_MS) {
-        if (this.onAuditLog) {
-            this.onAuditLog({ source: "relay", event: "hmac_skew_error", ts_received: ts, ts_now: Date.now() });
-        }
-        return false;
+    if (Math.abs(Date.now() - Number(ts)) > RELAY_HMAC_MAX_SKEW_MS) {
+      if (this.onAuditLog) {
+        this.onAuditLog({ source: "relay", event: "hmac_skew_error", ts_received: ts, ts_now: Date.now() });
+      }
+      return false;
     }
     // Decode the hex secret to binary so both sides use the same key bytes.
     // Mobile's hmacSha256() calls hexToBytes() on the secret; we must match that.
@@ -384,21 +386,19 @@ class CortexRelayClient {
     const expected = crypto
       .createHmac("sha256", keyBuf)
       .update(`${request_id}:${urlPath}:${ts}`)
-      .digest("hex");
-    
-    const isValid = crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(expected, "hex"));
-    if (!isValid && this.onAuditLog) {
-      this.onAuditLog({
-        source: "relay",
-        event: "hmac_mismatch_debug",
-        path: urlPath,
-        received: hmac,
-        expected: expected,
-        secret_used: this.hmacSecret ? (this.hmacSecret.slice(0, 4) + "...") : "null",
-        ts: ts
-      });
-    }
-    return isValid;
+      .digest();
+    // Never log the secret, the expected signature or the received one.
+    return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), expected);
+  }
+
+  // Messages the mobile app sends unsigned on purpose, even after pairing:
+  // its GET /health reachability probe (also the first message a new phone
+  // sends, which starts pairing) and stream aborts, which carry no path.
+  _allowedUnsigned(payload) {
+    if (payload.type === "api_abort") return true;
+    return payload.type === "api_request"
+      && String(payload.method || "GET").toUpperCase() === "GET"
+      && payload.path === "/health";
   }
 
   // P2-J: Return a sanitized error body safe to send to an untrusted remote caller.
@@ -432,7 +432,8 @@ class CortexRelayClient {
     // P2-I: HMAC signature verification — verify before pairing check so a valid
     // HMAC can serve as proof-of-prior-approval when the relay server assigns a
     // new device ID on reconnect (relay servers do not reliably preserve device IDs).
-    if (!this._verifyRelayHmac(payload)) {
+    const isSigned = payload.hmac != null && payload.hmac !== "";
+    if (isSigned && !this._verifyRelayHmac(payload)) {
       if (this.onAuditLog) this.onAuditLog({ source: "relay", device_id: fromDeviceId, event: "hmac_rejected", path: payload.path || "" });
       return;
     }
@@ -441,12 +442,23 @@ class CortexRelayClient {
     const isApproved = this.approvedDeviceIds === null
       || (Array.isArray(this.approvedDeviceIds) && this.approvedDeviceIds.includes(fromDeviceId));
 
+    // Once a secret exists, approved devices must sign everything except the
+    // few messages the app deliberately leaves unsigned. Unapproved devices
+    // fall through to the pairing flow below, which never runs the request.
+    if (isApproved && this.hmacSecret && !isSigned && !this._allowedUnsigned(payload)) {
+      if (this.onAuditLog) this.onAuditLog({ source: "relay", device_id: fromDeviceId, event: "hmac_missing", path: payload.path || "" });
+      if (type === "api_request") {
+        this._relayTo(fromDeviceId, { type: "api_response", request_id, status: 401, body: { detail: "signature_required" } });
+      }
+      return;
+    }
+
     if (!isApproved) {
       // If the payload carried a valid HMAC (verified above) and we have a secret,
       // this device was approved in a previous session but got a new device ID from
       // the relay server. Auto-approve it in memory so the session continues without
       // requiring the user to re-pair every time the mobile reconnects.
-      const isHmacAuthenticated = Boolean(this.hmacSecret && payload.hmac);
+      const isHmacAuthenticated = Boolean(this.hmacSecret && isSigned);
       if (isHmacAuthenticated) {
         if (Array.isArray(this.approvedDeviceIds)) {
           this.approvedDeviceIds.push(fromDeviceId);

@@ -205,33 +205,106 @@ test("P2-I: relay accepts payload with correct HMAC", async () => {
   await new Promise((r) => localServer.close(r));
 });
 
-test("P2-I: relay accepts payload with no HMAC (backward compat)", async () => {
+// Builds a relay client with a secret whose local calls and outbound relay
+// messages are captured instead of hitting the network.
+function capturingClient({ approvedDeviceIds = ["mobile-1"], ...opts } = {}) {
   const secret = crypto.randomBytes(32).toString("hex");
-  let processed = false;
-
-  const localServer = http.createServer((req, res) => {
-    processed = true;
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
-  });
-  await new Promise((r) => localServer.listen(0, "127.0.0.1", r));
-  const localPort = localServer.address().port;
-
+  const calls = [];
+  const sent = [];
+  const audit = [];
+  const pairing = [];
   const client = new CortexRelayClient({
-    token:            "test",
-    hmacSecret:       secret, // secret configured but mobile hasn't upgraded yet
-    localBackendPort: localPort,
+    token: "test",
+    hmacSecret: secret,
+    approvedDeviceIds,
+    onAuditLog: (e) => audit.push(e),
+    onPairingRequest: (id) => pairing.push(id),
+    ...opts,
   });
-  client.approvedDeviceIds = null;
-  client._relayTo = () => {};
+  client._callLocal = async (method, urlPath) => {
+    calls.push(`${method} ${urlPath}`);
+    return { status: 200, body: { ok: true } };
+  };
+  client._relayTo = (id, payload) => sent.push({ id, payload });
+  const sign = (request_id, urlPath, ts = Date.now()) =>
+    crypto.createHmac("sha256", Buffer.from(secret, "hex")).update(`${request_id}:${urlPath}:${ts}`).digest("hex");
+  return { client, secret, calls, sent, audit, pairing, sign };
+}
 
-  // No hmac field in payload — should still pass (transition period)
-  const payload = { type: "api_request", request_id: "req-unsigned", method: "GET", path: "/api/status" };
-  await client._handleRelay("mobile-1", payload);
+test("P2-I: relay rejects unsigned requests from a paired device once a secret exists", async () => {
+  const { client, calls, sent, audit } = capturingClient();
 
-  await new Promise((r) => setTimeout(r, 500));
-  assert.ok(processed, "Expected unsigned request to pass when hmacSecret is set (backward compat)");
-  await new Promise((r) => localServer.close(r));
+  await client._handleRelay("mobile-1", { type: "api_request", request_id: "req-unsigned", method: "GET", path: "/api/status" });
+  await client._handleRelay("mobile-1", { type: "api_request", request_id: "req-empty", method: "POST", path: "/api/chat", hmac: "" });
+
+  assert.deepEqual(calls, [], "unsigned requests must not reach the local backend");
+  assert.deepEqual(sent.map((m) => [m.payload.request_id, m.payload.status, m.payload.body.detail]), [
+    ["req-unsigned", 401, "signature_required"],
+    ["req-empty", 401, "signature_required"],
+  ]);
+  assert.ok(audit.some((e) => e.event === "hmac_missing"));
+});
+
+test("P2-I: unsigned null-approval (legacy allow-all) requests are also rejected", async () => {
+  const { client, calls } = capturingClient({ approvedDeviceIds: null });
+  await client._handleRelay("anyone", { type: "api_request", request_id: "r", method: "GET", path: "/api/status" });
+  assert.deepEqual(calls, []);
+});
+
+test("P2-I: the mobile app's unsigned /health probe and stream aborts still work", async () => {
+  const { client, calls, sent } = capturingClient();
+
+  await client._handleRelay("mobile-1", { type: "api_request", request_id: "probe", method: "GET", path: "/health", ts: Date.now() });
+  await client._handleRelay("mobile-1", { type: "api_abort", request_id: "stream-1" });
+
+  assert.deepEqual(calls, ["GET /health"]);
+  assert.equal(sent[0].payload.status, 200);
+  assert.ok(client._pendingAborts.has("stream-1"));
+});
+
+test("P2-I: a new phone's unsigned first request still starts pairing", async () => {
+  const { client, calls, sent, pairing } = capturingClient({ approvedDeviceIds: [] });
+
+  await client._handleRelay("new-phone", { type: "api_request", request_id: "probe", method: "GET", path: "/health" });
+  await client._handleRelay("new-phone", { type: "api_request", request_id: "status", method: "GET", path: "/api/status", query: "lite=true" });
+
+  assert.deepEqual(calls, [], "unapproved devices never reach the backend");
+  assert.deepEqual(pairing, ["new-phone", "new-phone"]);
+  assert.ok(sent.every((m) => m.payload.status === 403 && m.payload.body.detail === "pairing_pending"));
+});
+
+test("P2-I: a signed request from a re-registered device is auto-approved", async () => {
+  const autoApproved = [];
+  const { client, calls, sign } = capturingClient({ approvedDeviceIds: [], onAutoApprove: (id) => autoApproved.push(id) });
+  const ts = Date.now();
+  await client._handleRelay("phone-new-id", {
+    type: "api_request", request_id: "r1", method: "GET", path: "/api/status", ts, hmac: sign("r1", "/api/status", ts),
+  });
+  assert.deepEqual(calls, ["GET /api/status"]);
+  assert.deepEqual(autoApproved, ["phone-new-id"]);
+});
+
+test("P2-I: malformed HMAC is rejected without throwing", async () => {
+  const { client, calls, audit } = capturingClient();
+  for (const hmac of ["zz", "abc", 42, "a".repeat(63)]) {
+    await client._handleRelay("mobile-1", { type: "api_request", request_id: "r", method: "GET", path: "/api/status", ts: Date.now(), hmac });
+  }
+  assert.deepEqual(calls, []);
+  assert.equal(audit.filter((e) => e.event === "hmac_rejected").length, 4);
+});
+
+test("P2-I: HMAC failures never log the secret or signatures", async () => {
+  const { client, secret, audit, sign } = capturingClient();
+  const ts = Date.now();
+  const good = sign("r", "/api/status", ts);
+  await client._handleRelay("mobile-1", { type: "api_request", request_id: "r", method: "GET", path: "/api/other", ts, hmac: good });
+  assert.ok(audit.length > 0);
+  const logged = JSON.stringify(audit);
+  assert.ok(!logged.includes(secret.slice(0, 4) + "..."), "secret prefix must not be logged");
+  assert.ok(!logged.includes(secret.slice(0, 8)), "secret must not be logged");
+  assert.ok(!logged.includes(good), "signatures must not be logged");
+  const expectedForPath = sign("r", "/api/other", ts);
+  assert.ok(!logged.includes(expectedForPath), "expected signature must not be logged");
 });
 
 test("P2-I: relay drops stale HMAC (replay attack)", async () => {
