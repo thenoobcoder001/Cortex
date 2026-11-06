@@ -7,7 +7,6 @@ const {
   ANDROID_EMULATOR_SYSTEM_PROMPT,
   GROQ_MODELS,
   GEMINI_MODELS,
-  GEMINI_CLI_MODELS,
   CODEX_MODELS,
   resolveModelId,
 } = require("./constants");

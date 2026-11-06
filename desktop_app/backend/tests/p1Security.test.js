@@ -7,7 +7,6 @@ const path   = require("node:path");
 const http   = require("node:http");
 
 const { startBackendServer } = require("../server");
-const { AppConfigStore }     = require("../configStore");
 const { buildCleanEnv }      = require("../androidEnv");
 const { CortexRelayClient }  = require("../cortexRelay");
 
@@ -78,7 +77,7 @@ class MemoryConfig {
 
 // ── P1-E: Remote callers cannot set sensitive config fields ───────────────
 
-test("P1-E: loopback caller can set apiKey via POST /api/config", async (t) => {
+test("P1-E: loopback caller can set apiKey via POST /api/config", async () => {
   const { server, service, close } = await startBackendServer({ host: "127.0.0.1", port: 0 });
   const port = server.address().port;
   // Prime the service with a known key
@@ -93,7 +92,7 @@ test("P1-E: loopback caller can set apiKey via POST /api/config", async (t) => {
   }
 });
 
-test("P1-E: loopback caller cannot set toolSafetyMode (always stripped)", async (t) => {
+test("P1-E: loopback caller cannot set toolSafetyMode (always stripped)", async () => {
   const { server, service, close } = await startBackendServer({ host: "127.0.0.1", port: 0 });
   const port = server.address().port;
   // Keep toolReadOnly in sync with toolSafetyMode so that persistConfig()
@@ -114,7 +113,7 @@ test("P1-E: loopback caller cannot set toolSafetyMode (always stripped)", async 
 
 // ── P1-G: Rate limiting ───────────────────────────────────────────────────
 
-test("P1-G: loopback requests without relay identity are never rate-limited", async (t) => {
+test("P1-G: loopback requests without relay identity are never rate-limited", async () => {
   const { server, close } = await startBackendServer({ host: "127.0.0.1", port: 0 });
   const port = server.address().port;
 
@@ -132,7 +131,7 @@ test("P1-G: loopback requests without relay identity are never rate-limited", as
   }
 });
 
-test("P1-G: relay device requests are rate-limited on loopback with Retry-After and isolated per device", async (t) => {
+test("P1-G: relay device requests are rate-limited on loopback with Retry-After and isolated per device", async () => {
   const { server, close } = await startBackendServer({ host: "127.0.0.1", port: 0 });
   const port = server.address().port;
   const relayDeviceA = `relay-a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -163,7 +162,7 @@ test("P1-G: relay device requests are rate-limited on loopback with Retry-After 
 
 // ── P1-H: Audit log ───────────────────────────────────────────────────────
 
-test("P1-H: writeAuditLog creates the log file and appends JSON lines", (t) => {
+test("P1-H: writeAuditLog creates the log file and appends JSON lines", () => {
   // Access the internal function via a minimal inline reproduction
   const logDir  = tmpDir();
   const logPath = path.join(logDir, "relay-audit.log");
@@ -196,7 +195,7 @@ test("P1-H: writeAuditLog creates the log file and appends JSON lines", (t) => {
   assert.ok(!("message" in entry1), "message must not be logged");
 });
 
-test("P1-H: audit log rotates when file exceeds 10 MB", (t) => {
+test("P1-H: audit log rotates when file exceeds 10 MB", () => {
   const logDir  = tmpDir();
   const logPath = path.join(logDir, "relay-audit.log");
   const MAX     = 10 * 1024 * 1024;
@@ -223,7 +222,7 @@ test("P1-H: audit log rotates when file exceeds 10 MB", (t) => {
 
 // ── P1-P: Clean environment for CLI processes ─────────────────────────────
 
-test("P1-P: buildCleanEnv strips sensitive keys", (t) => {
+test("P1-P: buildCleanEnv strips sensitive keys", () => {
   // Temporarily inject dangerous keys into process.env
   const injected = {
     GITHUB_TOKEN:          "ghp_secret",
@@ -257,7 +256,7 @@ test("P1-P: buildCleanEnv strips sensitive keys", (t) => {
   }
 });
 
-test("P1-P: buildCleanEnv keeps all required AI API keys", (t) => {
+test("P1-P: buildCleanEnv keeps all required AI API keys", () => {
   const saved = {};
   const keys = { ANTHROPIC_API_KEY: "ant", OPENAI_API_KEY: "oai", GEMINI_API_KEY: "gem", GOOGLE_API_KEY: "goo" };
   for (const [k, v] of Object.entries(keys)) { saved[k] = process.env[k]; process.env[k] = v; }
@@ -278,7 +277,7 @@ test("P1-P: buildCleanEnv keeps all required AI API keys", (t) => {
 
 // ── P1-Q: Confinement system prompt ──────────────────────────────────────
 
-test("P1-Q: messagesWithContext includes repoRoot confinement prefix", (t) => {
+test("P1-Q: messagesWithContext includes repoRoot confinement prefix", () => {
   const repoRoot = "C:\\projects\\myapp";
   const { DesktopSessionService } = require("../sessionService");
   const config = new MemoryConfig();
@@ -306,7 +305,7 @@ test("P1-Q: messagesWithContext includes repoRoot confinement prefix", (t) => {
   assert.ok(system.content.includes("Stay within this directory"), "must include the restriction text");
 });
 
-test("P1-Q: messagesWithContext omits confinement prefix when repoRoot is empty", (t) => {
+test("P1-Q: messagesWithContext omits confinement prefix when repoRoot is empty", () => {
   const { DesktopSessionService } = require("../sessionService");
   const config = new MemoryConfig();
   config.recentRepoRoots = [];
@@ -332,7 +331,7 @@ test("P1-Q: messagesWithContext omits confinement prefix when repoRoot is empty"
 
 // ── P1-R: .claudeignore baseline ─────────────────────────────────────────
 
-test("P1-R: _ensureClaudeSettings writes .claudeignore when absent", (t) => {
+test("P1-R: _ensureClaudeSettings writes .claudeignore when absent", () => {
   const repoRoot = tmpDir();
   const { DesktopSessionService } = require("../sessionService");
   const config = new MemoryConfig();
@@ -364,7 +363,7 @@ test("P1-R: _ensureClaudeSettings writes .claudeignore when absent", (t) => {
   assert.ok(content.includes(".aws/"),      ".aws/ must be ignored");
 });
 
-test("P1-R: _ensureClaudeSettings does not overwrite existing .claudeignore", (t) => {
+test("P1-R: _ensureClaudeSettings does not overwrite existing .claudeignore", () => {
   const repoRoot = tmpDir();
   const ignorePath = path.join(repoRoot, ".claudeignore");
   const custom = "# my custom rules\n*.custom\n";
@@ -394,9 +393,8 @@ test("P1-R: _ensureClaudeSettings does not overwrite existing .claudeignore", (t
 
 // ── P1-F: Pairing guard in CortexRelayClient ─────────────────────────────
 
-test("P1-F: relay drops requests from unapproved devices and fires onPairingRequest", async (t) => {
+test("P1-F: relay drops requests from unapproved devices and fires onPairingRequest", async () => {
   const pairingRequests = [];
-  const handledRequests = [];
 
   const client = new CortexRelayClient({
     token: "fake-token",
@@ -412,7 +410,7 @@ test("P1-F: relay drops requests from unapproved devices and fires onPairingRequ
   assert.deepEqual(pairingRequests, ["unapproved-device"], "unapproved device should fire onPairingRequest");
 });
 
-test("P1-F: approveDevice adds device to approved list and subsequent requests pass", async (t) => {
+test("P1-F: approveDevice adds device to approved list and subsequent requests pass", async () => {
   const pairingRequests = [];
 
   const client = new CortexRelayClient({
@@ -441,7 +439,7 @@ test("P1-F: approveDevice adds device to approved list and subsequent requests p
   );
 });
 
-test("P1-F: null approvedDeviceIds allows all devices (backward compat)", async (t) => {
+test("P1-F: null approvedDeviceIds allows all devices (backward compat)", async () => {
   const pairingRequests = [];
   const auditEntries   = [];
 

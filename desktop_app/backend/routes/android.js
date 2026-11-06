@@ -1,11 +1,10 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
-const platform = require("../platform");
 const { resolveAndroidEnv } = require("../androidEnv");
 
 async function handle(ctx) {
-  const { method, pathname, url, body, reply, isLocal } = ctx;
+  const { method, pathname, body, reply, isLocal } = ctx;
 
   if (!pathname.startsWith("/api/android")) return false;
 

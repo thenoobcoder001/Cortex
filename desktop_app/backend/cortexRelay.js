@@ -552,8 +552,8 @@ class CortexRelayClient {
 
     const req = http.request(options, (res) => {
       if (res.statusCode !== 200) {
-        let errBody = "";
-        res.on("data", (c) => { errBody += c; });
+        // Drain and discard the body; it is never forwarded (see below).
+        res.resume();
         res.on("end", () => {
           clearStreamTimeout();
           this._activeStreams.delete(req);

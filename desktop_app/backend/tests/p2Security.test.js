@@ -67,16 +67,6 @@ class MemoryService {
 // ── P2-K: /api/file path traversal ────────────────────────────────────────
 
 test("P2-K: /api/file returns 403 when no project is selected", async () => {
-  const service = new MemoryService(""); // no repoRoot
-  const { close } = await startBackendServer({ port: 0, host: "127.0.0.1", service });
-  const port = close._port || (await new Promise((res) => {
-    // port is embedded in returned server — extract via close wrapper trick
-    res(close.__port);
-  }));
-  // We need the actual port — re-open to get it
-  await close();
-
-  // Use a fresh server and capture port correctly
   const instance = await startBackendServer({ port: 0, host: "127.0.0.1", service: new MemoryService("") });
   const actualPort = instance.server.address().port;
   try {

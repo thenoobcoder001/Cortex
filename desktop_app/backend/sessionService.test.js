@@ -654,7 +654,7 @@ test("plan mode saves a markdown plan file and exposes it on the active snapshot
   let finalSnapshot = null;
   for await (const event of service.sendMessageEvents("Plan the implementation", {
     repoRoot,
-    model: "llama-3.3-70b-versatile",
+    model: "openai/gpt-oss-120b",
     promptPreset: "plan",
   })) {
     if (event.type === "completed") {
@@ -684,10 +684,10 @@ test("a CLI agent's file edit is written to the hash-chained audit trail", async
     return originalChatCompletionStreamRaw(...args);
   };
 
-  for await (const _event of service.sendMessageEvents("edit the seed file", {
+  await Array.fromAsync(service.sendMessageEvents("edit the seed file", {
     model: "claude:sonnet",
     repoRoot,
-  })) { /* drain */ }
+  }));
 
   const { entries, chain } = service.listAuditEntries(repoRoot);
   assert.equal(chain.ok, true);
@@ -713,10 +713,10 @@ test("a blocked terminal command run by an API-tool-loop agent is audited", asyn
     return original(...args);
   };
 
-  for await (const _event of service.sendMessageEvents("run a command", {
-    model: "llama-3.3-70b-versatile",
+  await Array.fromAsync(service.sendMessageEvents("run a command", {
+    model: "openai/gpt-oss-120b",
     repoRoot,
-  })) { /* drain */ }
+  }));
 
   const { entries } = service.listAuditEntries(repoRoot);
   const commandEntry = entries.find((e) => e.action === "run_command");

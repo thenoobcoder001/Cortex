@@ -5,13 +5,6 @@ const { buildCleanEnv } = require("./androidEnv");
 const platform = require("./platform");
 const { resolveModelId } = require("./constants");
 
-let pty;
-try {
-  pty = require("node-pty");
-} catch {
-  pty = null;
-}
-
 // Strip ANSI escape sequences from PTY output
 function stripAnsi(str) {
   // eslint-disable-next-line no-control-regex
