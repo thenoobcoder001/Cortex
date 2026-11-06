@@ -400,6 +400,35 @@ test("revert workspace changes restores accepted baseline", async () => {
   assert.ok(!fs.existsSync(path.join(repoRoot, "new-file.txt")));
 });
 
+test("/api/status leaves out the workspace diff unless ?include=changes", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  const backend = await startBackendServer({ host: "127.0.0.1", port: 0, service });
+
+  try {
+    // First poll without the diff must still record the baseline, so edits
+    // made afterwards show up when a client does ask for the diff.
+    const first = await (await fetch(`${backend.url}/api/status`)).json();
+    assert.deepEqual(first.changes, []);
+    fs.writeFileSync(path.join(repoRoot, "seed.txt"), "seed changed\n", "utf8");
+    service.invalidateSnapshotCaches(repoRoot);
+
+    const plain = await (await fetch(`${backend.url}/api/status`)).json();
+    assert.deepEqual(plain.changes, []);
+    assert.deepEqual(plain.activeChatChanges, []);
+    assert.ok(plain.config && plain.models, "rest of the snapshot is unchanged");
+
+    const withChanges = await (await fetch(`${backend.url}/api/status?include=changes`)).json();
+    assert.equal(withChanges.changes.length, 1);
+    assert.equal(withChanges.changes[0].action, "edit");
+
+    const lite = await (await fetch(`${backend.url}/api/status?lite=true&include=changes`)).json();
+    assert.deepEqual(lite.changes, [], "lite still wins");
+  } finally {
+    await backend.close();
+  }
+});
+
 test("clear local data removes project metadata and resets service state", async () => {
   const repoRoot = makeTempRepo();
   const service = createService(repoRoot);

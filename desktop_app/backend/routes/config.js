@@ -4,9 +4,13 @@ async function handle(ctx) {
   const { method, pathname, body, reply, service, isLocal } = ctx;
 
   if (method === "GET" && pathname === "/api/status") {
-    const isLite = ctx.url?.searchParams?.get("lite") === "true";
+    const params = ctx.url?.searchParams;
+    const isLite = params?.get("lite") === "true";
     // lite=true skips expensive workspaceChanges/files/messages computation entirely.
-    reply(200, service.snapshot({ lite: isLite }));
+    // The workspace diff (`changes`, `activeChatChanges`) is opt-in with
+    // ?include=changes: no current client reads it from this poll.
+    const include = String(params?.get("include") || "").split(",").map((s) => s.trim());
+    reply(200, service.snapshot({ lite: isLite, includeChanges: include.includes("changes") }));
     return true;
   }
 

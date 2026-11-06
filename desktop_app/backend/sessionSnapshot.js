@@ -75,7 +75,9 @@ function providersSnapshot(service) {
   };
 }
 
-function buildSnapshot(service, { lite = false } = {}) {
+// `includeChanges: false` returns empty `changes`/`activeChatChanges`; the
+// workspace diff can be hundreds of KB and most pollers never show it.
+function buildSnapshot(service, { lite = false, includeChanges = true } = {}) {
   return {
     app: { name: APP_NAME, version: VERSION },
     config: {
@@ -99,8 +101,9 @@ function buildSnapshot(service, { lite = false } = {}) {
     messages: lite ? [] : service.messages,
     changes: lite ? [] : service.workspaceChanges(service.repoRoot, {
       initialize: !service.suppressWorkspaceBaselineInit,
+      diff: includeChanges,
     }),
-    activeChatChanges: lite ? [] : service.changes,
+    activeChatChanges: lite || !includeChanges ? [] : service.changes,
     activePlan: service.activePlan,
     files: lite ? [] : (typeof service.listFilesCached === "function"
       ? service.listFilesCached(service.repoRoot, 200)

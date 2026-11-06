@@ -372,8 +372,8 @@ class DesktopSessionService {
     }));
   }
 
-  snapshot({ lite = false } = {}) {
-    return buildSnapshot(this, { lite });
+  snapshot({ lite = false, includeChanges = true } = {}) {
+    return buildSnapshot(this, { lite, includeChanges });
   }
 
   activeChatPayload() {
@@ -793,7 +793,10 @@ class DesktopSessionService {
     return store.record(entry);
   }
 
-  workspaceChanges(repoRoot = this.repoRoot, { initialize = true } = {}) {
+  // `diff: false` only makes sure the accepted baseline exists (so a later
+  // diff still covers everything since the project was opened) and skips the
+  // expensive repo scan and diff.
+  workspaceChanges(repoRoot = this.repoRoot, { initialize = true, diff = true } = {}) {
     const targetRoot = path.resolve(repoRoot);
     const store = targetRoot === this.repoRoot
       ? this.chatStore
@@ -805,6 +808,9 @@ class DesktopSessionService {
       }
       acceptedState = this.captureRepoState(targetRoot);
       store.saveAcceptedRepoState(acceptedState);
+      return [];
+    }
+    if (!diff) {
       return [];
     }
     return normalizeChanges(new RepoFileService(targetRoot).diffRepoState(
