@@ -18,10 +18,27 @@ async function getTailscaleUrl(port) {
   return tailscaleUrl(await getTailscaleInfo(), port);
 }
 
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+
+// Same rule as electron/main.js: listen on loopback only unless remote access
+// is switched on. CORTEX_REMOTE_ACCESS (1/true or 0/false) overrides the saved
+// remoteAccessEnabled setting for this run.
+function resolveBindHost({ env = process.env, config = {} } = {}) {
+  const flag = String(env.CORTEX_REMOTE_ACCESS || "").trim().toLowerCase();
+  let remote = Boolean(config.remoteAccessEnabled);
+  if (TRUE_VALUES.has(flag)) remote = true;
+  else if (FALSE_VALUES.has(flag)) remote = false;
+  return remote ? "0.0.0.0" : "127.0.0.1";
+}
+
 async function main() {
   const port = 8765;
-  const host = "0.0.0.0";
+  const host = resolveBindHost({ config: AppConfigStore.load() });
   console.log(`Starting standalone backend on http://${host}:${port}...`);
+  if (host === "127.0.0.1") {
+    console.log("Remote access is off; set CORTEX_REMOTE_ACCESS=1 to listen on all interfaces.");
+  }
 
   let handle;
   try {
@@ -57,4 +74,8 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { resolveBindHost };
