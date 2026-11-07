@@ -1,5 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// Maps renderer callbacks to the IPC listeners wrapping them, so
+// offUpdateStatus can remove the exact listener onUpdateStatus added.
+const updateStatusListeners = new Map();
+
 contextBridge.exposeInMainWorld("desktopApi", {
   getConfig: () => ipcRenderer.invoke("desktop:get-config"),
   setRemoteAccess: (enabled) => ipcRenderer.invoke("desktop:set-remote-access", { enabled }),
@@ -18,6 +22,16 @@ contextBridge.exposeInMainWorld("desktopApi", {
   updaterDownload:    () => ipcRenderer.invoke("updater:download"),
   updaterInstall:     () => ipcRenderer.invoke("updater:install"),
   updaterSetFeedUrl:  (url) => ipcRenderer.invoke("updater:set-feed-url", url),
-  onUpdateStatus:     (cb) => ipcRenderer.on("update:status", (_e, data) => cb(data)),
-  offUpdateStatus:    (cb) => ipcRenderer.off("update:status", (_e, data) => cb(data)),
+  onUpdateStatus:     (cb) => {
+    if (updateStatusListeners.has(cb)) return;
+    const listener = (_e, data) => cb(data);
+    updateStatusListeners.set(cb, listener);
+    ipcRenderer.on("update:status", listener);
+  },
+  offUpdateStatus:    (cb) => {
+    const listener = updateStatusListeners.get(cb);
+    if (!listener) return;
+    updateStatusListeners.delete(cb);
+    ipcRenderer.off("update:status", listener);
+  },
 });

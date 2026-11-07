@@ -1,6 +1,6 @@
 "use strict";
 
-// Runs as an Electron utilityProcess so the Node HTTP backend has its own
+// Runs as a child_process.fork() of the main process so the Node HTTP backend has its own
 // event loop, completely separate from the Electron main-process message pump.
 // This prevents the "Not Responding" label that appeared when sync I/O or
 // active streaming starved the Win32 message pump in the main process.

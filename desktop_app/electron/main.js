@@ -26,8 +26,9 @@ autoUpdater.on("download-progress",      (p) => _setUpdateStatus("downloading", 
 autoUpdater.on("update-downloaded",      (info) => _setUpdateStatus("ready", info.version));
 autoUpdater.on("error",                  (err) => _setUpdateStatus("error", null, String(err.message || err)));
 
-// ── Backend worker (utilityProcess) ──────────────────────────────────────────
-// The HTTP backend runs in its own process so its event loop never competes
+// ── Backend worker (child_process.fork) ──────────────────────────────────────
+// The HTTP backend runs in its own Node process (Electron runs the fork with
+// ELECTRON_RUN_AS_NODE) so its event loop never competes
 // with Electron's main-process Win32 message pump ("Not Responding").
 let _worker = null;
 let _msgId = 0;
@@ -357,13 +358,18 @@ if (ipcMain) {
     }
   });
 
+  // Since Electron 43 dialogs open in Downloads unless defaultPath is set and
+  // the OS no longer remembers the last folder, so track it ourselves.
+  let lastPickedRepoParent = null;
   ipcMain.handle("desktop:pick-repo", async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory"],
+      defaultPath: lastPickedRepoParent || os.homedir(),
     });
     if (result.canceled || result.filePaths.length === 0) {
       return null;
     }
+    lastPickedRepoParent = path.dirname(result.filePaths[0]);
     return result.filePaths[0];
   });
 
@@ -479,9 +485,6 @@ if (app) {
   });
   app.on("child-process-gone", (_event, details) => {
     logDesktopLaunch("app.child-process-gone", details || {});
-  });
-  app.on("gpu-process-crashed", (_event, killed) => {
-    logDesktopLaunch("app.gpu-process-crashed", { killed: Boolean(killed) });
   });
 
   app.whenReady().then(async () => {
