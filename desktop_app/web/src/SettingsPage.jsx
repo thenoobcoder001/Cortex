@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import qrcode from "qrcode-generator";
 import { ArrowLeft, Bot, Brain, Folder, Link2, RefreshCw, SlidersHorizontal, TriangleAlert } from "lucide-react";
 

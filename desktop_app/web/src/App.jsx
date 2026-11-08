@@ -24,7 +24,6 @@ import { DEFAULT_UI_PREFS, EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT
 import {
   cleanResponse,
   groupedModels,
-  subGroupedModels,
   loadSavedProjects,
   loadShowResourceDashboard,
   loadThemeMode,
@@ -50,7 +49,6 @@ import EditorIcon from "./components/EditorIcon.jsx";
 import ProjectContextMenu from "./components/ProjectContextMenu.jsx";
 import ResourceDashboard from "./components/ResourceDashboard.jsx";
 import TerminalPanelSection from "./components/TerminalPanelSection.jsx";
-import ModelPicker from "./components/ModelPicker.jsx";
 import UpdateBanner from "./components/UpdateBanner.jsx";
 
 const DISMISSED_UPDATE_KEY = "cortex.dismissed-update";
@@ -72,10 +70,8 @@ export default function App() {
   const [expandedRepos, setExpandedRepos] = useState(() => new Set());
   const [error, setError] = useState("");
   const [repoDraft, setRepoDraft] = useState("");
-  const [liveStatus, setLiveStatus] = useState("Idle");
   const [pendingTurns, setPendingTurns] = useState({});
   const [sendingChatIds, setSendingChatIds] = useState([]);
-  const [messageQueue, setMessageQueue] = useState({});
   const [currentScreen, setCurrentScreen] = useState("chat");
   const [savedProjects, setSavedProjects] = useState(() => loadSavedProjects());
   const [projectMenuPath, setProjectMenuPath] = useState("");
@@ -308,10 +304,6 @@ export default function App() {
     () => parentModelLabel(snapshot?.config?.model || "", modelGroups),
     [modelGroups, snapshot?.config?.model],
   );
-  const activeChat = useMemo(
-    () => snapshot?.chats?.find((chat) => chat.chatId === snapshot?.config?.activeChatId) || null,
-    [snapshot],
-  );
   const interruptedRunByChat = useMemo(
     () =>
       new Map(
@@ -473,7 +465,7 @@ export default function App() {
     return chats;
   };
 
-  const refreshStatus = async (urlOverride, { preserveLiveStatus = false } = {}) => {
+  const refreshStatus = async (urlOverride) => {
     const targetUrl = urlOverride || backendUrl;
     if (!targetUrl) return;
     const response = await fetch(`${targetUrl}/api/status`);
@@ -483,9 +475,6 @@ export default function App() {
     const nextSnapshot = await response.json();
     setSnapshot(nextSnapshot);
     setRepoDraft(nextSnapshot.config.repoRoot);
-    if (!preserveLiveStatus) {
-      setLiveStatus("Idle");
-    }
     syncSavedProjects(nextSnapshot.config.repoRoot);
   };
 
@@ -544,7 +533,7 @@ export default function App() {
     const tick = async () => {
       try {
         if (alive) {
-          await refreshStatus(undefined, { preserveLiveStatus: true });
+          await refreshStatus();
         }
       } catch {
         // Resource polling should not interrupt the active chat stream.
@@ -666,7 +655,6 @@ export default function App() {
       return;
     }
     setError("");
-    setLiveStatus("Stopping request...");
     // Optimistically clear all loading indicators immediately
     setPendingTurns((current) => {
       if (!current[activeChatId]) return current;
@@ -681,7 +669,6 @@ export default function App() {
       await postJson("/api/chats/interrupt", { chatId: activeChatId });
     } catch (nextError) {
       setError(String(nextError));
-      setLiveStatus("Interrupt failed");
     }
   };
 
@@ -711,7 +698,6 @@ export default function App() {
       setSettingsPromptPreset("code");
       setRemoteAccessEnabledDraft(false);
       setRemoteAccessUrls([]);
-      setLiveStatus("Idle");
     } catch (nextError) {
       setError(String(nextError));
       setShowClearCacheConfirm(false);
@@ -780,11 +766,9 @@ export default function App() {
     }
   };
 
-  const copyText = async (text, status) => {
+  const copyText = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
-      setLiveStatus(status);
-      window.setTimeout(() => setLiveStatus("Idle"), 1200);
     } catch (nextError) {
       setError(String(nextError));
     }
@@ -823,26 +807,6 @@ export default function App() {
       } catch (nextError) {
         setError(String(nextError));
       }
-    }
-  };
-
-  const handleOpenTerminal = async () => {
-    if (!activeTerminalChatId) {
-      setError("Start or select a chat before opening a terminal.");
-      return;
-    }
-    setError("");
-    try {
-      const nextSnapshot = await postJson("/api/terminal/open", {
-        chatId: activeTerminalChatId,
-        repoRoot: snapshot?.config?.repoRoot || "",
-        cols: 100,
-        rows: 24,
-      });
-      setTerminalSnapshot(nextSnapshot);
-      setTerminalPanelOpen(true);
-    } catch (nextError) {
-      setError(String(nextError));
     }
   };
 
@@ -949,7 +913,6 @@ export default function App() {
           }
           setPendingTurns((current) => { const next = { ...current }; delete next[eventChatId]; return next; });
           setSendingChatIds((current) => current.filter((id) => id !== eventChatId));
-          setLiveStatus(`Done in ${event.elapsedSeconds}s`);
         } else if (event.type === "error") {
           setPendingTurns((current) => { const next = { ...current }; delete next[eventChatId]; return next; });
           setSendingChatIds((current) => current.filter((id) => id !== eventChatId));
@@ -1259,9 +1222,6 @@ export default function App() {
       [requestKey]: { chatId: requestKey, userMessage: outgoingMessage, assistantText: "", running: true },
     }));
     setSendingChatIds((current) => (current.includes(requestKey) ? current : [...current, requestKey]));
-    if (activeChatIdRef.current === currentChatId) {
-      setLiveStatus("Starting request...");
-    }
 
     try {
       const response = await fetch(`${backendUrl}/api/chat/send-stream`, {
@@ -1306,11 +1266,6 @@ export default function App() {
             });
             break;
           }
-          case "status":
-            if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
-              setLiveStatus(event.message || event.phase || "Working...");
-            }
-            break;
           case "cli_output":
             setPendingTurns((current) => {
               const previous = current[eventChatId] || current[requestKey] || {};
@@ -1349,9 +1304,6 @@ export default function App() {
               return next;
             });
             setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
-            if (activeChatIdRef.current === eventChatId) {
-              setLiveStatus(`Done in ${event.elapsedSeconds}s`);
-            }
             break;
           case "interrupted":
             if (event.snapshot) {
@@ -1369,9 +1321,6 @@ export default function App() {
               return next;
             });
             setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
-            if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
-              setLiveStatus("Request interrupted");
-            }
             break;
           case "error":
             setPendingTurns((current) => {
@@ -1385,7 +1334,6 @@ export default function App() {
             setSendingChatIds((current) => current.filter((chatId) => chatId !== eventChatId && chatId !== requestKey));
             if (activeChatIdRef.current === eventChatId || activeChatIdRef.current === "") {
               setError(event.message || "Stream failed.");
-              setLiveStatus("Request failed");
             }
             break;
           default:
@@ -1403,7 +1351,6 @@ export default function App() {
       });
       setSendingChatIds((current) => current.filter((chatId) => chatId !== requestKey && chatId !== resolvedChatId));
       setError(String(nextError));
-      setLiveStatus("Request failed");
     }
   };
 
