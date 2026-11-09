@@ -1,10 +1,34 @@
 import {
   DEFAULT_UI_PREFS,
+  LEGACY_STORAGE_KEYS,
   RESOURCE_DASHBOARD_STORAGE_KEY,
   SAVED_PROJECTS_KEY,
   THEME_MODE_STORAGE_KEY,
   UI_PREFS_STORAGE_KEY,
 } from "./constants.js";
+
+/**
+ * One-time move of the old "gpt-tui.*" localStorage keys to "cortex.*".
+ * A legacy value is copied only when the new key is not set yet, then the
+ * legacy key is removed. Safe to call on every startup.
+ */
+export function migrateLegacyStorageKeys(storage = typeof window !== "undefined" ? window.localStorage : null) {
+  if (!storage) {
+    return;
+  }
+  for (const [legacyKey, nextKey] of Object.entries(LEGACY_STORAGE_KEYS)) {
+    try {
+      const legacyValue = storage.getItem(legacyKey);
+      if (legacyValue === null || storage.getItem(nextKey) !== null) {
+        continue;
+      }
+      storage.setItem(nextKey, legacyValue);
+      storage.removeItem(legacyKey);
+    } catch {
+      // Storage can be unavailable or full; keep the legacy key so nothing is lost.
+    }
+  }
+}
 
 function prefersWindowsPaths() {
   if (typeof navigator === "undefined") {

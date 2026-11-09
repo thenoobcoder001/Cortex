@@ -49,10 +49,19 @@ export const EXTERNAL_EDITOR_OPTIONS = [
 ];
 
 export const FALLBACK_APP_VERSION = "0.0.9";
-export const THEME_MODE_STORAGE_KEY = "gpt-tui.theme-mode";
-export const SAVED_PROJECTS_KEY = "gpt-tui.saved-projects";
-export const RESOURCE_DASHBOARD_STORAGE_KEY = "gpt-tui.show-resource-dashboard";
-export const UI_PREFS_STORAGE_KEY = "gpt-tui.ui-prefs";
+export const THEME_MODE_STORAGE_KEY = "cortex.theme-mode";
+export const SAVED_PROJECTS_KEY = "cortex.saved-projects";
+export const RESOURCE_DASHBOARD_STORAGE_KEY = "cortex.show-resource-dashboard";
+export const UI_PREFS_STORAGE_KEY = "cortex.ui-prefs";
+
+// Keys used before the rename from "gpt-tui" to "cortex", mapped to their new
+// names. migrateLegacyStorageKeys() moves them over once on startup.
+export const LEGACY_STORAGE_KEYS = {
+  "gpt-tui.theme-mode": THEME_MODE_STORAGE_KEY,
+  "gpt-tui.saved-projects": SAVED_PROJECTS_KEY,
+  "gpt-tui.show-resource-dashboard": RESOURCE_DASHBOARD_STORAGE_KEY,
+  "gpt-tui.ui-prefs": UI_PREFS_STORAGE_KEY,
+};
 
 export const DEFAULT_UI_PREFS = {
   codeWrap: false,
