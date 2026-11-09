@@ -345,7 +345,14 @@ export default function App() {
               : String(message.content || "").trim(),
       }));
 
-    if (activePendingTurn?.userMessage) {
+    // Once the backend has saved the user's message (the `user_message` stream
+    // event and status polls both carry it), the snapshot already ends with it.
+    // Only show the optimistic copy until then, or it appears twice.
+    const lastVisible = visible.at(-1);
+    const pendingUserAlreadySaved =
+      lastVisible?.role === "user" &&
+      lastVisible.content === stripPresetPrefix(String(activePendingTurn?.userMessage || ""));
+    if (activePendingTurn?.userMessage && !pendingUserAlreadySaved) {
       visible.push({ role: "user", content: activePendingTurn.userMessage, pending: true });
     }
     if (activePendingTurn?.assistantText) {
