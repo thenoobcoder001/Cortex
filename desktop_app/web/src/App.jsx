@@ -1,26 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  AlertCircle,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  FolderPlus,
-  Info,
-  MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Pencil,
-  Settings as SettingsIcon,
-  ShieldCheck,
-  SquarePen,
-  SquareTerminal,
-  Trash2,
-  X,
-} from "lucide-react";
 import SettingsPage from "./SettingsPage.jsx";
 import AuditPage from "./AuditPage.jsx";
-import { DEFAULT_UI_PREFS, EXTERNAL_EDITOR_OPTIONS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
+import { DEFAULT_UI_PREFS, FALLBACK_APP_VERSION, PROMPT_PRESETS, QUICK_COMMANDS, SAVED_PROJECTS_KEY } from "./app/constants.js";
 import {
   cleanResponse,
   groupedModels,
@@ -42,11 +23,15 @@ import {
   stripPresetPrefix,
   upsertProject,
 } from "./app/utils.js";
+import AppNavbar from "./components/AppNavbar.jsx";
 import BootScreen from "./components/BootScreen.jsx";
 import ComposerPanel from "./components/ComposerPanel.jsx";
+import ConfirmDeleteChatDialog from "./components/ConfirmDeleteChatDialog.jsx";
 import ConversationSection from "./components/ConversationSection.jsx";
-import EditorIcon from "./components/EditorIcon.jsx";
+import PairingRequestsBanner from "./components/PairingRequestsBanner.jsx";
+import PlanCard from "./components/PlanCard.jsx";
 import ProjectContextMenu from "./components/ProjectContextMenu.jsx";
+import ProjectSidebar from "./components/ProjectSidebar.jsx";
 import ResourceDashboard from "./components/ResourceDashboard.jsx";
 import TerminalPanelSection from "./components/TerminalPanelSection.jsx";
 import UpdateBanner from "./components/UpdateBanner.jsx";
@@ -1637,475 +1622,65 @@ export default function App() {
           setHeaderInfoOpen(false);
         }}
       >
-        <div className="app-navbar">
-          <div className="app-navbar-brand">
-            <span className="sidebar-brand">Cortex</span>
-            <button type="button" className="icon-button" onClick={handlePickRepo} title="Add project" aria-label="Add project">
-              <FolderPlus size={18} className="ui-icon" />
-            </button>
-          </div>
-          <div className="app-navbar-main">
-            <div className="topbar-left">
-              <button
-                type="button"
-                className="sidebar-toggle-btn"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setSidebarCollapsed((prev) => !prev);
-                }}
-                title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-                aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-              </button>
-              <select
-                className="header-thread-select"
-                value={snapshot.config.activeChatId || ""}
-                onChange={(event) => {
-                  if (event.target.value) {
-                    void handleActivateChat(event.target.value);
-                  }
-                }}
-              >
-                <option value="">New chat</option>
-                {snapshot.chats.map((chat) => (
-                  <option key={chat.chatId} value={chat.chatId}>
-                    {chat.title}
-                  </option>
-                ))}
-              </select>
-              <span className="project-badge">{projectLabel(snapshot.config.repoRoot)}</span>
-              <span className="provider-badge">{snapshot.providerName}</span>
-              <span className="model-badge" title={activeModelId}>{activeModelShort}</span>
-
-              <div className="header-info-wrap" onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  className="header-info-trigger"
-                  onClick={() => {
-                    setHeaderMoreOpen(false);
-                    setHeaderInfoOpen((current) => !current);
-                  }}
-                  title="Context info"
-                  aria-label="Context info"
-                >
-                  <Info size={16} />
-                </button>
-                {headerInfoOpen && (
-                  <div className="header-menu header-info-menu">
-                    <div className="info-section">
-                      <div className="info-label">Project</div>
-                      <div className="info-value">{snapshot.config.repoRoot}</div>
-                    </div>
-                    <div className="info-section">
-                      <div className="info-label">Provider</div>
-                      <div className="info-value">{snapshot.providerName}</div>
-                    </div>
-                    <div className="info-section">
-                      <div className="info-label">Model</div>
-                      <div className="info-value">{activeModelShort}</div>
-                      <div className="info-detail">{activeModelId}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="topbar-right">
-              <div className="topbar-actions-primary">
-                <button
-                  type="button"
-                  className={terminalPanelOpen ? "ghost-button terminal-toggle active" : "ghost-button terminal-toggle"}
-                  onClick={() => void handleToggleTerminal()}
-                  aria-pressed={terminalPanelOpen}
-                  title={terminalPanelOpen ? "Hide terminal" : "Show terminal"}
-                >
-                  <SquareTerminal size={16} className="ui-icon" />
-                  Terminal
-                </button>
-              </div>
-              <div className="topbar-actions-secondary">
-                <div className="header-menu-wrap">
-                  <button
-                    type="button"
-                    className="ghost-button header-menu-trigger"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setHeaderMoreOpen(false);
-                      setEditorMenuOpen((current) => !current);
-                    }}
-                    aria-expanded={editorMenuOpen}
-                  >
-                    Open in
-                    <ChevronDown size={14} className="ui-icon" />
-                  </button>
-                  {editorMenuOpen && (
-                    <div className="header-menu">
-                      {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
-                        <button
-                          key={editor.id}
-                          type="button"
-                          onClick={(event) => { event.stopPropagation(); void handleOpenInEditor(editor.id); }}
-                        >
-                          <span className="header-menu-item-icon">
-                            <EditorIcon editorId={editor.id} />
-                          </span>
-                          <span>{editor.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <button type="button" className="ghost-button" onClick={() => setCurrentScreen("audit")} title="Audit trail">
-                  <ShieldCheck size={16} className="ui-icon" />
-                  Audit
-                </button>
-                <button type="button" className="ghost-button" onClick={() => setCurrentScreen("settings")} title="Settings">
-                  <SettingsIcon size={16} className="ui-icon" />
-                  Settings
-                </button>
-                <button type="button" className="ghost-button" onClick={() => void handleNewChat()} title="New chat">
-                  <SquarePen size={16} className="ui-icon" />
-                  New chat
-                </button>
-              </div>
-              <div className="header-more-wrap" onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  className="icon-button header-more-trigger"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setEditorMenuOpen(false);
-                    setHeaderMoreOpen((current) => !current);
-                  }}
-                  title="More"
-                  aria-label="More"
-                  aria-expanded={headerMoreOpen}
-                >
-                  <MoreHorizontal size={18} />
-                </button>
-                {headerMoreOpen && (
-                  <div className="header-menu header-more-menu">
-                    <div className="header-menu-section mobile-only-actions">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setHeaderMoreOpen(false);
-                          void handleToggleTerminal();
-                        }}
-                      >
-                        <span>{terminalPanelOpen ? "Hide terminal" : "Show terminal"}</span>
-                      </button>
-                      {activeChatRunning && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHeaderMoreOpen(false);
-                            handleInterruptChat();
-                          }}
-                        >
-                          <span>Stop</span>
-                        </button>
-                      )}
-                      <div className="header-menu-divider"></div>
-                    </div>
-                    {EXTERNAL_EDITOR_OPTIONS.map((editor) => (
-                      <button
-                        key={editor.id}
-                        type="button"
-                        onClick={() => {
-                          setHeaderMoreOpen(false);
-                          void handleOpenInEditor(editor.id);
-                        }}
-                      >
-                        <span className="header-menu-item-icon">
-                          <EditorIcon editorId={editor.id} />
-                        </span>
-                        <span>Open in {editor.label}</span>
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHeaderMoreOpen(false);
-                        setCurrentScreen("audit");
-                      }}
-                    >
-                      <span>Audit trail</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHeaderMoreOpen(false);
-                        void handleNewChat();
-                      }}
-                    >
-                      <span>New chat</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHeaderMoreOpen(false);
-                        void handleCopyWorkspacePath();
-                      }}
-                    >
-                      <span>Copy workspace path</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHeaderMoreOpen(false);
-                        setCurrentScreen("settings");
-                      }}
-                    >
-                      <span>Settings</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <AppNavbar
+          snapshot={snapshot}
+          activeModelId={activeModelId}
+          activeModelShort={activeModelShort}
+          activeChatRunning={activeChatRunning}
+          sidebarCollapsed={sidebarCollapsed}
+          setSidebarCollapsed={setSidebarCollapsed}
+          headerInfoOpen={headerInfoOpen}
+          setHeaderInfoOpen={setHeaderInfoOpen}
+          headerMoreOpen={headerMoreOpen}
+          setHeaderMoreOpen={setHeaderMoreOpen}
+          editorMenuOpen={editorMenuOpen}
+          setEditorMenuOpen={setEditorMenuOpen}
+          terminalPanelOpen={terminalPanelOpen}
+          setCurrentScreen={setCurrentScreen}
+          handlePickRepo={handlePickRepo}
+          handleActivateChat={handleActivateChat}
+          handleToggleTerminal={handleToggleTerminal}
+          handleOpenInEditor={handleOpenInEditor}
+          handleNewChat={handleNewChat}
+          handleInterruptChat={handleInterruptChat}
+          handleCopyWorkspacePath={handleCopyWorkspacePath}
+        />
 
         <div className="workspace-body">
-        <aside className="sidebar">
-          <div className="sidebar-section">
-            <div className="sidebar-heading-row">
-              <div className="sidebar-label">Projects</div>
-            </div>
-
-            <div className="project-list">
-              {savedProjects.length === 0 && (
-                <div className="rail-empty">Add a folder or project to start exploring files.</div>
-              )}
-              {savedProjects.map((project) => (
-                <div key={project.path} className="project-group">
-                  <div
-                    className={
-                      project.path === snapshot.config.repoRoot ? "project-item active" : "project-item"
-                    }
-                  >
-                    <button
-                      type="button"
-                      className="project-main"
-                      onClick={() => toggleRepo(project.path)}
-                      title={project.path}
-                    >
-                      <span className="project-name">
-                        <Folder size={15} className="project-folder-icon" aria-hidden="true" />
-                        {project.name}
-                        <ChevronRight
-                          size={14}
-                          className={expandedRepos.has(project.path) ? "project-disclosure expanded" : "project-disclosure"}
-                          aria-hidden="true"
-                        />
-                      </span>
-                    </button>
-                    <div className="project-actions" onClick={(event) => event.stopPropagation()}>
-                      <button
-                        type="button"
-                        className="project-action-btn"
-                        onClick={() => void handleNewChat(project.path)}
-                        title="New chat in project"
-                        aria-label="New chat in project"
-                      >
-                        <SquarePen size={15} />
-                      </button>
-                      <div className="project-menu-wrap">
-                        <button
-                          type="button"
-                          className="project-menu-trigger"
-                          onClick={(event) => handleOpenMenu(event, project.path)}
-                          title="Project options"
-                          aria-label="Project options"
-                        >
-                          <MoreHorizontal size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {expandedRepos.has(project.path) && (
-                    <div className="project-detail-list">
-                      {chatsForProject(project.path).length === 0 && <div className="rail-empty">No chats yet.</div>}
-                      {chatsForProject(project.path).map((chat) => {
-                        const showChatLoading =
-                          runningChatIds.includes(chat.chatId) || sendingChatIds.includes(chat.chatId);
-                        const showInterrupted = Boolean(chat.interrupted) && !showChatLoading;
-                        const normalizedProjectPath = normalizeProject(project.path);
-                        const isRenaming =
-                          renamingChat?.chatId === chat.chatId &&
-                          renamingChat?.repoRoot === normalizedProjectPath;
-
-                        return (
-                          <div
-                            key={`${normalizedProjectPath}:${chat.chatId}`}
-                            className={
-                              chat.chatId === snapshot.config.activeChatId &&
-                              normalizedProjectPath === activeRepoRoot
-                                ? "chat-sidebar-row active"
-                                : "chat-sidebar-row"
-                            }
-                            onClick={() => {
-                              if (!isRenaming) {
-                                handleActivateChat(chat.chatId, project.path);
-                              }
-                            }}
-                          >
-                            {isRenaming ? (
-                              <input
-                                className="chat-rename-input"
-                                value={renameChatDraft}
-                                autoFocus
-                                ref={(input) => {
-                                  if (input) {
-                                    window.requestAnimationFrame(() => {
-                                      input.focus();
-                                      const end = input.value.length;
-                                      input.setSelectionRange(end, end);
-                                    });
-                                  }
-                                }}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onClick={(event) => event.stopPropagation()}
-                                onChange={(event) => setRenameChatDraft(event.target.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    event.preventDefault();
-                                    void handleSubmitRenameChat(chat, project.path);
-                                  }
-                                  if (event.key === "Escape") {
-                                    event.preventDefault();
-                                    handleCancelRenameChat();
-                                  }
-                                }}
-                                onBlur={() => void handleSubmitRenameChat(chat, project.path)}
-                              />
-                            ) : (
-                              <>
-                                <button type="button" className="chat-sidebar-item" title={chat.title}>
-                                  <span className="chat-dot"></span>
-                                  <span className="chat-truncate">{chat.title || "Untitled chat"}</span>
-                                </button>
-                                {showChatLoading && <span className="chat-loading-spinner" aria-hidden="true"></span>}
-                                {showInterrupted && (
-                                  <span
-                                    className="chat-recovery-indicator"
-                                    title="Previous response was interrupted and can be resumed from this chat."
-                                    aria-hidden="true"
-                                  >
-                                    <AlertCircle size={14} />
-                                  </span>
-                                )}
-                              </>
-                            )}
-                            {isRenaming ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="chat-rename-confirm-btn"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={(e) => { e.stopPropagation(); void handleSubmitRenameChat(chat, project.path); }}
-                                  title="Confirm rename"
-                                  aria-label="Confirm rename"
-                                >
-                                  <Check size={14} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="chat-rename-cancel-btn"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={(e) => { e.stopPropagation(); handleCancelRenameChat(); }}
-                                  title="Cancel rename"
-                                  aria-label="Cancel rename"
-                                >
-                                  <X size={14} />
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  className="chat-rename-btn"
-                                  onClick={(event) => handleStartRenameChat(event, chat, project.path)}
-                                  title="Rename chat"
-                                  aria-label="Rename chat"
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="chat-delete-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (uiPrefs.confirmChatDelete) {
-                                      setConfirmDeleteChat({ chatId: chat.chatId, repoRoot: project.path });
-                                    } else {
-                                      void handleDeleteChat(e, chat.chatId, project.path);
-                                    }
-                                  }}
-                                  title="Delete chat"
-                                  aria-label="Delete chat"
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+        <ProjectSidebar
+          snapshot={snapshot}
+          activeRepoRoot={activeRepoRoot}
+          savedProjects={savedProjects}
+          expandedRepos={expandedRepos}
+          toggleRepo={toggleRepo}
+          chatsForProject={chatsForProject}
+          runningChatIds={runningChatIds}
+          sendingChatIds={sendingChatIds}
+          uiPrefs={uiPrefs}
+          renamingChat={renamingChat}
+          renameChatDraft={renameChatDraft}
+          setRenameChatDraft={setRenameChatDraft}
+          setConfirmDeleteChat={setConfirmDeleteChat}
+          handleOpenMenu={handleOpenMenu}
+          handleNewChat={handleNewChat}
+          handleActivateChat={handleActivateChat}
+          handleStartRenameChat={handleStartRenameChat}
+          handleSubmitRenameChat={handleSubmitRenameChat}
+          handleCancelRenameChat={handleCancelRenameChat}
+          handleDeleteChat={handleDeleteChat}
+        />
 
         <main className="chat-area">
 
           <div className="chat-main">
           {error && <div className="error-banner">{error}</div>}
           {pendingPairingDevices.length > 0 && (
-            <div className="recovery-banner" style={{ display: "grid", gap: 10 }}>
-              <div>
-                Mobile pairing request{pendingPairingDevices.length > 1 ? "s" : ""} waiting for approval.
-              </div>
-              {pendingPairingDevices.map((deviceId) => (
-                <div
-                  key={deviceId}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "8px 10px",
-                    borderRadius: 8,
-                    background: "rgba(255,255,255,0.06)",
-                  }}
-                >
-                  <span style={{ flex: 1, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
-                    {deviceId}
-                  </span>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    style={{ padding: "4px 12px", fontSize: 12 }}
-                    disabled={pairingActionLoading[deviceId]}
-                    onClick={() => void handleApprovePairingDevice(deviceId)}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    className="danger-button"
-                    style={{ padding: "4px 12px", fontSize: 12 }}
-                    disabled={pairingActionLoading[deviceId]}
-                    onClick={() => void handleRejectPairingDevice(deviceId)}
-                  >
-                    Reject
-                  </button>
-                </div>
-              ))}
-            </div>
+            <PairingRequestsBanner
+              pendingPairingDevices={pendingPairingDevices}
+              pairingActionLoading={pairingActionLoading}
+              handleApprovePairingDevice={handleApprovePairingDevice}
+              handleRejectPairingDevice={handleRejectPairingDevice}
+            />
           )}
           {!error && activeInterruptedRun && (
             <div className="recovery-banner">
@@ -2131,27 +1706,12 @@ export default function App() {
             terminalViewMode={terminalViewMode}
           />
           {activePlan && (
-            <section className="plan-card">
-              <div className="plan-card-header">
-                <div>
-                  <div className="plan-card-label">Plan</div>
-                  <div className="plan-card-title">{activePlan.title || "Implementation Plan"}</div>
-                </div>
-                <div className="plan-card-actions">
-                  <button type="button" className="secondary-button" onClick={() => void copyText(activePlan.content || "", "Plan copied")}>
-                    Copy
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => void handleOpenLocalFile(activePlan.path)}>
-                    Open file
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => void handleContinueWithPlan()}>
-                    Continue with plan
-                  </button>
-                </div>
-              </div>
-              <div className="plan-card-path">{activePlan.path}</div>
-              <pre className="plan-card-preview">{String(activePlan.content || "")}</pre>
-            </section>
+            <PlanCard
+              activePlan={activePlan}
+              copyText={copyText}
+              handleOpenLocalFile={handleOpenLocalFile}
+              handleContinueWithPlan={handleContinueWithPlan}
+            />
           )}
 
           {showResourceDashboard && (
@@ -2227,23 +1787,11 @@ export default function App() {
       )}
 
       {confirmDeleteChat && (
-        <div className="confirm-overlay" onClick={() => setConfirmDeleteChat(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-badge">Danger</div>
-            <div className="confirm-title">Delete this chat?</div>
-            <div className="confirm-copy">This chat and all its messages will be permanently deleted. This cannot be undone.</div>
-            <div className="confirm-actions">
-              <button type="button" className="secondary-button" onClick={() => setConfirmDeleteChat(null)}>Cancel</button>
-              <button
-                type="button"
-                className="danger-button"
-                onClick={(e) => handleDeleteChat(e, confirmDeleteChat.chatId, confirmDeleteChat.repoRoot)}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDeleteChatDialog
+          confirmDeleteChat={confirmDeleteChat}
+          setConfirmDeleteChat={setConfirmDeleteChat}
+          handleDeleteChat={handleDeleteChat}
+        />
       )}
 
       {splashVisible && (
