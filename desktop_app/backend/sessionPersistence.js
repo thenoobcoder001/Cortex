@@ -13,6 +13,7 @@ function persistConfig(service) {
   service.config.repoRoot = service.repoRoot;
   service.config.activeChatId = service.activeChatId;
   service.config.model = service.model;
+  service.config.modelExplicit = Boolean(service.modelExplicit);
   service.config.promptPreset = service.promptPreset;
   service.config.toolSafetyMode = service.toolReadOnly ? "read" : "write";
   service.config.geminiSessionId = service.geminiCliProvider.sessionId || "";

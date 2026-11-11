@@ -18,6 +18,7 @@ const { AuditStore } = require("./auditStore");
 const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
 const { normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
+const { firstInstalledModel, isExplicitModelChoice } = require("./defaultModel");
 const {
   buildSnapshot,
   modelFamily,
@@ -81,7 +82,9 @@ class DesktopSessionService {
     this.geminiCliProvider.sessionMode = this.geminiCliProvider.sessionId ? "resume_id" : "fresh";
     this.codexProvider.sessionId = this.config.codexSessionId || "";
     this.codexProvider.sessionMode = this.codexProvider.sessionId ? "resume_id" : "fresh";
-    this.model = this.config.model || DEFAULT_MODEL;
+    // A model the user picked is kept; otherwise use the first installed provider.
+    this.modelExplicit = isExplicitModelChoice(this.config, this);
+    this.model = this.modelExplicit ? this.config.model : firstInstalledModel(this);
     this.promptPreset = this.config.promptPreset || "code";
     this.toolReadOnly = this.config.toolSafetyMode === "read";
     this.messages = [];
@@ -123,9 +126,14 @@ class DesktopSessionService {
     }
     this.codexModels = live;
     const [, savedName] = String(this.model).split(":");
-    if (this.modelFamily(this.model) === "codex" && !live.some((entry) => entry.model === savedName)) {
-      this.model = this.defaultCodexModelId() || this.model;
-      this.persistConfig();
+    const retired = !live.some((entry) => entry.model === savedName);
+    // Swap a retired model, and keep an auto-picked one on Codex's live default.
+    if (this.modelFamily(this.model) === "codex" && (retired || !this.modelExplicit)) {
+      const next = this.defaultCodexModelId() || this.model;
+      if (next !== this.model) {
+        this.model = next;
+        this.persistConfig();
+      }
     }
     this.invalidateSnapshotCaches?.();
     return this.codexModels;
@@ -580,7 +588,8 @@ class DesktopSessionService {
     this.groqProvider.setApiKey("");
     this.geminiProvider.setApiKey("");
     this.codexProvider.setApiKey("");
-    this.model = DEFAULT_MODEL;
+    this.modelExplicit = false;
+    this.model = firstInstalledModel(this);
     this.promptPreset = "code";
     this.toolReadOnly = false;
     this.messages = [];
@@ -620,7 +629,8 @@ class DesktopSessionService {
     this.geminiProvider.setApiKey("");
     this.codexProvider.setApiKey("");
     this._resetAllCliSessions();
-    this.model = DEFAULT_MODEL;
+    this.modelExplicit = false;
+    this.model = firstInstalledModel(this);
     this.promptPreset = "code";
     this.toolReadOnly = false;
     this.activeChatId = "";
@@ -639,7 +649,11 @@ class DesktopSessionService {
       this.setRepoRoot(repoRoot);
     }
     if (model != null) {
-      this.model = resolveModelId(model) || DEFAULT_MODEL;
+      const picked = resolveModelId(model);
+      this.modelExplicit = Boolean(picked);
+      if (picked) {
+        this.model = picked;
+      }
     }
     if (apiKey != null) {
       this.config.apiKey = String(apiKey || "").trim();
@@ -664,6 +678,10 @@ class DesktopSessionService {
     }
     if (remoteAccessEnabled != null) {
       this.config.remoteAccessEnabled = Boolean(remoteAccessEnabled);
+    }
+    if (!this.modelExplicit) {
+      // No model picked yet: follow whatever is set up now (e.g. a key just added).
+      this.model = firstInstalledModel(this);
     }
     this.persistConfig();
     return this.snapshot({ lite });

@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { DEFAULT_MODEL, resolveModelId } = require("./constants");
+const { resolveModelId } = require("./constants");
 const platform = require("./platform");
 
 function normalizeRepoRootPath(value) {
@@ -51,7 +51,11 @@ class AppConfigStore {
     this.path = configFile();
     this.repoRoot = "";
     this.activeChatId = "";
-    this.model = DEFAULT_MODEL;
+    // Empty until a model is saved; the session picks an installed provider.
+    this.model = "";
+    // true once the user picks a model; null for configs saved before this
+    // flag existed (see isExplicitModelChoice).
+    this.modelExplicit = null;
     this.apiKey = "";
     this.geminiApiKey = "";
     this.openaiApiKey = "";
@@ -101,7 +105,9 @@ class AppConfigStore {
         const raw = JSON.parse(fs.readFileSync(config.path, "utf8"));
         config.repoRoot = normalizeRepoRootPath(raw.repo_root || raw.repoRoot || "");
         config.activeChatId = String(raw.active_chat_id || raw.activeChatId || "");
-        config.model = resolveModelId(raw.model) || DEFAULT_MODEL;
+        config.model = resolveModelId(raw.model);
+        const explicit = raw.model_explicit ?? raw.modelExplicit;
+        config.modelExplicit = typeof explicit === "boolean" ? explicit : null;
         config.apiKey = String(raw.api_key || raw.apiKey || "");
         config.geminiApiKey = String(raw.gemini_api_key || raw.geminiApiKey || "");
         config.openaiApiKey = String(raw.openai_api_key || raw.openaiApiKey || "");
@@ -164,6 +170,7 @@ class AppConfigStore {
           repo_root: this.repoRoot,
           active_chat_id: this.activeChatId,
           model: this.model,
+          model_explicit: this.modelExplicit,
           api_key: this.apiKey,
           gemini_api_key: this.geminiApiKey,
           openai_api_key: this.openaiApiKey,
@@ -200,7 +207,8 @@ class AppConfigStore {
   reset() {
     this.repoRoot = "";
     this.activeChatId = "";
-    this.model = DEFAULT_MODEL;
+    this.model = "";
+    this.modelExplicit = false;
     this.apiKey = "";
     this.geminiApiKey = "";
     this.openaiApiKey = "";
