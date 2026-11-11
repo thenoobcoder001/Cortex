@@ -210,6 +210,38 @@ export function cleanResponse(text) {
   return cleaned.trim().replace(/\n{3,}/g, "\n\n");
 }
 
+// Messages shown in the conversation: saved snapshot messages (cleaned up for
+// display) followed by the active chat's in-flight turn, if any.
+export function buildDisplayMessages(messages, pendingTurn) {
+  const visible = (messages || [])
+    .filter((message) => ["user", "assistant", "system"].includes(message.role))
+    .filter((message) => String(message.content || "").trim().length > 0)
+    .map((message) => ({
+      ...message,
+      content:
+        message.role === "assistant"
+          ? cleanResponse(String(message.content || ""))
+          : message.role === "user"
+            ? stripPresetPrefix(String(message.content || ""))
+            : String(message.content || "").trim(),
+    }));
+
+  // Once the backend has saved the user's message (the `user_message` stream
+  // event and status polls both carry it), the snapshot already ends with it.
+  // Only show the optimistic copy until then, or it appears twice.
+  const lastVisible = visible.at(-1);
+  const pendingUserAlreadySaved =
+    lastVisible?.role === "user" &&
+    lastVisible.content === stripPresetPrefix(String(pendingTurn?.userMessage || ""));
+  if (pendingTurn?.userMessage && !pendingUserAlreadySaved) {
+    visible.push({ role: "user", content: pendingTurn.userMessage, pending: true });
+  }
+  if (pendingTurn?.assistantText) {
+    visible.push({ role: "assistant", content: pendingTurn.assistantText });
+  }
+  return visible;
+}
+
 export function projectLabel(repoRoot) {
   if (!repoRoot) {
     return "Workspace";
