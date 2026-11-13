@@ -25,12 +25,12 @@ async function handle(ctx) {
     };
     if (origin) sseHeaders["Access-Control-Allow-Origin"] = origin;
     response.writeHead(200, sseHeaders);
+    // Always send the snapshot first (even when empty) so the client knows the
+    // epoch and offset that the following `data` events continue from.
     const snap = terminalService.snapshot(chatId);
-    if (snap.history) {
-      response.write(`data: ${JSON.stringify({ type: "history", data: snap.history })}\n\n`);
-    }
-    const onData = (data) => {
-      response.write(`data: ${JSON.stringify({ type: "data", data })}\n\n`);
+    response.write(`data: ${JSON.stringify({ ...snap, type: "history" })}\n\n`);
+    const onData = (data, meta = {}) => {
+      response.write(`data: ${JSON.stringify({ type: "data", data, epoch: meta.epoch, end: meta.end })}\n\n`);
     };
     terminalService.on(`data:${chatId}`, onData);
     ctx.request.on("close", () => {

@@ -67,33 +67,22 @@ export default function TerminalPanelSection({
           </button>
         </div>
       </div>
-      {terminalPanelOpen && activeTerminalChatId && (
-        <div
-          style={
-            terminalViewMode !== "live"
-              ? {
-                  position: "absolute",
-                  visibility: "hidden",
-                  pointerEvents: "none",
-                  width: "1px",
-                  height: "1px",
-                  overflow: "hidden",
-                }
-              : {}
-          }
-        >
-          <XtermPanel
-            backendUrl={backendUrl}
-            chatId={activeTerminalChatId}
-            repoRoot={repoRoot || ""}
-            onReady={(writeFn) => {
-              liveTermWriteRef.current = writeFn;
-            }}
-            onUnmount={() => {
-              liveTermWriteRef.current = null;
-            }}
-          />
-        </div>
+      {/* Only mounted in Live view. A hidden 1px copy fitted itself to 2
+          columns and resized the shell to 40, so ConPTY's redraws landed on
+          the wrong lines and output showed up twice. Remounting replays the
+          backend history, so nothing is lost by unmounting. */}
+      {terminalPanelOpen && activeTerminalChatId && terminalViewMode === "live" && (
+        <XtermPanel
+          backendUrl={backendUrl}
+          chatId={activeTerminalChatId}
+          repoRoot={repoRoot || ""}
+          onReady={(writeFn) => {
+            liveTermWriteRef.current = writeFn;
+          }}
+          onUnmount={() => {
+            liveTermWriteRef.current = null;
+          }}
+        />
       )}
       {terminalPanelOpen && terminalViewMode === "chat" && (
         <div className="terminal-output" ref={terminalOutputRef}>

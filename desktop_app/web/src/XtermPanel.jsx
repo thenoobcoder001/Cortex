@@ -2,13 +2,18 @@ import React, { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { createTerminalSync } from "./app/terminalSync.js";
 
 export default function XtermPanel({ backendUrl, chatId, repoRoot, onReady, onUnmount }) {
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const fitRef = useRef(null);
   const esRef = useRef(null);
-  const historyRef = useRef("");
+  // Latest callbacks, read from the effect without re-running it.
+  const onReadyRef = useRef(onReady);
+  const onUnmountRef = useRef(onUnmount);
+  onReadyRef.current = onReady;
+  onUnmountRef.current = onUnmount;
 
   useEffect(() => {
     if (!containerRef.current || !backendUrl || !chatId) return;
@@ -56,61 +61,76 @@ export default function XtermPanel({ backendUrl, chatId, repoRoot, onReady, onUn
 
     termRef.current = term;
     fitRef.current = fit;
-    historyRef.current = "";
 
-    // Expose write function to parent
-    if (onReady) onReady((data) => term.write(data));
+    // Size the terminal to its box before anything is written. Output drawn
+    // at xterm's default 80x24 and refit later runs lines together.
+    // The backend is never sized below 40x12, so the xterm isn't either:
+    // both sides must agree or ConPTY's cursor moves land on the wrong cells.
+    let viewSize = null;
+    const fitNow = () => {
+      try {
+        const dims = fit.proposeDimensions();
+        if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) {
+          return false;
+        }
+        viewSize = { cols: Math.max(dims.cols, 40), rows: Math.max(dims.rows, 12) };
+        if (term.cols !== viewSize.cols || term.rows !== viewSize.rows) {
+          term.resize(viewSize.cols, viewSize.rows);
+        }
+        return true;
+      } catch {
+        return false; // no dimensions yet
+      }
+    };
+    fitNow();
 
-    const applyHistory = (nextHistory) => {
-      const normalized = String(nextHistory || "");
-      if (!normalized || normalized === historyRef.current) {
+    let lastSentSize = "";
+    const postSize = () => {
+      if (!viewSize) return Promise.resolve();
+      const key = `${viewSize.cols}x${viewSize.rows}`;
+      if (key === lastSentSize) return Promise.resolve();
+      lastSentSize = key;
+      return fetch(`${backendUrl}/api/terminal/resize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId, ...viewSize }),
+      }).catch(() => {});
+    };
+
+    let disposed = false;
+    const sync = createTerminalSync(term, {
+      getViewSize: () => viewSize,
+      onGap: () => void syncSnapshot(),
+    });
+
+    // One fetch at a time; a request made meanwhile runs once it finishes so
+    // a gap in the stream is always followed by a fresh snapshot.
+    let syncing = false;
+    let syncAgain = false;
+    const syncSnapshot = async () => {
+      if (syncing) {
+        syncAgain = true;
         return;
       }
-      if (normalized.startsWith(historyRef.current)) {
-        term.write(normalized.slice(historyRef.current.length));
-      } else {
-        term.reset();
-        term.write(normalized);
-      }
-      historyRef.current = normalized;
-    };
-
-    const syncSnapshot = async () => {
+      syncing = true;
       try {
-        const response = await fetch(`${backendUrl}/api/terminal?chatId=${encodeURIComponent(chatId)}`);
-        const data = await response.json();
-        if (!response.ok) {
-          return;
-        }
-        applyHistory(data.history || "");
+        do {
+          syncAgain = false;
+          const response = await fetch(`${backendUrl}/api/terminal?chatId=${encodeURIComponent(chatId)}`);
+          const data = await response.json();
+          if (response.ok && !disposed) {
+            sync.applySnapshot(data);
+          }
+        } while (syncAgain && !disposed);
       } catch {
         // Polling is a best-effort fallback when SSE is flaky.
+      } finally {
+        syncing = false;
       }
     };
 
-    const syncSize = async () => {
-      try {
-        fit.fit();
-      } catch {
-        // ignore fit failures until the container has dimensions
-      }
-      const cols = Math.max(Number(term.cols) || 0, 40);
-      const rows = Math.max(Number(term.rows) || 0, 12);
-      await fetch(`${backendUrl}/api/terminal/open`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId, repoRoot, cols, rows }),
-      }).catch(() => {});
-      await fetch(`${backendUrl}/api/terminal/resize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId, cols, rows }),
-      }).catch(() => {});
-    };
-
-    window.requestAnimationFrame(() => {
-      void syncSize().then(() => syncSnapshot());
-    });
+    // Expose write function to parent
+    if (onReadyRef.current) onReadyRef.current((data) => sync.run(() => term.write(data)));
 
     const es = new EventSource(`${backendUrl}/api/terminal/stream?chatId=${encodeURIComponent(chatId)}`);
     esRef.current = es;
@@ -118,19 +138,29 @@ export default function XtermPanel({ backendUrl, chatId, repoRoot, onReady, onUn
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "history") {
-          applyHistory(msg.data);
+          sync.applySnapshot(msg);
         } else if (msg.type === "data") {
-          const chunk = String(msg.data || "");
-          if (!chunk) {
-            return;
-          }
-          term.write(chunk);
-          historyRef.current += chunk;
+          sync.applyData(msg);
         }
       } catch {
         // ignore malformed SSE payloads
       }
     };
+
+    window.requestAnimationFrame(() => {
+      if (disposed) return;
+      void sync.run(() => {
+        fitNow();
+      }).then(async () => {
+        await fetch(`${backendUrl}/api/terminal/open`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId, repoRoot, ...(viewSize || { cols: 120, rows: 30 }) }),
+        }).catch(() => {});
+        await postSize();
+        await syncSnapshot();
+      });
+    });
 
     const pollTimer = window.setInterval(() => {
       void syncSnapshot();
@@ -145,18 +175,10 @@ export default function XtermPanel({ backendUrl, chatId, repoRoot, onReady, onUn
     });
 
     const resizeObserver = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        const cols = Math.max(Number(term.cols) || 0, 40);
-        const rows = Math.max(Number(term.rows) || 0, 12);
-        fetch(`${backendUrl}/api/terminal/resize`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chatId, cols, rows }),
-        }).catch(() => {});
-      } catch {
-        // ignore resize failures
-      }
+      // Queued so a refit never lands in the middle of a replay.
+      void sync.run(() => {
+        fitNow();
+      }).then(postSize);
     });
     resizeObserver.observe(containerRef.current);
 
@@ -169,16 +191,17 @@ export default function XtermPanel({ backendUrl, chatId, repoRoot, onReady, onUn
     });
 
     return () => {
+      disposed = true;
+      sync.dispose();
       window.clearInterval(pollTimer);
       resizeObserver.disconnect();
       themeObserver.disconnect();
       es.close();
       term.dispose();
-      if (onUnmount) onUnmount();
+      if (onUnmountRef.current) onUnmountRef.current();
       esRef.current = null;
       termRef.current = null;
       fitRef.current = null;
-      historyRef.current = "";
     };
   }, [backendUrl, chatId, repoRoot]);
 

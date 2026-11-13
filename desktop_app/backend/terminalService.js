@@ -13,6 +13,30 @@ try {
 
 const MAX_HISTORY_CHARS = 80_000;
 
+// Each session gets a new epoch so clients can tell a reopened terminal
+// (offsets restart at 0) from more output on the same one.
+let nextEpoch = 1;
+
+function normalizeSize(cols, rows) {
+  const c = Math.trunc(Number(cols));
+  const r = Math.trunc(Number(rows));
+  if (!Number.isFinite(c) || !Number.isFinite(r) || c < 1 || r < 1) return null;
+  return { cols: Math.min(c, 1000), rows: Math.min(r, 500) };
+}
+
+// Drops size entries from before the kept history, keeping the one in effect
+// where it now starts.
+function pruneSizes(session) {
+  const start = session.total - session.history.length;
+  let current = session.sizes[0];
+  const later = [];
+  for (const entry of session.sizes) {
+    if (entry.at <= start) current = entry;
+    else later.push(entry);
+  }
+  session.sizes = [{ ...current, at: start }, ...later];
+}
+
 function shellCommand() {
   const shell = platform.getShell();
   // Windows inherits PATH from the process env so no extra args needed.
@@ -37,20 +61,30 @@ class TerminalService extends EventEmitter {
     return String(chatId || "").trim();
   }
 
+  // `session.total` counts every char ever appended, so `history` always ends
+  // at offset `total` and starts at `total - history.length`. Clients use
+  // these offsets to write each chunk once, whether it came from the stream,
+  // a poll, or a replay after remounting.
   append(session, chunk) {
     const text = String(chunk || "");
+    if (!text) return;
     session.history += text;
+    session.total += text.length;
     if (session.history.length > MAX_HISTORY_CHARS) {
       session.history = session.history.slice(-MAX_HISTORY_CHARS);
+      pruneSizes(session);
     }
     session.updatedAt = new Date().toISOString();
-    this.emit(`data:${session.chatId}`, text);
+    this.emit(`data:${session.chatId}`, text, { epoch: session.epoch, end: session.total });
   }
 
   snapshot(chatId) {
     const session = this.sessions.get(this.key(chatId));
     if (!session) {
-      return { chatId: this.key(chatId), status: "closed", cwd: "", pid: null, history: "", startedAt: "", updatedAt: "", exitCode: null };
+      return {
+        chatId: this.key(chatId), status: "closed", cwd: "", pid: null, history: "", startedAt: "", updatedAt: "", exitCode: null,
+        epoch: 0, total: 0, cols: 0, rows: 0, sizes: [],
+      };
     }
     return {
       chatId: session.chatId,
@@ -61,6 +95,14 @@ class TerminalService extends EventEmitter {
       startedAt: session.startedAt,
       updatedAt: session.updatedAt,
       exitCode: session.exitCode,
+      epoch: session.epoch,
+      total: session.total,
+      cols: session.cols,
+      rows: session.rows,
+      // Size changes within `history` as { at, cols, rows } (`at` is an
+      // absolute offset). ConPTY output is cursor-addressed for the size the
+      // terminal had at the time, so a replay has to follow these.
+      sizes: (session.sizes || []).map((entry) => ({ ...entry })),
     };
   }
 
@@ -74,13 +116,14 @@ class TerminalService extends EventEmitter {
     const shell = shellCommand();
     const env = resolveAndroidEnv({ ...process.env, CORTEX_CHAT_ID: id, FORCE_COLOR: "1", TERM: "xterm-256color", COLORTERM: "truecolor" });
     const now = new Date().toISOString();
+    const size = normalizeSize(cols, rows) || { cols: 120, rows: 30 };
 
     let child;
     let isPty = false;
 
     if (pty) {
       try {
-        child = pty.spawn(shell.command, shell.args, { name: "xterm-256color", cols, rows, cwd, env });
+        child = pty.spawn(shell.command, shell.args, { name: "xterm-256color", cols: size.cols, rows: size.rows, cwd, env });
         isPty = true;
       } catch {}
     }
@@ -90,7 +133,12 @@ class TerminalService extends EventEmitter {
       child = spawn(shell.command, shell.args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     }
 
-    const session = { chatId: id, cwd, child, isPty, status: "running", history: `${shell.banner}Working directory: ${cwd}\r\n`, startedAt: now, updatedAt: now, exitCode: null };
+    const history = `${shell.banner}Working directory: ${cwd}\r\n`;
+    const session = {
+      chatId: id, cwd, child, isPty, status: "running", history, startedAt: now, updatedAt: now, exitCode: null,
+      epoch: nextEpoch++, total: history.length, cols: size.cols, rows: size.rows,
+      sizes: [{ at: 0, ...size }],
+    };
     this.sessions.set(id, session);
 
     if (isPty) {
@@ -173,8 +221,17 @@ class TerminalService extends EventEmitter {
   resize({ chatId, cols, rows }) {
     const id = this.key(chatId);
     const session = this.sessions.get(id);
-    if (session?.isPty && session.status === "running") {
-      try { session.child.resize(cols, rows); } catch {}
+    const size = normalizeSize(cols, rows);
+    // Skip same-size resizes: ConPTY repaints the whole screen on every
+    // resize call, which only adds another copy of it to the history.
+    if (size && session?.isPty && session.status === "running"
+      && (size.cols !== session.cols || size.rows !== session.rows)) {
+      try {
+        session.child.resize(size.cols, size.rows);
+        session.cols = size.cols;
+        session.rows = size.rows;
+        session.sizes.push({ at: session.total, ...size });
+      } catch {}
     }
     return this.snapshot(id);
   }
