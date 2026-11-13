@@ -5,6 +5,19 @@ const { buildUnifiedDiff } = require("./fileService");
 const { resolveAndroidEnv } = require("./androidEnv");
 const platform = require("./platform");
 
+const MUTATING_TOOLS = ["write_file", "edit_file", "delete_path", "rename_file", "create_directory", "run_terminal_command"];
+
+// Audit action names for each mutating tool, matching the actions the repo
+// diff pass and the terminal paths already write.
+const TOOL_AUDIT_ACTIONS = {
+  write_file: "write",
+  edit_file: "edit",
+  delete_path: "delete",
+  rename_file: "rename",
+  create_directory: "create_directory",
+  run_terminal_command: "run_command",
+};
+
 class ToolExecutor {
   constructor(fileService, repoRoot) {
     this.fileService = fileService;
@@ -45,11 +58,25 @@ class ToolExecutor {
     return [resolved, ""];
   }
 
+  // Records a mutating tool call that was refused before it touched disk,
+  // so denials show up in the trail alongside successes.
+  _auditBlocked(name, args, detail) {
+    const safeArgs = args && typeof args === "object" ? args : {};
+    this._audit({
+      source: "agent",
+      action: TOOL_AUDIT_ACTIONS[name] || name,
+      path: String(safeArgs.path || ""),
+      oldPath: String(safeArgs.old_path || ""),
+      newPath: String(safeArgs.new_path || ""),
+      command: name === "run_terminal_command" ? String(safeArgs.command || "") : "",
+      success: false,
+      detail,
+    });
+  }
+
   async executeWithMetadata(name, args = {}) {
-    if (
-      this.readOnly
-      && ["write_file", "edit_file", "delete_path", "rename_file", "create_directory", "run_terminal_command"].includes(name)
-    ) {
+    if (this.readOnly && MUTATING_TOOLS.includes(name)) {
+      this._auditBlocked(name, args, `blocked: read-only mode (${name})`);
       return ["ERROR: tool safety mode is read-only; mutating tools are blocked.", null];
     }
 
