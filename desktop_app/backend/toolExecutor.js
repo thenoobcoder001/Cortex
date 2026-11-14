@@ -16,6 +16,7 @@ const TOOL_AUDIT_ACTIONS = {
   rename_file: "rename",
   create_directory: "create_directory",
   run_terminal_command: "run_command",
+  read_file: "read",
 };
 
 class ToolExecutor {
@@ -105,6 +106,7 @@ class ToolExecutor {
   writeFile(args) {
     const [filePath, error] = this.resolveAnyPath(String(args.path || ""));
     if (!filePath) {
+      this._auditBlocked("write_file", args, `rejected: ${error}`);
       return [`ERROR: ${error}`, null];
     }
     const content = String(args.content || "");
@@ -126,6 +128,7 @@ class ToolExecutor {
   editFile(args) {
     const [filePath, error] = this.resolveAnyPath(String(args.path || ""));
     if (!filePath) {
+      this._auditBlocked("edit_file", args, `rejected: ${error}`);
       return [`ERROR: ${error}`, null];
     }
     if (!fs.existsSync(filePath)) {
@@ -153,6 +156,9 @@ class ToolExecutor {
   readFile(args) {
     const [filePath, error] = this.fileService.resolveRepoPath(String(args.path || ""));
     if (!filePath) {
+      // Reads are not audited normally, but an attempt to read outside the
+      // repo (e.g. ~/.ssh) is a confinement event worth keeping.
+      this._auditBlocked("read_file", args, `rejected: ${error}`);
       return `ERROR: ${error}`;
     }
     const [content, truncated] = this.fileService.readUtf8(filePath);
@@ -162,6 +168,7 @@ class ToolExecutor {
   deletePath(args) {
     const [targetPath, error] = this.resolveAnyPath(String(args.path || ""));
     if (!targetPath) {
+      this._auditBlocked("delete_path", args, `rejected: ${error}`);
       return [`ERROR: ${error}`, null];
     }
     if (!fs.existsSync(targetPath)) {
@@ -184,10 +191,12 @@ class ToolExecutor {
   renameFile(args) {
     const [oldPath, oldError] = this.resolveAnyPath(String(args.old_path || ""));
     if (!oldPath) {
+      this._auditBlocked("rename_file", args, `rejected: ${oldError}`);
       return [`ERROR: ${oldError}`, null];
     }
     const [newPath, newError] = this.resolveAnyPath(String(args.new_path || ""));
     if (!newPath) {
+      this._auditBlocked("rename_file", args, `rejected: ${newError}`);
       return [`ERROR: ${newError}`, null];
     }
     if (!fs.existsSync(oldPath)) {
@@ -212,6 +221,7 @@ class ToolExecutor {
   createDirectory(args) {
     const [directoryPath, error] = this.resolveAnyPath(String(args.path || ""));
     if (!directoryPath) {
+      this._auditBlocked("create_directory", args, `rejected: ${error}`);
       return [`ERROR: ${error}`, null];
     }
     fs.mkdirSync(directoryPath, { recursive: true });

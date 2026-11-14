@@ -56,6 +56,37 @@ test("read-only mode audits every blocked mutating tool call", async () => {
   assert.equal(store.verify().ok, true);
 });
 
+test("attempts to touch paths outside the repo are rejected and audited", async () => {
+  const parent = tempRepo();
+  const repoRoot = path.join(parent, "repo");
+  fs.mkdirSync(repoRoot);
+  fs.writeFileSync(path.join(repoRoot, "inside.txt"), "x", "utf8");
+  const { executor, store } = executorWithStore(repoRoot);
+
+  const outside = path.join(parent, "outside-repo.txt");
+  const attempts = [
+    ["write_file", { path: "../outside-repo.txt", content: "pwned" }, "write"],
+    ["edit_file", { path: "../../etc/hosts", old_str: "a", new_str: "b" }, "edit"],
+    ["delete_path", { path: process.platform === "win32" ? "C:\\Windows\\System32" : "/etc" }, "delete"],
+    ["rename_file", { old_path: "inside.txt", new_path: "../stolen.txt" }, "rename"],
+    ["create_directory", { path: "./valid/../../escaped" }, "create_directory"],
+    ["read_file", { path: "../../.ssh/id_rsa" }, "read"],
+  ];
+  for (const [name, args] of attempts) {
+    const [result] = await executor.executeWithMetadata(name, args);
+    assert.match(result, /outside repo root/);
+  }
+
+  assert.equal(fs.existsSync(outside), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, "inside.txt")), true);
+  const entries = store.list().reverse();
+  assert.deepEqual(entries.map((e) => e.action), attempts.map(([, , action]) => action));
+  assert.ok(entries.every((e) => e.success === false && /outside repo root/.test(e.detail)));
+  assert.equal(entries[0].path, "../outside-repo.txt");
+  assert.equal(entries[3].new_path, "../stolen.txt");
+  assert.equal(store.verify().ok, true);
+});
+
 test("read-only mode does not audit read-only tools", async () => {
   const repoRoot = tempRepo();
   fs.writeFileSync(path.join(repoRoot, "a.txt"), "hi", "utf8");
