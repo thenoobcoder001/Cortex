@@ -97,3 +97,77 @@ test("rotation resets the chain but keeps the archive readable", () => {
   const fresh = new AuditStore(repoRoot);
   assert.equal(fresh.verify().ok, true);
 });
+
+test("separate processes appending to one log keep a single valid chain", async () => {
+  const { spawn } = require("node:child_process");
+  const repoRoot = tempRepo();
+  const storePath = path.join(__dirname, "auditStore.js");
+  const writers = 6;
+  const perWriter = 40;
+  const script = `
+    const { AuditStore } = require(${JSON.stringify(storePath)});
+    const store = new AuditStore(${JSON.stringify(repoRoot)});
+    for (let i = 0; i < ${perWriter}; i += 1) {
+      store.record({ action: "run_command", command: "w" + process.argv[1] + "-" + i });
+    }
+  `;
+  await Promise.all(Array.from({ length: writers }, (_, index) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["-e", script, String(index)], { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`writer exited ${code}`))));
+  })));
+
+  const store = new AuditStore(repoRoot);
+  const entries = store.list({ limit: 100000 }).reverse();
+  assert.equal(entries.length, writers * perWriter);
+  assert.deepEqual(entries.map((e) => e.seq), entries.map((_, index) => index));
+  assert.deepEqual(store.verify(), { ok: true, brokenAtSeq: null });
+  assert.equal(fs.existsSync(path.join(repoRoot, ".cortex", "audit", "audit.jsonl.lock")), false);
+});
+
+test("a second store instance continues the chain another instance wrote", () => {
+  const repoRoot = tempRepo();
+  const first = new AuditStore(repoRoot);
+  const second = new AuditStore(repoRoot);
+  first.record({ action: "create", path: "a.txt" });
+  second.record({ action: "edit", path: "a.txt" });
+  first.record({ action: "delete", path: "a.txt" });
+
+  const entries = first.list().reverse();
+  assert.deepEqual(entries.map((e) => e.seq), [0, 1, 2]);
+  assert.equal(first.verify().ok, true);
+});
+
+test("a lock left by a crashed writer is recovered", () => {
+  const repoRoot = tempRepo();
+  const store = new AuditStore(repoRoot);
+  store.record({ action: "create", path: "a.txt" });
+  const lockPath = path.join(repoRoot, ".cortex", "audit", "audit.jsonl.lock");
+
+  // Owner on this host whose pid is gone.
+  fs.writeFileSync(lockPath, JSON.stringify({ token: "dead", host: os.hostname(), pid: 2 ** 30, ts: Date.now() }));
+  assert.ok(store.record({ action: "edit", path: "a.txt" }));
+  assert.equal(fs.existsSync(lockPath), false);
+
+  // Owner on another machine: only age can prove it stale.
+  fs.writeFileSync(lockPath, JSON.stringify({ token: "remote", host: "other-host", pid: 1234, ts: Date.now() }));
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  assert.ok(store.record({ action: "delete", path: "a.txt" }));
+  assert.equal(fs.existsSync(lockPath), false);
+  assert.equal(store.list().length, 3);
+  assert.equal(store.verify().ok, true);
+});
+
+test("a fresh lock held by another machine is waited on, then broken once stale", () => {
+  const repoRoot = tempRepo();
+  const store = new AuditStore(repoRoot, { lockStaleMs: 300 });
+  fs.mkdirSync(path.join(repoRoot, ".cortex", "audit"), { recursive: true });
+  const lockPath = path.join(repoRoot, ".cortex", "audit", "audit.jsonl.lock");
+  fs.writeFileSync(lockPath, JSON.stringify({ token: "remote", host: "other-host", pid: 1234, ts: Date.now() }));
+
+  const started = Date.now();
+  assert.ok(store.record({ action: "create", path: "a.txt" }));
+  assert.ok(Date.now() - started >= 250, "should wait for the lock to go stale");
+  assert.equal(fs.existsSync(lockPath), false);
+});
