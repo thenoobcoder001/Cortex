@@ -82,7 +82,7 @@ test("exportJsonl() returns the original append-only records", () => {
   assert.equal(lines[1].prev_hash, lines[0].hash);
 });
 
-test("rotation resets the chain but keeps the archive readable", () => {
+test("rotation archives an oversized log and the chain still verifies", () => {
   const repoRoot = tempRepo();
   const store = new AuditStore(repoRoot);
   store.record({ action: "create", path: "a.txt" });
@@ -98,15 +98,100 @@ test("rotation resets the chain but keeps the archive readable", () => {
   assert.equal(fresh.verify().ok, true);
 });
 
-test("separate processes appending to one log keep a single valid chain", async () => {
-  const { spawn } = require("node:child_process");
+function auditFiles(repoRoot) {
+  return fs.readdirSync(path.join(repoRoot, ".cortex", "audit")).filter((name) => name.startsWith("audit.jsonl")).sort();
+}
+
+test("repeated rotations keep every archive and one continuous chain", () => {
   const repoRoot = tempRepo();
+  const store = new AuditStore(repoRoot, { maxBytes: 2000 });
+  const total = 60;
+  for (let index = 0; index < total; index += 1) {
+    store.record({ action: "run_command", command: `step ${index}` });
+  }
+
+  const files = auditFiles(repoRoot);
+  assert.ok(files.length >= 5, `expected several archives, got ${files.join(", ")}`);
+  assert.ok(files.includes("audit.jsonl.1") && files.includes("audit.jsonl.2") && files.includes("audit.jsonl.3"));
+
+  // The very first entry is still on disk and the export is the full history.
+  const exported = store.exportJsonl().trim().split("\n").map(JSON.parse);
+  assert.equal(exported.length, total);
+  assert.equal(exported[0].command, "step 0");
+  assert.deepEqual(exported.map((e) => e.seq), exported.map((_, index) => index));
+  for (let index = 1; index < exported.length; index += 1) {
+    assert.equal(exported[index].prev_hash, exported[index - 1].hash);
+  }
+
+  // list() reaches back into archives, newest first.
+  const listed = store.list({ limit: total });
+  assert.equal(listed.length, total);
+  assert.equal(listed[0].command, `step ${total - 1}`);
+  assert.equal(listed[total - 1].command, "step 0");
+  assert.equal(store.list({ limit: 3 }).length, 3);
+
+  const result = new AuditStore(repoRoot).verify();
+  assert.equal(result.ok, true);
+  assert.equal(result.entries, total);
+  assert.equal(result.segments, files.length);
+});
+
+test("verify() catches tampering inside an archive and a deleted archive", () => {
+  const repoRoot = tempRepo();
+  const store = new AuditStore(repoRoot, { maxBytes: 1500 });
+  for (let index = 0; index < 40; index += 1) store.record({ action: "edit", path: `f${index}.txt` });
+  assert.equal(store.verify().ok, true);
+
+  const dir = path.join(repoRoot, ".cortex", "audit");
+  const archive = path.join(dir, "audit.jsonl.2");
+  const original = fs.readFileSync(archive, "utf8");
+  const lines = original.trim().split("\n");
+  const tampered = JSON.parse(lines[0]);
+  tampered.path = "innocent.txt";
+  lines[0] = JSON.stringify(tampered);
+  fs.writeFileSync(archive, `${lines.join("\n")}\n`, "utf8");
+  const broken = store.verify();
+  assert.equal(broken.ok, false);
+  assert.equal(broken.brokenAtSeq, tampered.seq);
+
+  fs.writeFileSync(archive, original, "utf8");
+  assert.equal(store.verify().ok, true);
+
+  // Removing the oldest archive leaves the next one pointing at a missing parent.
+  const firstOfSecond = JSON.parse(fs.readFileSync(archive, "utf8").split("\n")[0]);
+  fs.unlinkSync(path.join(dir, "audit.jsonl.1"));
+  fs.unlinkSync(archive);
+  const gap = store.verify();
+  assert.equal(gap.ok, false);
+  assert.ok(gap.brokenAtSeq > firstOfSecond.seq);
+});
+
+test("logs rotated by older versions (chain restarted at genesis) still verify", () => {
+  const repoRoot = tempRepo();
+  const dir = path.join(repoRoot, ".cortex", "audit");
+  const legacy = new AuditStore(repoRoot);
+  legacy.record({ action: "create", path: "old.txt" });
+  legacy.record({ action: "edit", path: "old.txt" });
+  fs.renameSync(path.join(dir, "audit.jsonl"), path.join(dir, "audit.jsonl.1"));
+  // Old rotation started the next file from scratch at seq 0 / genesis.
+  const restarted = new AuditStore(tempRepo());
+  restarted.record({ action: "delete", path: "old.txt" });
+  fs.copyFileSync(restarted.logPath, path.join(dir, "audit.jsonl"));
+
+  const store = new AuditStore(repoRoot, { maxBytes: 10 });
+  assert.equal(store.verify().ok, true);
+  store.record({ action: "create", path: "new.txt" }); // rotates the restarted file to .2
+  assert.deepEqual(auditFiles(repoRoot), ["audit.jsonl", "audit.jsonl.1", "audit.jsonl.2"]);
+  assert.equal(store.verify().ok, true);
+  assert.equal(store.list({ limit: 10 }).length, 4);
+});
+
+async function runWriters(repoRoot, writers, perWriter, options = {}) {
+  const { spawn } = require("node:child_process");
   const storePath = path.join(__dirname, "auditStore.js");
-  const writers = 6;
-  const perWriter = 40;
   const script = `
     const { AuditStore } = require(${JSON.stringify(storePath)});
-    const store = new AuditStore(${JSON.stringify(repoRoot)});
+    const store = new AuditStore(${JSON.stringify(repoRoot)}, ${JSON.stringify(options)});
     for (let i = 0; i < ${perWriter}; i += 1) {
       store.record({ action: "run_command", command: "w" + process.argv[1] + "-" + i });
     }
@@ -116,12 +201,30 @@ test("separate processes appending to one log keep a single valid chain", async 
     child.on("error", reject);
     child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`writer exited ${code}`))));
   })));
+}
+
+test("separate processes rotating one log never lose or fork entries", async () => {
+  const repoRoot = tempRepo();
+  await runWriters(repoRoot, 4, 30, { maxBytes: 3000 });
+  const store = new AuditStore(repoRoot);
+  const history = store.exportJsonl().trim().split("\n").map(JSON.parse);
+  assert.equal(history.length, 120);
+  assert.deepEqual(history.map((e) => e.seq), history.map((_, index) => index));
+  assert.ok(auditFiles(repoRoot).length > 3);
+  assert.equal(store.verify().ok, true);
+});
+
+test("separate processes appending to one log keep a single valid chain", async () => {
+  const repoRoot = tempRepo();
+  const writers = 6;
+  const perWriter = 40;
+  await runWriters(repoRoot, writers, perWriter);
 
   const store = new AuditStore(repoRoot);
   const entries = store.list({ limit: 100000 }).reverse();
   assert.equal(entries.length, writers * perWriter);
   assert.deepEqual(entries.map((e) => e.seq), entries.map((_, index) => index));
-  assert.deepEqual(store.verify(), { ok: true, brokenAtSeq: null });
+  assert.deepEqual(store.verify(), { ok: true, brokenAtSeq: null, segments: 1, entries: writers * perWriter });
   assert.equal(fs.existsSync(path.join(repoRoot, ".cortex", "audit", "audit.jsonl.lock")), false);
 });
 

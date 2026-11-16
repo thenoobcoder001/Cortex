@@ -79,13 +79,41 @@ function readLastEntry(filePath) {
   }
 }
 
+function readEntries(filePath) {
+  let text;
+  try {
+    text = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    try { out.push(JSON.parse(line)); } catch { /* skip corrupt line */ }
+  }
+  return out;
+}
+
+const ARCHIVE_NAME = /^audit\.jsonl\.(\d+)$/;
+
+function archiveIndex(filePath) {
+  return Number(ARCHIVE_NAME.exec(path.basename(filePath))?.[1] || 0);
+}
+
 // Append-only, hash-chained audit log of agent actions for a single repo.
 // Each line is a JSON record whose `hash` covers its own fields + the
 // previous record's hash, so any edit or deletion of a past line breaks
 // the chain from that point forward (tamper-evident, not tamper-proof —
 // see verify()).
+//
+// When audit.jsonl grows past maxBytes it is renamed to the next free
+// archive slot — audit.jsonl.1, .2, .3, ... (higher = newer) — and nothing is
+// ever overwritten or deleted. The chain (and seq) carries on across files:
+// the first record of the new audit.jsonl points at the last record of the
+// newest archive, so verify() covers the whole history.
 class AuditStore {
   constructor(repoRoot, options = {}) {
+    this.maxBytes = options.maxBytes ?? MAX_BYTES;
     this.lockStaleMs = options.lockStaleMs ?? LOCK_STALE_MS;
     this.lockTimeoutMs = options.lockTimeoutMs ?? LOCK_TIMEOUT_MS;
     this.setRepoRoot(repoRoot);
@@ -98,13 +126,38 @@ class AuditStore {
     this.lockPath = `${this.logPath}.lock`;
     this._seq = 0;
     this._lastHash = null;
+    this._archiveCache = new Map(); // archive path -> { key, summary }
+  }
+
+  // Archive files, oldest first.
+  _archivePaths() {
+    let names;
+    try {
+      names = fs.readdirSync(this.dir);
+    } catch {
+      return [];
+    }
+    return names
+      .filter((name) => ARCHIVE_NAME.test(name))
+      .map((name) => path.join(this.dir, name))
+      .sort((a, b) => archiveIndex(a) - archiveIndex(b));
+  }
+
+  // Every segment of the history, oldest first, ending with the live log.
+  _segmentPaths() {
+    return [...this._archivePaths(), this.logPath];
   }
 
   // Always re-reads the tail from disk (called under the write lock): another
   // process may have appended since this instance last wrote, and trusting an
   // in-memory tail is exactly what used to fork the chain.
   _tailHash() {
-    const last = readLastEntry(this.logPath);
+    let last = readLastEntry(this.logPath);
+    if (!last) {
+      // Fresh live log right after a rotation: continue from the newest archive.
+      const archives = this._archivePaths();
+      if (archives.length) last = readLastEntry(archives[archives.length - 1]);
+    }
     if (!last) {
       this._seq = 0;
       this._lastHash = GENESIS_HASH;
@@ -189,17 +242,20 @@ class AuditStore {
     }
   }
 
+  // Runs under the write lock, so two processes cannot claim the same slot.
+  // Archives are never overwritten or deleted.
   _rotateIfNeeded() {
+    let size;
     try {
-      const stat = fs.statSync(this.logPath);
-      if (stat.size > MAX_BYTES) {
-        fs.renameSync(this.logPath, `${this.logPath}.1`);
-        // Chain intentionally does not carry across rotation boundaries —
-        // the archived file remains independently verifiable.
-        this._seq = 0;
-        this._lastHash = GENESIS_HASH;
-      }
-    } catch { /* file may not exist yet */ }
+      size = fs.statSync(this.logPath).size;
+    } catch {
+      return; // live log does not exist yet
+    }
+    if (size <= this.maxBytes) return;
+    const archives = this._archivePaths();
+    let slot = archives.length ? archiveIndex(archives[archives.length - 1]) + 1 : 1;
+    while (fs.existsSync(`${this.logPath}.${slot}`)) slot += 1;
+    fs.renameSync(this.logPath, `${this.logPath}.${slot}`);
   }
 
   // entry: { source, provider, model, chatId, action, path, oldPath, newPath, command, exitCode, success, detail }
@@ -257,40 +313,100 @@ class AuditStore {
   }
 
   _readRaw() {
-    if (!fs.existsSync(this.logPath)) return [];
-    const lines = fs.readFileSync(this.logPath, "utf8").split("\n").filter(Boolean);
+    return readEntries(this.logPath);
+  }
+
+  // Checks one segment's internal chain and reports where it starts and ends,
+  // so verify() can check the links between segments.
+  _verifySegment(filePath) {
+    const entries = readEntries(filePath);
+    const summary = {
+      ok: true,
+      brokenAtSeq: null,
+      count: entries.length,
+      firstSeq: entries.length ? entries[0].seq ?? null : null,
+      firstPrev: entries.length ? entries[0].prev_hash : null,
+      lastHash: null,
+    };
+    let prevHash = summary.firstPrev;
+    for (const entry of entries) {
+      const { hash, ...rest } = entry;
+      if (rest.prev_hash !== prevHash || hashEntry(rest.prev_hash, rest) !== hash) {
+        return { ...summary, ok: false, brokenAtSeq: entry.seq ?? null };
+      }
+      prevHash = hash;
+    }
+    summary.lastHash = prevHash;
+    return summary;
+  }
+
+  // Archives never change once written, so their verification is cached by
+  // size + mtime; any later edit to an archive invalidates the cache entry.
+  _verifyArchive(filePath) {
+    let key = "";
+    try {
+      const stat = fs.statSync(filePath);
+      key = `${stat.size}:${stat.mtimeMs}`;
+    } catch { /* vanished: verify (as empty) without caching */ }
+    const cached = this._archiveCache.get(filePath);
+    if (key && cached && cached.key === key) return cached.summary;
+    const summary = this._verifySegment(filePath);
+    if (key) this._archiveCache.set(filePath, { key, summary });
+    return summary;
+  }
+
+  // Returns { ok, brokenAtSeq, segments, entries } over every archive plus the
+  // live log. brokenAtSeq is the first record whose hash no longer matches
+  // its contents or whose prev_hash does not point at the record before it
+  // (tamper, deletion or corruption). Each segment's first record must link
+  // to the previous segment's last record; the one accepted exception is a
+  // restart at the genesis hash, which logs rotated by older Cortex versions
+  // contain. A deleted oldest archive therefore shows up as a broken link.
+  verify() {
+    const summaries = [
+      ...this._archivePaths().map((file) => this._verifyArchive(file)),
+      this._verifySegment(this.logPath),
+    ];
+    let prevHash = GENESIS_HASH;
+    let entries = 0;
+    for (const summary of summaries) {
+      const result = { ok: false, brokenAtSeq: summary.brokenAtSeq, segments: summaries.length, entries };
+      if (!summary.ok) return result;
+      if (!summary.count) continue;
+      if (summary.firstPrev !== prevHash && summary.firstPrev !== GENESIS_HASH) {
+        return { ...result, brokenAtSeq: summary.firstSeq };
+      }
+      entries += summary.count;
+      prevHash = summary.lastHash;
+    }
+    return { ok: true, brokenAtSeq: null, segments: summaries.length, entries };
+  }
+
+  // Newest first, reading archives only as far back as the limit needs.
+  list({ limit = 200, action = "", provider = "" } = {}) {
+    const max = Math.max(1, Number(limit) || 200);
+    const segments = this._segmentPaths();
     const out = [];
-    for (const line of lines) {
-      try { out.push(JSON.parse(line)); } catch { /* skip corrupt line */ }
+    for (let index = segments.length - 1; index >= 0 && out.length < max; index -= 1) {
+      let entries = readEntries(segments[index]);
+      if (action) entries = entries.filter((e) => e.action === action);
+      if (provider) entries = entries.filter((e) => e.provider === provider);
+      for (let at = entries.length - 1; at >= 0 && out.length < max; at -= 1) out.push(entries[at]);
     }
     return out;
   }
 
-  // Returns { ok, brokenAtSeq } — brokenAtSeq is the first record whose
-  // stored hash no longer matches its recomputed hash (tamper or corruption).
-  verify() {
-    const entries = this._readRaw();
-    let prevHash = GENESIS_HASH;
-    for (const entry of entries) {
-      const { hash, ...rest } = entry;
-      if (rest.prev_hash !== prevHash || hashEntry(rest.prev_hash, rest) !== hash) {
-        return { ok: false, brokenAtSeq: entry.seq ?? null };
-      }
-      prevHash = hash;
-    }
-    return { ok: true, brokenAtSeq: null };
-  }
-
-  list({ limit = 200, action = "", provider = "" } = {}) {
-    let entries = this._readRaw();
-    if (action) entries = entries.filter((e) => e.action === action);
-    if (provider) entries = entries.filter((e) => e.provider === provider);
-    return entries.slice(-Math.max(1, Number(limit) || 200)).reverse();
-  }
-
+  // Full history, oldest first, as one JSONL document.
   exportJsonl() {
-    if (!fs.existsSync(this.logPath)) return "";
-    return fs.readFileSync(this.logPath, "utf8");
+    let out = "";
+    for (const file of this._segmentPaths()) {
+      let text = "";
+      try {
+        text = fs.readFileSync(file, "utf8");
+      } catch { /* live log may not exist yet */ }
+      if (text) out += text.endsWith("\n") ? text : `${text}\n`;
+    }
+    return out;
   }
 }
 
