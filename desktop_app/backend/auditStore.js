@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const os = require("node:os");
+const { redactSecrets } = require("./auditRedact");
 
 const GENESIS_HASH = "0".repeat(64);
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -223,13 +224,15 @@ class AuditStore {
       model: entry.model || "",
       chat_id: entry.chatId || "",
       action: entry.action || "",
-      path: entry.path || "",
-      old_path: entry.oldPath || "",
-      new_path: entry.newPath || "",
-      command: entry.command || "",
+      // Free-text fields are redacted before hashing, so the chain covers
+      // exactly what is stored and the secret never touches disk.
+      path: redactSecrets(String(entry.path || "")),
+      old_path: redactSecrets(String(entry.oldPath || "")),
+      new_path: redactSecrets(String(entry.newPath || "")),
+      command: redactSecrets(String(entry.command || "")),
       exit_code: entry.exitCode ?? null,
       success: entry.success !== false,
-      detail: entry.detail || "",
+      detail: redactSecrets(String(entry.detail || "")),
       prev_hash: prevHash,
     };
     const hash = hashEntry(prevHash, base);
