@@ -3,10 +3,22 @@ const path = require("node:path");
 
 const SKIP_NAMES = new Set([".git", ".cortex", ".venv", "__pycache__", "node_modules", "out"]);
 
-function walkFiles(root, limit = 200) {
-  const found = [];
+// Repo snapshots feed the audit trail's change detection, so their job is
+// completeness: the cap is high and, when it is hit, the snapshot says so
+// (see snapshotInfo) instead of silently looking complete.
+const SNAPSHOT_FILE_LIMIT = 50_000;
+// File text is kept only for diffs. Past this total, further files are
+// tracked by size + mtime alone so huge repos cannot exhaust memory.
+const SNAPSHOT_TEXT_BUDGET_BYTES = 32 * 1024 * 1024;
+const SNAPSHOT_INFO = Symbol("snapshotInfo");
+
+// Returns { files, truncated }: truncated is true when at least one more
+// file existed beyond `limit`.
+function walkFilesDetailed(root, limit = 200) {
+  const files = [];
   const stack = [root];
-  while (stack.length && found.length < limit) {
+  let truncated = false;
+  while (stack.length && !truncated) {
     const current = stack.pop();
     const entries = fs.readdirSync(current, { withFileTypes: true });
     for (const entry of entries) {
@@ -18,15 +30,27 @@ function walkFiles(root, limit = 200) {
         stack.push(fullPath);
         continue;
       }
-      if (entry.isFile()) {
-        found.push(fullPath);
+      if (!entry.isFile()) {
+        continue;
       }
-      if (found.length >= limit) {
+      if (files.length >= limit) {
+        truncated = true;
         break;
       }
+      files.push(fullPath);
     }
   }
-  return found;
+  return { files, truncated };
+}
+
+function walkFiles(root, limit = 200) {
+  return walkFilesDetailed(root, limit).files;
+}
+
+// { truncated, limit, fileCount } for a state built by snapshotRepoState,
+// or null for one that was not (e.g. a baseline loaded back from disk).
+function snapshotInfo(state) {
+  return (state && state[SNAPSHOT_INFO]) || null;
 }
 
 function buildUnifiedDiff(relativePath, beforeText, afterText) {
@@ -90,15 +114,22 @@ class RepoFileService {
     return walkFiles(path.resolve(root), limit);
   }
 
-  snapshotRepoState(root = this.repoRoot, { limit = 2000, maxFileBytes = 200_000 } = {}) {
+  snapshotRepoState(root = this.repoRoot, {
+    limit = SNAPSHOT_FILE_LIMIT,
+    maxFileBytes = 200_000,
+    maxTextBytes = SNAPSHOT_TEXT_BUDGET_BYTES,
+  } = {}) {
     const state = {};
-    for (const fullPath of walkFiles(path.resolve(root), limit)) {
+    const { files, truncated } = walkFilesDetailed(path.resolve(root), limit);
+    let textBytes = 0;
+    for (const fullPath of files) {
       const stats = fs.statSync(fullPath);
       const relativePath = path.relative(root, fullPath).replaceAll("\\", "/");
       let text = null;
-      if (stats.size <= maxFileBytes) {
+      if (stats.size <= maxFileBytes && textBytes + stats.size <= maxTextBytes) {
         try {
           text = fs.readFileSync(fullPath, "utf8");
+          textBytes += stats.size;
         } catch {
           text = null;
         }
@@ -110,6 +141,11 @@ class RepoFileService {
         text,
       };
     }
+    // Symbol key: invisible to Object.keys/JSON, cannot collide with a path.
+    Object.defineProperty(state, SNAPSHOT_INFO, {
+      value: { truncated, limit, fileCount: files.length },
+      enumerable: false,
+    });
     return state;
   }
 
@@ -147,7 +183,11 @@ class RepoFileService {
       }
       const beforeText = previous.text || "";
       const afterText = current.text || "";
-      if (beforeText === afterText) {
+      // Text is only kept for files under the size/text budget. When either
+      // side has none, size + mtime is the only evidence, and a changed file
+      // must still be reported rather than compared as "" === "".
+      const contentKnown = previous.text != null && current.text != null;
+      if (contentKnown && beforeText === afterText) {
         continue;
       }
       changes.push({
@@ -155,7 +195,7 @@ class RepoFileService {
         path: relativePath,
         oldPath: "",
         newPath: "",
-        diff: buildUnifiedDiff(relativePath, beforeText, afterText),
+        diff: contentKnown ? buildUnifiedDiff(relativePath, beforeText, afterText) : buildUnifiedDiff(relativePath, "", ""),
       });
     }
     return changes;
@@ -173,4 +213,6 @@ class RepoFileService {
 module.exports = {
   RepoFileService,
   buildUnifiedDiff,
+  snapshotInfo,
+  SNAPSHOT_FILE_LIMIT,
 };

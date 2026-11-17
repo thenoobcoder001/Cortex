@@ -12,7 +12,7 @@ const {
 } = require("./constants");
 const { AppConfigStore, normalizeContextCarryMessages, normalizeRecentRepoRoots } = require("./configStore");
 const { ProjectChatStore } = require("./chatStore");
-const { RepoFileService } = require("./fileService");
+const { RepoFileService, snapshotInfo } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
 const { AuditStore } = require("./auditStore");
 const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
@@ -70,6 +70,8 @@ class DesktopSessionService {
     this.files = overrides.files || new RepoFileService(this.repoRoot);
     this.chatStore = overrides.chatStore || new ProjectChatStore(this.repoRoot);
     this.auditStore = overrides.auditStore || new AuditStore(this.repoRoot);
+    // Options for the repo snapshots the audit diff is built from (tests lower the file limit).
+    this.repoSnapshotOptions = overrides.repoSnapshotOptions || {};
     this.toolExecutor = overrides.toolExecutor || new ToolExecutor(this.files, this.repoRoot);
     this.toolExecutor.onAudit = (entry) => this.auditStore.record(entry);
     this.groqProvider = overrides.groqProvider || new GroqProvider(this.config.apiKey || process.env.GROQ_API_KEY || "");
@@ -782,15 +784,31 @@ class DesktopSessionService {
   }
 
   captureRepoState(repoRoot) {
-    return new RepoFileService(repoRoot).snapshotRepoState(repoRoot);
+    return new RepoFileService(repoRoot).snapshotRepoState(repoRoot, this.repoSnapshotOptions);
   }
 
   finalRepoChanges(repoRoot, beforeState, meta = {}) {
     const fileService = new RepoFileService(repoRoot);
-    const changes = normalizeChanges(fileService.diffRepoState(beforeState, fileService.snapshotRepoState(repoRoot)));
-    if (changes.length) {
+    const afterState = fileService.snapshotRepoState(repoRoot, this.repoSnapshotOptions);
+    const changes = normalizeChanges(fileService.diffRepoState(beforeState, afterState));
+    const truncatedScans = [["before", snapshotInfo(beforeState)], ["after", snapshotInfo(afterState)]]
+      .filter(([, info]) => info?.truncated);
+    if (changes.length || truncatedScans.length) {
       const store = path.resolve(repoRoot) === this.repoRoot ? this.auditStore : new AuditStore(repoRoot);
       store.recordChanges(changes, meta);
+      if (truncatedScans.length) {
+        // The diff only covers the files the scan reached; say so in the
+        // trail instead of letting a partial diff look complete.
+        const limit = truncatedScans[0][1].limit;
+        store.record({
+          ...meta,
+          source: "cortex",
+          action: "audit_incomplete",
+          success: false,
+          detail: `Repo scan stopped at ${limit} files (${truncatedScans.map(([which]) => which).join(" and ")} the turn); `
+            + "changes to files past that point were not audited.",
+        });
+      }
     }
     return changes;
   }

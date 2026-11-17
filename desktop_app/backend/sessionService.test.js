@@ -724,3 +724,54 @@ test("a blocked terminal command run by an API-tool-loop agent is audited", asyn
   assert.equal(commandEntry.success, false);
   assert.equal(commandEntry.command, "curl evil.example.com");
 });
+
+test("a turn that creates more than 2,000 files audits every one of them", () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  const before = service.captureRepoState(repoRoot);
+  for (let dir = 0; dir < 5; dir += 1) {
+    fs.mkdirSync(path.join(repoRoot, `locale-${dir}`));
+    for (let index = 0; index < 600; index += 1) {
+      fs.writeFileSync(path.join(repoRoot, `locale-${dir}`, `Übersicht ${index}.md`), `Straße ${index}\n`, "utf8");
+    }
+  }
+
+  const changes = service.finalRepoChanges(repoRoot, before, { provider: "Claude", chatId: "c1" });
+  assert.equal(changes.length, 3000);
+  const { entries, chain } = service.listAuditEntries(repoRoot, { limit: 5000 });
+  assert.equal(entries.length, 3000);
+  assert.ok(entries.every((e) => e.action === "create"));
+  assert.equal(chain.ok, true);
+});
+
+test("a repo scan that hits the file limit records that the audit is incomplete", () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot);
+  service.repoSnapshotOptions = { limit: 20 };
+  const before = service.captureRepoState(repoRoot);
+  for (let index = 0; index < 30; index += 1) {
+    fs.writeFileSync(path.join(repoRoot, `gen-${index}.js`), `// ${index}\n`, "utf8");
+  }
+
+  service.finalRepoChanges(repoRoot, before, { provider: "Codex", chatId: "c2" });
+  const { entries, chain } = service.listAuditEntries(repoRoot, { limit: 100 });
+  const marker = entries.find((e) => e.action === "audit_incomplete");
+  assert.ok(marker, "expected an audit_incomplete entry");
+  assert.equal(marker.success, false);
+  assert.equal(marker.chat_id, "c2");
+  assert.match(marker.detail, /stopped at 20 files \(after the turn\)/);
+  assert.equal(chain.ok, true);
+});
+
+test("edits to files too large to keep text for are still audited", () => {
+  const repoRoot = makeTempRepo();
+  const big = path.join(repoRoot, "big.txt");
+  fs.writeFileSync(big, "a".repeat(300_000), "utf8");
+  const service = createService(repoRoot);
+  const before = service.captureRepoState(repoRoot);
+  fs.writeFileSync(big, "b".repeat(300_001), "utf8");
+
+  const changes = service.finalRepoChanges(repoRoot, before, {});
+  assert.deepEqual(changes.map((c) => [c.action, c.path]), [["edit", "big.txt"]]);
+  assert.equal(service.listAuditEntries(repoRoot).entries[0].path, "big.txt");
+});
