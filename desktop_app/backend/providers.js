@@ -15,8 +15,10 @@ const CLI_ABORT_SETTLE_MS = 6000;
 const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
 function which(command) {
+  // where.exe is a real executable, so no shell is needed (and `shell: true`
+  // with an args array triggers DEP0190 on Node 24).
   const checker = platform.isWin ? "where.exe" : "which";
-  const result = spawnSync(checker, [command], { encoding: "utf8", shell: platform.isWin, env: buildCleanEnv() });
+  const result = spawnSync(checker, [command], { encoding: "utf8", windowsHide: true, env: buildCleanEnv() });
   if (result.status !== 0) {
     return null;
   }
@@ -29,19 +31,18 @@ function spawnCommand(command, args, options = {}) {
     ...options,
     env: buildCleanEnv(options.env || {}),
   };
-  
+
   if (!platform.isWin) {
     return spawn(command, args, { ...effectiveOptions, shell: false });
   }
 
-  const shell = platform.getShell();
-  const commandLine = [platform.quoteArg(command), ...args.map(platform.quoteArg)].join(" ");
-  
-  return spawn(shell.command, [...shell.args, `"${commandLine}"`], {
+  // .exe files are spawned directly; .cmd shims and bare names go through
+  // cmd.exe with every argument escaped (see platform.windowsSpawnSpec).
+  const spec = platform.windowsSpawnSpec(command, args);
+  return spawn(spec.file, spec.args, {
     ...effectiveOptions,
+    ...spec.options,
     shell: false,
-    windowsHide: true,
-    windowsVerbatimArguments: true,
   });
 }
 
@@ -719,8 +720,10 @@ class ClaudeCliProvider {
     }
     const basedir = path.dirname(shim);
     const cliJs = path.join(basedir, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
-    if (which("node") && require("node:fs").existsSync(cliJs)) {
-      return { command: "node", argsPrefix: [cliJs] };
+    const node = which("node");
+    if (node && require("node:fs").existsSync(cliJs)) {
+      // Full path (node.exe on Windows) so it is spawned directly, not via cmd.exe.
+      return { command: node, argsPrefix: [cliJs] };
     }
     return { command: shim, argsPrefix: [] };
   }
@@ -1262,6 +1265,8 @@ class GeminiApiProvider {
 }
 
 module.exports = {
+  spawnCommand,
+  which,
   CodexProvider,
   GeminiCliProvider,
   ClaudeCliProvider,

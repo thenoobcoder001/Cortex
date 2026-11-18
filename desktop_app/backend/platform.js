@@ -89,6 +89,72 @@ function quoteArg(arg) {
   return `"${text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, '$1$1')}"`;
 }
 
+// ── Windows command lines for cmd.exe ────────────────────────────────────
+//
+// Node refuses to spawn .cmd/.bat files without a shell (CVE-2024-27980), and
+// `shell: true` with an args array is deprecated (DEP0190) because Node just
+// joins the args unescaped. So for batch shims (npm installs `claude.cmd`,
+// `codex.cmd`, `gemini.cmd`) we run `cmd.exe /d /s /c "<line>"` ourselves and
+// build <line> with the same escaping cross-spawn uses:
+//   1. quote each arg MSVCRT-style (so the final program's argv parser gets it
+//      back intact), then
+//   2. caret-escape every cmd metacharacter, including the quotes we just
+//      added, so cmd.exe never treats & | < > ( ) % ! etc. as syntax, and
+//   3. for .cmd/.bat targets, caret-escape a second time, because the shim
+//      re-parses its arguments when it expands %*.
+// Real executables (.exe/.com) skip all of this and are spawned directly.
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+
+function escapeCmdArg(arg, { doubleEscape = false } = {}) {
+  let text = String(arg ?? "");
+  // A run of backslashes before a quote: double them, then escape the quote.
+  text = text.replace(/(\\*)"/g, '$1$1\\"');
+  // Trailing backslashes would escape our closing quote: double them.
+  text = text.replace(/(\\*)$/, "$1$1");
+  text = `"${text}"`;
+  text = text.replace(CMD_META_CHARS, "^$1");
+  if (doubleEscape) text = text.replace(CMD_META_CHARS, "^$1");
+  return text;
+}
+
+function escapeCmdCommand(command) {
+  // Quote the program path too (it may contain spaces, e.g. Program Files),
+  // then caret-escape. cmd.exe strips the quotes when resolving the program.
+  return `"${String(command)}"`.replace(CMD_META_CHARS, "^$1");
+}
+
+function isBatchFile(command) {
+  return /\.(cmd|bat)$/i.test(String(command || ""));
+}
+
+function isWindowsExecutable(command) {
+  return /\.(exe|com)$/i.test(String(command || ""));
+}
+
+/**
+ * Returns `{ file, args, options }` needed to run `command args`
+ * on Windows without `shell: true`. Executables are spawned directly; anything
+ * else (batch shims, bare names) goes through `cmd.exe /d /s /c` with every
+ * argument escaped for cmd.exe. Arguments must not contain newlines: cmd.exe
+ * ends the command at the first one, so callers pass long text via stdin.
+ */
+function windowsSpawnSpec(command, args = []) {
+  const list = Array.isArray(args) ? args.map((a) => String(a ?? "")) : [];
+  if (isWindowsExecutable(command)) {
+    return { file: command, args: list, options: { windowsHide: true } };
+  }
+  if (list.some((a) => /[\r\n]/.test(a))) {
+    throw new Error("Arguments passed through cmd.exe cannot contain newlines.");
+  }
+  const doubleEscape = isBatchFile(command);
+  const line = [escapeCmdCommand(command), ...list.map((a) => escapeCmdArg(a, { doubleEscape }))].join(" ");
+  return {
+    file: process.env.COMSPEC || "cmd.exe",
+    args: ["/d", "/s", "/c", `"${line}"`],
+    options: { windowsHide: true, windowsVerbatimArguments: true },
+  };
+}
+
 module.exports = {
   isWin,
   isMac,
@@ -96,5 +162,8 @@ module.exports = {
   getShell,
   getAppDataDir,
   killProcessTree,
-  quoteArg
+  quoteArg,
+  escapeCmdArg,
+  escapeCmdCommand,
+  windowsSpawnSpec,
 };
