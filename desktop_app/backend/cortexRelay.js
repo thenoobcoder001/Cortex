@@ -29,6 +29,7 @@ const HEARTBEAT_MS            = 5_000;
 const RELAY_AUTH_TIMEOUT_MS   = 10_000;
 const RELAY_HMAC_MAX_SKEW_MS  = 5 * 60 * 1000;
 const RELAY_STREAM_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max per streaming request
+const MAX_SEEN_SIGNED_IDS     = 5_000;          // replay cache cap
 const MAX_PENDING_ABORTS      = 500;            // cap Set to prevent unbounded growth
 const RECONNECT_DELAY_MS      = 3_000;          // wait before auto-reconnect after drop
 
@@ -76,6 +77,7 @@ class CortexRelayClient {
     this._state          = "disconnected";
     this.socketId        = null;
     this._pendingAborts  = new Set();
+    this._seenSignedIds  = new Map(); // request_id -> ts, for replay rejection
     this._activeStreams   = new Set(); // active http.ClientRequest objects
     this._probePending   = null;
     this._connectResolve = null;
@@ -391,6 +393,26 @@ class CortexRelayClient {
     return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), expected);
   }
 
+  // Remembers each signed request_id until its timestamp leaves the skew
+  // window (after which _verifyRelayHmac rejects it anyway). Returns true when
+  // the id was already seen.
+  _isReplayedSignedRequest(requestId, ts) {
+    const now = Date.now();
+    const id = String(requestId);
+    if (this._seenSignedIds.has(id)) return true;
+    if (this._seenSignedIds.size >= MAX_SEEN_SIGNED_IDS) {
+      for (const [seenId, seenTs] of this._seenSignedIds) {
+        if (Math.abs(now - seenTs) > RELAY_HMAC_MAX_SKEW_MS) this._seenSignedIds.delete(seenId);
+      }
+      // Still full of fresh ids: drop the oldest rather than grow without bound.
+      while (this._seenSignedIds.size >= MAX_SEEN_SIGNED_IDS) {
+        this._seenSignedIds.delete(this._seenSignedIds.keys().next().value);
+      }
+    }
+    this._seenSignedIds.set(id, Number(ts) || now);
+    return false;
+  }
+
   // Messages the mobile app sends unsigned on purpose, even after pairing:
   // its GET /health reachability probe (also the first message a new phone
   // sends, which starts pairing) and stream aborts, which carry no path.
@@ -435,6 +457,13 @@ class CortexRelayClient {
     const isSigned = payload.hmac != null && payload.hmac !== "";
     if (isSigned && !this._verifyRelayHmac(payload)) {
       if (this.onAuditLog) this.onAuditLog({ source: "relay", device_id: fromDeviceId, event: "hmac_rejected", path: payload.path || "" });
+      return;
+    }
+    // The signature only proves a paired phone made the payload within the
+    // skew window; without this a relay could re-send a captured signed
+    // request (same request_id/path/ts) as many times as it liked.
+    if (isSigned && this.hmacSecret && this._isReplayedSignedRequest(request_id, payload.ts)) {
+      if (this.onAuditLog) this.onAuditLog({ source: "relay", device_id: fromDeviceId, event: "hmac_replay", path: payload.path || "" });
       return;
     }
 

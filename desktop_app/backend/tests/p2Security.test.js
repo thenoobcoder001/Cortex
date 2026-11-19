@@ -274,6 +274,22 @@ test("P2-I: a signed request from a re-registered device is auto-approved", asyn
   assert.deepEqual(autoApproved, ["phone-new-id"]);
 });
 
+test("P2-I: a replayed signed request is dropped (same request_id inside the skew window)", async () => {
+  const { client, calls, audit, sign } = capturingClient();
+  const ts = Date.now();
+  const payload = { type: "api_request", request_id: "once", method: "POST", path: "/api/chat/send", ts, hmac: sign("once", "/api/chat/send", ts) };
+  await client._handleRelay("mobile-1", { ...payload });
+  await client._handleRelay("mobile-1", { ...payload });
+  await client._handleRelay("mobile-1", { ...payload, body: { tampered: true } });
+  assert.deepEqual(calls, ["POST /api/chat/send"], "only the first copy reaches the backend");
+  assert.equal(audit.filter((e) => e.event === "hmac_replay").length, 2);
+
+  // A fresh request_id from the same phone still works.
+  const ts2 = Date.now();
+  await client._handleRelay("mobile-1", { type: "api_request", request_id: "twice", method: "GET", path: "/api/status", ts: ts2, hmac: sign("twice", "/api/status", ts2) });
+  assert.deepEqual(calls, ["POST /api/chat/send", "GET /api/status"]);
+});
+
 test("P2-I: malformed HMAC is rejected without throwing", async () => {
   const { client, calls, audit } = capturingClient();
   for (const hmac of ["zz", "abc", 42, "a".repeat(63)]) {

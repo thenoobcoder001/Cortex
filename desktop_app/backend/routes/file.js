@@ -2,11 +2,13 @@
 
 const fs   = require("node:fs");
 const path = require("node:path");
-const { exec } = require("node:child_process");
+const { execFile } = require("node:child_process");
 
+// execFile, not exec: no shell sits between us and git, so nothing in the
+// arguments can be read as shell syntax.
 function runGit(args, cwd) {
   return new Promise((resolve, reject) => {
-    exec(`git -c safe.directory=* ${args}`, { cwd, encoding: "utf8", timeout: 10000 }, (error, stdout, stderr) => {
+    execFile("git", ["-c", "safe.directory=*", ...args], { cwd, encoding: "utf8", timeout: 10000, windowsHide: true }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr || error.message || String(error)));
       else resolve(stdout || "");
     });
@@ -29,15 +31,15 @@ async function gitChanges(repoRoot) {
   try {
     let statusOut;
     try {
-      statusOut = await runGit("status --porcelain=v1 -uall", repoRoot);
+      statusOut = await runGit(["status", "--porcelain=v1", "-uall"], repoRoot);
     } catch (gitError) {
       return { changes: [], error: `git status failed: ${gitError.message}` };
     }
     if (!statusOut.trim()) return { changes: [], error: null };
 
     const [diffTracked, diffStaged] = await Promise.all([
-      runGit("diff HEAD", repoRoot).catch(() => ""),
-      runGit("diff --cached", repoRoot).catch(() => ""),
+      runGit(["diff", "HEAD"], repoRoot).catch(() => ""),
+      runGit(["diff", "--cached"], repoRoot).catch(() => ""),
     ]);
     const diffByFile = { ...parseDiffByFile(diffStaged), ...parseDiffByFile(diffTracked) };
     const changes = [];
@@ -77,7 +79,7 @@ async function gitChanges(repoRoot) {
 }
 
 async function handle(ctx) {
-  const { method, pathname, url, reply, service } = ctx;
+  const { method, pathname, url, reply, service, isLocal, assertRepoRoot } = ctx;
 
   if (method === "GET" && pathname === "/api/file") {
     const filePath = url.searchParams.get("path") || "";
@@ -101,7 +103,13 @@ async function handle(ctx) {
   }
 
   if (method === "GET" && pathname === "/api/workspace/git-status") {
-    const repoRoot = url.searchParams.get("repoRoot") || service.repoRoot || "";
+    const requested = url.searchParams.get("repoRoot") || "";
+    // Phones (relay or direct) may only ask about saved projects, the same
+    // allowlist the chat routes enforce.
+    if (requested && !isLocal) {
+      assertRepoRoot(requested, service);
+    }
+    const repoRoot = requested || service.repoRoot || "";
     reply(200, await gitChanges(repoRoot));
     return true;
   }
