@@ -29,8 +29,25 @@ function cortexPost(path, bodyObj) {
   });
 }
 
+// Pairing secrets (mobileToken, relayHmacSecret) are handed to a phone only
+// through the approve-device push. They must never be readable over the
+// network: a paired phone (relay) or a LAN/Tailscale caller holding the
+// mobile token could otherwise read the HMAC secret back, or pair more
+// devices. Only the desktop UI (loopback, no relay device header) may manage
+// the relay. The phone never calls /api/cortex/* itself.
+function isDesktopLocal(ctx) {
+  return ctx.isLocal === true;
+}
+
 async function handle(ctx) {
   const { method, pathname, body, reply, fail, relay, port } = ctx;
+
+  if (!pathname.startsWith("/api/cortex/")) return false;
+
+  if (!isDesktopLocal(ctx) && !(method === "GET" && pathname === "/api/cortex/status")) {
+    reply(403, { detail: "Relay management is only available on the desktop." });
+    return true;
+  }
 
   if (method === "POST" && pathname === "/api/cortex/send-verification") {
     const { email, password, mode } = body;
@@ -92,13 +109,16 @@ async function handle(ctx) {
       cfg.relaySessionExpiresAt = "";
       cfg.save();
     }
-    reply(200, {
+    const payload = {
       ...relay.status(),
       hasSavedSession: Boolean(cfg.cortexToken),
-      mobileToken: cfg.mobileToken,
-      relayHmacSecret: cfg.relayHmacSecret,
       relaySessionExpiresAt: cfg.relaySessionExpiresAt || "",
-    });
+    };
+    if (isDesktopLocal(ctx)) {
+      payload.mobileToken = cfg.mobileToken;
+      payload.relayHmacSecret = cfg.relayHmacSecret;
+    }
+    reply(200, payload);
     return true;
   }
 
