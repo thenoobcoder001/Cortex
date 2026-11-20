@@ -1,5 +1,7 @@
 "use strict";
 
+const { requesterLabel } = require("./approvals");
+
 async function handle(ctx) {
   const { method, pathname, url, body, reply, service, assertRepoRoot, isLocal } = ctx;
   const lite = !isLocal;
@@ -53,9 +55,11 @@ async function handle(ctx) {
   if (method === "POST" && pathname === "/api/chats/preferences") {
     assertRepoRoot(body.repoRoot || null, service);
     reply(200, service.updateChatPreferences({
-      toolSafetyMode: body.toolSafetyMode,
+      toolSafetyMode: body.toolSafetyMode || null,
+      permissionMode: body.permissionMode || null,
       chatId:         body.chatId  || null,
       repoRoot:       body.repoRoot || null,
+      by:             requesterLabel(ctx),
     }, { lite }));
     return true;
   }

@@ -7,6 +7,7 @@ const {
   CODEX_MODELS,
 } = require("./constants");
 const { buildResourceSnapshot } = require("./resourceMonitor");
+const { DEFAULT_PERMISSION_MODE, describePermissionMode } = require("./permissionModes");
 
 function modelFamily(model) {
   if (String(model).startsWith("claude:")) return "claude";
@@ -90,6 +91,14 @@ function buildSnapshot(service, { lite = false, includeChanges = true } = {}) {
       openaiApiKey: service.config.openaiApiKey,
       promptPreset: service.promptPreset,
       toolSafetyMode: service.toolReadOnly ? "read" : "write",
+      permissionMode: service.permissionMode || DEFAULT_PERMISSION_MODE,
+      // How the active chat's mode runs on the selected model (fallbacks
+      // and their explanation for the composer).
+      permissionModeInfo: describePermissionMode(
+        service.model,
+        service.permissionMode || DEFAULT_PERMISSION_MODE,
+        { claudeBridge: Boolean(service.approvalBridgeUrl) },
+      ),
       assistantMemory: service.config.assistantMemory || "",
       contextCarryMessages: service.config.contextCarryMessages ?? 5,
       remoteAccessEnabled: Boolean(service.config.remoteAccessEnabled),
@@ -113,6 +122,8 @@ function buildSnapshot(service, { lite = false, includeChanges = true } = {}) {
       : "",
     providerName: providerNameForModel(service.model),
     runningChatIds: service.requestRegistry.ids(),
+    pendingApprovals: service.approvalRegistry ? service.approvalRegistry.pending() : [],
+    waitingChatIds: service.approvalRegistry ? service.approvalRegistry.waitingChatIds() : [],
     resources: buildResourceSnapshot(service.requestRegistry),
     interruptedChatIds: [...service.interruptedRuns.keys()].sort(),
     interruptedRuns: [...service.interruptedRuns.values()].map((entry) => ({

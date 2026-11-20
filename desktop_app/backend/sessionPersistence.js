@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { nowIso, normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
+const { chatPermissionMode } = require("./permissionModes");
 
 function initialRepoRoot(config) {
   if (config.repoRoot && fs.existsSync(config.repoRoot) && fs.statSync(config.repoRoot).isDirectory()) {
@@ -16,6 +17,7 @@ function persistConfig(service) {
   service.config.modelExplicit = Boolean(service.modelExplicit);
   service.config.promptPreset = service.promptPreset;
   service.config.toolSafetyMode = service.toolReadOnly ? "read" : "write";
+  service.config.permissionMode = service.permissionMode || "";
   service.config.geminiSessionId = service.geminiCliProvider.sessionId || "";
   service.config.codexSessionId = service.codexProvider.sessionId || "";
   service.config.interruptedRuns = [...service.interruptedRuns.values()];
@@ -53,7 +55,7 @@ function restoreActiveChat(service) {
   service.messages = normalizeMessages(payload.messages);
   service.changes = normalizeChanges(payload.changes);
   service.activePlan = normalizePlan(payload.plan);
-  service.toolReadOnly = String(payload.tool_safety_mode || "write") === "read";
+  service.permissionMode = chatPermissionMode(payload);
   service.toolExecutor.readOnly = service.toolReadOnly;
 }
 
@@ -76,14 +78,16 @@ function clearActiveRun(service, chatId) {
   persistConfig(service);
 }
 
-function saveCompletedChat(service, { chatStore, chatId, messages, model, providerState, toolSafetyMode, repoRoot, changes, plan = null }) {
+function saveCompletedChat(service, { chatStore, chatId, messages, model, providerState, toolSafetyMode, permissionMode, repoRoot, changes, plan = null }) {
   chatStore.saveChat(chatId, messages, {
     model,
     providerState,
     changes,
     toolSafetyMode,
+    permissionMode,
     plan,
   });
+  service.approvalRegistry?.cancelChat(chatId, "turn finished");
   if (service.activeChatId === chatId && service.repoRoot === repoRoot) {
     service.messages = normalizeMessages(messages);
     service.changes = normalizeChanges(changes);

@@ -60,6 +60,9 @@
       "category": "Development",
       "maintainer": "CHIRAG <support@cortex-ai.com>"
     },
+    "asarUnpack": [
+      "backend/approvalMcpServer.js"
+    ],
     "npmRebuild": false
   },
   "dependencies": {

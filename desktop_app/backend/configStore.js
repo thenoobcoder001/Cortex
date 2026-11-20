@@ -61,6 +61,7 @@ class AppConfigStore {
     this.openaiApiKey = "";
     this.promptPreset = "code";
     this.toolSafetyMode = "write";
+    this.permissionMode = "";
     this.assistantMemory = "";
     this.contextCarryMessages = 5;
     this.remoteAccessEnabled = false;
@@ -113,6 +114,7 @@ class AppConfigStore {
         config.openaiApiKey = String(raw.openai_api_key || raw.openaiApiKey || "");
         config.promptPreset = String(raw.prompt_preset || raw.promptPreset || "code") || "code";
         config.toolSafetyMode = String(raw.tool_safety_mode || raw.toolSafetyMode || "write") || "write";
+        config.permissionMode = String(raw.permission_mode || raw.permissionMode || "");
         config.assistantMemory = String(raw.assistant_memory || raw.assistantMemory || "");
         config.contextCarryMessages = normalizeContextCarryMessages(
           raw.context_carry_messages ?? raw.contextCarryMessages,
@@ -176,6 +178,7 @@ class AppConfigStore {
           openai_api_key: this.openaiApiKey,
           prompt_preset: this.promptPreset,
           tool_safety_mode: this.toolSafetyMode,
+          permission_mode: this.permissionMode,
           assistant_memory: this.assistantMemory,
           context_carry_messages: this.contextCarryMessages,
           remote_access_enabled: this.remoteAccessEnabled,
@@ -214,6 +217,7 @@ class AppConfigStore {
     this.openaiApiKey = "";
     this.promptPreset = "code";
     this.toolSafetyMode = "write";
+    this.permissionMode = "";
     this.assistantMemory = "";
     this.contextCarryMessages = 5;
     this.remoteAccessEnabled = false;

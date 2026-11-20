@@ -1,8 +1,16 @@
 const { ProjectChatStore } = require("./chatStore");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { DEFAULT_MODEL, MAX_TOOL_ROUNDS, TOOLS, resolveModelId } = require("./constants");
 const { normalizeMessages, normalizeChanges, nowIso } = require("./sessionShared");
 const { isInterruptError, toUserFacingProviderError } = require("./providers");
+const {
+  apiToolGate,
+  chatPermissionMode,
+  describePermissionMode,
+  providerFamily,
+  resolveRequestPermissionMode,
+} = require("./permissionModes");
 
 function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
   const titleSource = String(userPrompt || "").split(/\r?\n/, 1)[0].trim() || "Implementation Plan";
@@ -34,16 +42,22 @@ async function *drainQueuedEvents(worker, queue, takeWaiter) {
   }
 }
 
-async function *runCliRequest(provider, messages, model, service, chatId) {
+async function *runCliRequest(provider, messages, model, service, chatId, extraOptions = {}) {
   const queue = [];
   const waiter = { current: null };
   let cliError = null;
   let finalText = "";
   const worker = { done: false };
+  // Approval requests raised while the CLI runs go out on the same stream.
+  const unsubscribe = service.approvalRegistry.subscribe(chatId, (event) => {
+    queue.push(service.event(event.type, event));
+    waiter.current?.();
+  });
 
   const job = (async () => {
     try {
       finalText = await provider.chatCompletionStreamRaw(messages, model, {
+        ...extraOptions,
         signal: service.requestRegistry.get(chatId)?.controller.signal || null,
         onProcessStart: (pid) => service.requestRegistry.attachProcess(chatId, pid),
         onOutput: (chunk) => {
@@ -60,8 +74,12 @@ async function *runCliRequest(provider, messages, model, service, chatId) {
     }
   })();
 
-  for await (const event of drainQueuedEvents(worker, queue, waiter)) {
-    yield event;
+  try {
+    for await (const event of drainQueuedEvents(worker, queue, waiter)) {
+      yield event;
+    }
+  } finally {
+    unsubscribe();
   }
 
   await job;
@@ -96,7 +114,7 @@ function cliProviderEntry(model, service) {
   return null;
 }
 
-async function *sendMessageEvents(service, text, { chatId = null, repoRoot = null, model = null, promptPreset = null, toolSafetyMode = null } = {}) {
+async function *sendMessageEvents(service, text, { chatId = null, repoRoot = null, model = null, promptPreset = null, toolSafetyMode = null, permissionMode = null } = {}) {
   const message = String(text || "").trim();
   if (!message) {
     throw new Error("Message is required.");
@@ -114,8 +132,13 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   const existingPlan = existingPayload?.plan && typeof existingPayload.plan === "object"
     ? { ...existingPayload.plan }
     : null;
-  const requestToolSafetyMode = String(toolSafetyMode || existingPayload?.tool_safety_mode || (service.toolReadOnly ? "read" : "write")).trim().toLowerCase() === "read" ? "read" : "write";
-  const requestToolReadOnly = requestToolSafetyMode === "read";
+  const requestPermissionMode = resolveRequestPermissionMode({
+    permissionMode,
+    toolSafetyMode,
+    stored: existingPayload ? chatPermissionMode(existingPayload) : null,
+    fallback: service.permissionMode,
+  });
+  const requestToolReadOnly = requestPermissionMode === "read-only";
   const provider = service.providerForRequest(requestModel);
   if (!provider.connected) {
     throw new Error(`${service.providerNameForModel(requestModel)} is not ready for requests.`);
@@ -131,8 +154,13 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   restoreCliSession(service.claudeProvider,    existingProviderState.claude_session_id);
   restoreCliSession(service.hermesProvider,    existingProviderState.hermes_session_id);
 
-  // Codex sessions are coupled to tool safety mode; reset when mode changes.
-  if (service.codexProvider.sessionId && existingProviderState.codex_tool_safety_mode !== requestToolSafetyMode) {
+  // Codex threads keep the sandbox they started with; start a fresh thread
+  // when the permission mode changes so the new mode really applies.
+  const storedCodexMode = existingProviderState.codex_permission_mode
+    || (existingProviderState.codex_tool_safety_mode
+      ? chatPermissionMode({ tool_safety_mode: existingProviderState.codex_tool_safety_mode })
+      : "");
+  if (service.codexProvider.sessionId && storedCodexMode !== requestPermissionMode) {
     clearCliSession(service.codexProvider);
   }
 
@@ -156,7 +184,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       model: requestModel,
       providerState: {},
       changes: storedChanges,
-      toolSafetyMode: requestToolSafetyMode,
+      permissionMode: requestPermissionMode,
     });
     if (service.repoRoot === requestRepoRoot && !service.activeChatId) {
       service.activeChatId = chatId;
@@ -166,7 +194,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       model: requestModel,
       providerState: existingProviderState,
       changes: storedChanges,
-      toolSafetyMode: requestToolSafetyMode,
+      permissionMode: requestPermissionMode,
       plan: existingPlan,
     });
   }
@@ -174,7 +202,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   if (service.repoRoot === requestRepoRoot && service.activeChatId === chatId) {
     service.messages = normalizeMessages(baseMessages);
     service.changes = normalizeChanges(storedChanges);
-    service.toolReadOnly = requestToolReadOnly;
+    service.permissionMode = requestPermissionMode;
     service.toolExecutor.readOnly = requestToolReadOnly;
     service.activeChatModel = requestModel;
   }
@@ -187,40 +215,56 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   yield service.event("status", { phase: "started", message: `Running ${service.providerNameForModel(requestModel)}...`, chatId });
 
   const auditMeta = { provider: service.providerNameForModel(requestModel), model: requestModel, chatId };
+  const modeInfo = describePermissionMode(requestModel, requestPermissionMode, { claudeBridge: Boolean(service.approvalBridgeUrl) });
+  if (modeInfo.note) {
+    yield service.event("status", { phase: "permissions", message: modeInfo.note, permissionMode: modeInfo, chatId });
+  }
+  const approvalContext = { provider: auditMeta.provider, model: requestModel, repoRoot: requestRepoRoot };
+  // Providers call this to ask the user; it resolves to { decision, by }.
+  const askApproval = (summary) => service.approvalRegistry.request(chatId, { ...summary, ...approvalContext }).promise;
+  let bridgeToken = "";
+
+  const finishTurn = (finalText, changes) => {
+    const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
+    return service.saveCompletedChat({
+      chatStore: requestChatStore,
+      chatId,
+      messages: [...baseMessages, { role: "assistant", content: finalText }],
+      model: requestModel,
+      providerState: changes.providerState,
+      permissionMode: requestPermissionMode,
+      repoRoot: requestRepoRoot,
+      changes: changes.finalChanges,
+      plan,
+    });
+  };
 
   try {
     const providerState = {};
     const baseForProvider = service.messagesWithContext([...baseMessages], effectivePromptPreset);
     const requestOptions = { signal: service.requestRegistry.get(chatId)?.controller.signal || null };
 
-    // Pass tool-safety mode to providers that honour it.
-    if (requestModel.startsWith("claude:")) service.claudeProvider.toolReadOnly = requestToolReadOnly;
-    if (requestModel.startsWith("codex:"))  service.codexProvider.toolReadOnly  = requestToolReadOnly;
-
     const cliEntry = cliProviderEntry(requestModel, service);
     if (cliEntry) {
+      const cliOptions = { permissionMode: requestPermissionMode, askApproval };
+      // Claude asks through a local MCP server that calls back into Cortex;
+      // the per-turn token ties those calls to this chat.
+      if (providerFamily(requestModel) === "claude" && modeInfo.interactive && service.approvalBridgeUrl) {
+        bridgeToken = crypto.randomBytes(24).toString("hex");
+        service.approvalBridges.set(bridgeToken, { chatId, ask: askApproval });
+        cliOptions.approvalBridge = { url: service.approvalBridgeUrl, token: bridgeToken };
+      }
       let finalText = "";
-      const cliStream = runCliRequest(cliEntry.provider, baseForProvider, requestModel, service, chatId);
+      const cliStream = runCliRequest(cliEntry.provider, baseForProvider, requestModel, service, chatId, cliOptions);
       while (true) {
         const next = await cliStream.next();
         if (next.done) { finalText = String(next.value || ""); break; }
         yield next.value;
       }
       providerState[cliEntry.sessionKey] = cliEntry.provider.sessionId || "";
-      if (requestModel.startsWith("codex:")) providerState.codex_tool_safety_mode = requestToolSafetyMode;
+      if (requestModel.startsWith("codex:")) providerState.codex_permission_mode = requestPermissionMode;
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
-      const snapshot = service.saveCompletedChat({
-        chatStore: requestChatStore,
-        chatId,
-        messages: [...baseMessages, { role: "assistant", content: finalText }],
-        model: requestModel,
-        providerState,
-        toolSafetyMode: requestToolSafetyMode,
-        repoRoot: requestRepoRoot,
-        changes: finalChanges,
-        plan,
-      });
+      const snapshot = finishTurn(finalText, { providerState, finalChanges });
       yield service.event("assistant", { text: finalText, chatId });
       yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
       return;
@@ -229,18 +273,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     if (!service.requestUsesTools(requestModel, message, effectivePromptPreset)) {
       const finalText = await provider.chatCompletion(baseForProvider, requestModel, requestOptions);
       const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-      const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
-      const snapshot = service.saveCompletedChat({
-        chatStore: requestChatStore,
-        chatId,
-        messages: [...baseMessages, { role: "assistant", content: finalText }],
-        model: requestModel,
-        providerState,
-        toolSafetyMode: requestToolSafetyMode,
-        repoRoot: requestRepoRoot,
-        changes: finalChanges,
-        plan,
-      });
+      const snapshot = finishTurn(finalText, { providerState, finalChanges });
       yield service.event("assistant", { text: finalText, chatId });
       yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
       return;
@@ -253,18 +286,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       const [finalText, assistantMessage, toolCalls] = await provider.chatWithTools(workingMessages, requestModel, TOOLS, requestOptions);
       if (finalText != null) {
         const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-        const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, finalText) : existingPlan;
-        const snapshot = service.saveCompletedChat({
-          chatStore: requestChatStore,
-          chatId,
-          messages: [...baseMessages, { role: "assistant", content: finalText }],
-          model: requestModel,
-          providerState,
-          toolSafetyMode: requestToolSafetyMode,
-          repoRoot: requestRepoRoot,
-          changes: finalChanges,
-          plan,
-        });
+        const snapshot = finishTurn(finalText, { providerState, finalChanges });
         yield service.event("assistant", { text: finalText, chatId });
         yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools, snapshot, chatId });
         return;
@@ -273,17 +295,36 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       if (!Array.isArray(toolCalls) || !toolCalls.length) break;
       for (const toolCall of toolCalls) {
         usedTools += 1;
+        const toolName = toolCall.function.name;
         const args = JSON.parse(toolCall.function.arguments || "{}");
-        yield service.event("tool_call", { name: toolCall.function.name, args, chatId });
+        yield service.event("tool_call", { name: toolName, args, chatId });
         service.toolExecutor.readOnly = requestToolReadOnly;
         service.toolExecutor.auditMeta = auditMeta;
-        const [result, change] = await service.toolExecutor.executeWithMetadata(toolCall.function.name, args);
+        // Supervised / auto-accept-edits: ask before the tool touches anything.
+        if (apiToolGate(requestPermissionMode, toolName) === "ask") {
+          const summary = service.toolExecutor.approvalSummary(toolName, args);
+          const { approval, promise } = service.approvalRegistry.request(chatId, { ...summary, ...approvalContext });
+          if (!approval.autoResolved) {
+            yield service.event("approval_request", { chatId, approval });
+          }
+          const answer = await promise;
+          if (!approval.autoResolved) {
+            yield service.event("approval_resolved", { chatId, approvalId: approval.id, decision: answer.decision, by: answer.by });
+          }
+          if (answer.decision !== "approve") {
+            const declined = `ERROR: the user declined this action (${answer.by}). Do not retry it; continue without it or ask the user.`;
+            yield service.event("tool_result", { name: toolName, result: declined, change: null, chatId });
+            workingMessages.push({ role: "tool", tool_call_id: toolCall.id, name: toolName, content: declined });
+            continue;
+          }
+        }
+        const [result, change] = await service.toolExecutor.executeWithMetadata(toolName, args);
         if (change) storedChanges = [...storedChanges, change];
-        yield service.event("tool_result", { name: toolCall.function.name, result, change, chatId });
+        yield service.event("tool_result", { name: toolName, result, change, chatId });
         workingMessages.push({
           role: "tool",
           tool_call_id: toolCall.id,
-          name: toolCall.function.name,
+          name: toolName,
           content: result,
         });
       }
@@ -291,18 +332,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
 
     const fallbackText = await provider.chatCompletion(workingMessages, requestModel, requestOptions);
     const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-    const plan = shouldCreatePlan ? buildPlanMeta(requestChatStore, chatId, message, fallbackText) : existingPlan;
-    const snapshot = service.saveCompletedChat({
-      chatStore: requestChatStore,
-      chatId,
-      messages: [...baseMessages, { role: "assistant", content: fallbackText }],
-      model: requestModel,
-      providerState,
-      toolSafetyMode: requestToolSafetyMode,
-      repoRoot: requestRepoRoot,
-      changes: finalChanges,
-      plan,
-    });
+    const snapshot = finishTurn(fallbackText, { providerState, finalChanges });
     yield service.event("assistant", { text: fallbackText, chatId });
     yield service.event("completed", { assistantMessage: fallbackText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
   } catch (error) {
@@ -327,6 +357,10 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     });
     service.persistConfig();
     yield service.event("error", { message: String(userError?.message || userError), chatId });
+  } finally {
+    if (bridgeToken) service.approvalBridges.delete(bridgeToken);
+    // Nothing may stay pending once the turn is over.
+    service.approvalRegistry.cancelChat(chatId, "turn ended");
   }
 }
 

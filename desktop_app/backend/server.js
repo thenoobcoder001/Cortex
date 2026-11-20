@@ -21,6 +21,7 @@ const tailscaleRoutes = require("./routes/tailscale");
 const fileRoutes     = require("./routes/file");
 const androidRoutes  = require("./routes/android");
 const auditRoutes    = require("./routes/audit");
+const approvalRoutes = require("./routes/approvals");
 
 // ── Audit log ─────────────────────────────────────────────────────────────
 const AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024;
@@ -294,6 +295,7 @@ const ROUTE_HANDLERS = [
   tailscaleRoutes,
   androidRoutes,
   auditRoutes,
+  approvalRoutes,
 ];
 
 // ── Server ────────────────────────────────────────────────────────────────
@@ -388,6 +390,10 @@ function startBackendServer({ host = "127.0.0.1", port = 8765, service = null, t
     server.once("error", reject);
     server.listen(port, host, () => {
       const boundPort = server.address().port;
+      // The Claude approval bridge always calls back over loopback.
+      if (!effectiveService.approvalBridgeUrl) {
+        effectiveService.approvalBridgeUrl = `http://127.0.0.1:${boundPort}/api/approvals/bridge`;
+      }
       resolve({
         server,
         service:         effectiveService,

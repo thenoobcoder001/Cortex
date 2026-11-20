@@ -4,6 +4,8 @@ const readline = require("node:readline");
 const { buildCleanEnv } = require("./androidEnv");
 const platform = require("./platform");
 const { resolveModelId } = require("./constants");
+const { codexPolicy, claudePermissionArgs, geminiApprovalMode, normalizePermissionMode } = require("./permissionModes");
+const { writeClaudeMcpConfig } = require("./approvalBridge");
 
 // Strip ANSI escape sequences from PTY output
 function stripAnsi(str) {
@@ -112,6 +114,27 @@ function codexErrorText(error) {
   }
 }
 
+// Asks the user through Cortex; with no handler (e.g. a connection test) the
+// answer is always "decline", never a silent approve.
+async function askOrDecline(askApproval, summary) {
+  if (typeof askApproval !== "function") {
+    return { decision: "decline", by: "no approval handler" };
+  }
+  try {
+    return await askApproval(summary);
+  } catch {
+    return { decision: "decline", by: "approval error" };
+  }
+}
+
+function codexFileChangeSummary(changes) {
+  const list = Array.isArray(changes) ? changes : [];
+  return {
+    path: list.map((change) => String(change?.path || "")).filter(Boolean).join(", "),
+    diff: list.map((change) => String(change?.diff || "")).filter(Boolean).join("\n"),
+  };
+}
+
 class InterruptError extends Error {
   constructor(message = "Request interrupted.", partialText = "") {
     super(message);
@@ -189,7 +212,6 @@ class CodexProvider {
     this.apiKey = String(apiKey || "").trim();
     this.sessionId = "";
     this.sessionMode = "fresh";
-    this.toolReadOnly = false;
     this._cliAvailable = null;
   }
 
@@ -299,7 +321,83 @@ class CodexProvider {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  async chatCompletionAppServerStream(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
+  // Answers an app-server request for approval (or anything else the server
+  // asks the client). Unknown requests get a JSON-RPC error so the turn
+  // never hangs waiting for us.
+  async answerServerRequest(child, message, { askApproval, items }) {
+    const params = message.params || {};
+    const send = (payload) => {
+      try {
+        this.writeAppServerMessage(child, { id: message.id, ...payload });
+      } catch {
+        // The process may already be gone (interrupt); nothing to answer.
+      }
+    };
+    const approved = (answer) => answer.decision === "approve";
+
+    switch (message.method) {
+      case "item/commandExecution/requestApproval": {
+        const item = items.get(String(params.itemId || "")) || {};
+        const answer = await askOrDecline(askApproval, {
+          kind: "command",
+          toolName: "shell",
+          command: String(params.command || item.command || ""),
+          cwd: String(params.cwd || item.cwd || ""),
+          reason: String(params.reason || ""),
+        });
+        send({ result: { decision: approved(answer) ? "accept" : "decline" } });
+        return;
+      }
+      case "item/fileChange/requestApproval": {
+        const item = items.get(String(params.itemId || "")) || {};
+        const answer = await askOrDecline(askApproval, {
+          kind: "file_change",
+          toolName: "apply_patch",
+          ...codexFileChangeSummary(item.changes),
+          reason: String(params.reason || ""),
+        });
+        send({ result: { decision: approved(answer) ? "accept" : "decline" } });
+        return;
+      }
+      case "execCommandApproval": {
+        const answer = await askOrDecline(askApproval, {
+          kind: "command",
+          toolName: "shell",
+          command: Array.isArray(params.command) ? params.command.join(" ") : String(params.command || ""),
+          cwd: String(params.cwd || ""),
+          reason: String(params.reason || ""),
+        });
+        send({ result: { decision: approved(answer) ? "approved" : "denied" } });
+        return;
+      }
+      case "applyPatchApproval": {
+        const files = params.fileChanges && typeof params.fileChanges === "object" ? params.fileChanges : {};
+        const answer = await askOrDecline(askApproval, {
+          kind: "file_change",
+          toolName: "apply_patch",
+          path: Object.keys(files).join(", "),
+          diff: Object.values(files).map((change) => String(change?.unified_diff || change?.content || "")).join("\n"),
+          reason: String(params.reason || ""),
+        });
+        send({ result: { decision: approved(answer) ? "approved" : "denied" } });
+        return;
+      }
+      case "item/permissions/requestApproval": {
+        const answer = await askOrDecline(askApproval, {
+          kind: "permissions",
+          toolName: "permissions",
+          path: String(params.cwd || ""),
+          reason: [params.reason, JSON.stringify(params.permissions || {})].filter(Boolean).join(" "),
+        });
+        send({ result: approved(answer) ? { permissions: params.permissions || {}, scope: "turn" } : { permissions: {} } });
+        return;
+      }
+      default:
+        send({ error: { code: -32601, message: `Cortex does not handle ${message.method}.` } });
+    }
+  }
+
+  async chatCompletionAppServerStream(messages, model, { onOutput = null, signal = null, onProcessStart = null, permissionMode = "full-access", askApproval = null } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -322,6 +420,10 @@ class CodexProvider {
     let lastErrorMessage = "";
     let aborted = false;
     let abortListener = null;
+    // Command and file-change items by id: approval requests only carry the
+    // item id, the command / diff arrive on item/started.
+    const items = new Map();
+    const policy = codexPolicy(permissionMode);
 
     const sendRequest = (method, params, timeoutMs = 20000) =>
       new Promise((resolve, reject) => {
@@ -352,6 +454,12 @@ class CodexProvider {
           return;
         }
 
+        // Server -> client request (has both an id and a method).
+        if (message.id !== undefined && message.method) {
+          void this.answerServerRequest(child, message, { askApproval, items });
+          return;
+        }
+
         if (message.id !== undefined) {
           const request = pending.get(String(message.id));
           if (!request) {
@@ -373,6 +481,13 @@ class CodexProvider {
         }
         if (message.method === "turn/started") {
           currentTurnId = String(message.params?.turn?.id || currentTurnId || "");
+          return;
+        }
+        if (message.method === "item/started" || message.method === "item/updated") {
+          const item = message.params?.item;
+          if (item?.id && (item.type === "commandExecution" || item.type === "fileChange")) {
+            items.set(String(item.id), item);
+          }
           return;
         }
         if (message.method === "item/agentMessage/delta") {
@@ -443,8 +558,10 @@ class CodexProvider {
 
       const reasoningEffort = this.cliReasoningEffort(model);
       const threadStartParams = {
-        approvalPolicy: "never",
-        sandbox: this.toolReadOnly ? "read-only" : "workspace-write",
+        approvalPolicy: policy.approvalPolicy,
+        // Approval requests come to this client, never to Codex's own reviewer.
+        approvalsReviewer: "user",
+        sandbox: policy.sandbox,
         cwd: this.repoRoot,
         model: this.cliModelName(model),
         ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -486,6 +603,7 @@ class CodexProvider {
           },
         ],
         model: this.cliModelName(model),
+        approvalPolicy: policy.approvalPolicy,
         ...(reasoningEffort ? { reasoningEffort } : {}),
       });
 
@@ -563,17 +681,19 @@ class GeminiCliProvider {
     return resolveModelId(model).slice("gemini-cli:".length);
   }
 
-  buildArgs(model) {
+  buildArgs(model, { permissionMode = "full-access" } = {}) {
     const args = [
       "--prompt",
       "",
       "--output-format",
       "stream-json",
-      // "auto_edit" auto-approves edit tools but prompts for anything else.
-      // "yolo" auto-approves everything including writes to arbitrary paths —
-      // too permissive for remote operation.
+      // Headless Gemini CLI cannot ask anyone. "default" refuses every tool
+      // that needs confirmation (read-only / supervised); "auto_edit"
+      // auto-approves edit tools and refuses the rest. "yolo" auto-approves
+      // everything including writes to arbitrary paths — too permissive for
+      // remote operation, so it is never used.
       "--approval-mode",
-      "auto_edit",
+      geminiApprovalMode(permissionMode),
       "--skip-trust",
       "--accept-raw-output-risk",
       "--extensions",
@@ -589,7 +709,8 @@ class GeminiCliProvider {
     return args;
   }
 
-  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
+  async chatCompletionStreamRaw(messages, model, options = {}) {
+    const { onOutput = null, signal = null, onProcessStart = null, permissionMode = "full-access" } = options;
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -604,7 +725,7 @@ class GeminiCliProvider {
         "Do not output planning or tool chatter.",
       ].join("\n"),
     });
-    const child = spawnCommand(command, this.buildArgs(model), {
+    const child = spawnCommand(command, this.buildArgs(model, { permissionMode }), {
       cwd: this.repoRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -668,7 +789,7 @@ class GeminiCliProvider {
         if (this.sessionMode === "resume_id") {
           this.sessionId = "";
           this.sessionMode = "fresh";
-          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal, onProcessStart });
+          return this.chatCompletionStreamRaw(messages, model, options);
         }
         throw new Error(`gemini CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
       }
@@ -697,7 +818,6 @@ class ClaudeCliProvider {
     this.repoRoot = path.resolve(repoRoot);
     this.sessionId = "";
     this.sessionMode = "fresh";
-    this.toolReadOnly = false;
     this._available = null;
   }
 
@@ -767,13 +887,14 @@ class ClaudeCliProvider {
     return String(event?.delta?.text ?? event?.text ?? event?.completion ?? event?.result ?? "");
   }
 
-  buildArgs(model) {
+  // `mcpConfigPath` is the per-turn approval bridge config; when it is set,
+  // permission prompts go to Cortex, otherwise they are refused.
+  buildArgs(model, { permissionMode = "full-access", mcpConfigPath = "" } = {}) {
     const args = [
       "--print",
       "--verbose",
       "--output-format",
       "stream-json",
-      "--dangerously-skip-permissions",
     ];
 
     // Restrict Claude Code's native tools to the active repo directory only.
@@ -782,12 +903,12 @@ class ClaudeCliProvider {
     // Bash can `cd` anywhere and Read can open any file on the system.
     args.push("--add-dir", this.repoRoot);
 
-    if (this.toolReadOnly) {
-      // Read-only: no Bash, no Write/Edit — file reads and searches only
-      args.push("--allowedTools", "Read,Glob,Grep,LS");
-    } else {
-      // Write mode: Bash is included but confined to repoRoot via --add-dir
-      args.push("--allowedTools", "Bash,Read,Write,Edit,Glob,Grep,LS,WebSearch,WebFetch");
+    // Full access: skip permissions (Bash still confined to repoRoot via
+    // --add-dir). Read-only: reads and searches only. Supervised / auto-accept
+    // edits: everything else goes through the approval prompt tool.
+    args.push(...claudePermissionArgs(permissionMode, { promptTool: Boolean(mcpConfigPath) }));
+    if (mcpConfigPath) {
+      args.push("--mcp-config", mcpConfigPath);
     }
     if (this.sessionMode === "resume_id" && this.sessionId) {
       args.push("--resume", this.sessionId);
@@ -799,7 +920,8 @@ class ClaudeCliProvider {
     return args;
   }
 
-  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
+  async chatCompletionStreamRaw(messages, model, options = {}) {
+    const { signal = null, permissionMode = "full-access", approvalBridge = null } = options;
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -814,10 +936,32 @@ class ClaudeCliProvider {
         "Do not output planning or tool chatter.",
       ].join("\n"),
     });
-    const child = spawnCommand(entry.command, [...entry.argsPrefix, ...this.buildArgs(model)], {
-      cwd: this.repoRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const mode = normalizePermissionMode(permissionMode);
+    const bridge = approvalBridge?.url && approvalBridge?.token && (mode === "supervised" || mode === "auto-accept-edits")
+      ? writeClaudeMcpConfig(approvalBridge)
+      : null;
+    let child;
+    try {
+      child = spawnCommand(entry.command, [...entry.argsPrefix, ...this.buildArgs(model, { permissionMode: mode, mcpConfigPath: bridge?.configPath || "" })], {
+        cwd: this.repoRoot,
+        stdio: ["pipe", "pipe", "pipe"],
+        // An approval can wait on the user for minutes; don't let Claude's MCP
+        // call timeout decline it first.
+        env: bridge ? { MCP_TOOL_TIMEOUT: String(CLI_TURN_TIMEOUT_MS) } : {},
+      });
+    } catch (error) {
+      bridge?.cleanup();
+      throw error;
+    }
+    try {
+      return await this._runClaudeChild(child, prompt, messages, model, options);
+    } finally {
+      bridge?.cleanup();
+    }
+  }
+
+  async _runClaudeChild(child, prompt, messages, model, options) {
+    const { onOutput = null, signal = null, onProcessStart = null } = options;
     onProcessStart?.(child.pid);
     child.stdin.write(prompt);
     child.stdin.end();
@@ -885,7 +1029,7 @@ class ClaudeCliProvider {
         ) {
           this.sessionId = "";
           this.sessionMode = "fresh";
-          return this.chatCompletionStreamRaw(messages, model, { onOutput, signal, onProcessStart });
+          return this.chatCompletionStreamRaw(messages, model, options);
         }
         throw new Error(`claude CLI failed: ${(cliErrorMessage || stderr || `exit code ${exitCode}`).trim()}`);
       }

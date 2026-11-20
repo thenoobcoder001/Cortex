@@ -75,6 +75,39 @@ class ToolExecutor {
     });
   }
 
+  // What an approval card shows for a tool call, before it runs: the command,
+  // or the target path with a diff of the proposed change.
+  approvalSummary(name, args = {}) {
+    const safeArgs = args && typeof args === "object" ? args : {};
+    if (name === "run_terminal_command") {
+      return { kind: "command", toolName: name, command: String(safeArgs.command || ""), cwd: this.repoRoot };
+    }
+    const rawPath = String(safeArgs.path || safeArgs.new_path || "");
+    const relativePath = rawPath.replaceAll("\\", "/");
+    let diff = "";
+    try {
+      const [filePath] = this.resolveAnyPath(rawPath);
+      const before = filePath && fs.existsSync(filePath) && fs.statSync(filePath).isFile()
+        ? fs.readFileSync(filePath, "utf8")
+        : "";
+      if (name === "write_file") {
+        diff = buildUnifiedDiff(relativePath, before, String(safeArgs.content || ""));
+      } else if (name === "edit_file") {
+        diff = buildUnifiedDiff(relativePath, before, before.replace(String(safeArgs.old_str || ""), String(safeArgs.new_str || "")));
+      } else if (name === "delete_path") {
+        diff = buildUnifiedDiff(relativePath, before, "");
+      }
+    } catch {
+      diff = "";
+    }
+    return {
+      kind: "file_change",
+      toolName: name,
+      path: name === "rename_file" ? `${safeArgs.old_path || ""} -> ${safeArgs.new_path || ""}` : relativePath,
+      diff,
+    };
+  }
+
   async executeWithMetadata(name, args = {}) {
     if (this.readOnly && MUTATING_TOOLS.includes(name)) {
       this._auditBlocked(name, args, `blocked: read-only mode (${name})`);

@@ -17,6 +17,13 @@ const { ToolExecutor } = require("./toolExecutor");
 const { AuditStore } = require("./auditStore");
 const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
+const { ApprovalRegistry } = require("./approvalRegistry");
+const {
+  DEFAULT_PERMISSION_MODE,
+  chatPermissionMode,
+  normalizePermissionMode,
+  resolveRequestPermissionMode,
+} = require("./permissionModes");
 const { normalizeMessages, normalizeChanges, normalizePlan } = require("./sessionShared");
 const { firstInstalledModel, isExplicitModelChoice } = require("./defaultModel");
 const {
@@ -88,7 +95,17 @@ class DesktopSessionService {
     this.modelExplicit = isExplicitModelChoice(this.config, this);
     this.model = this.modelExplicit ? this.config.model : firstInstalledModel(this);
     this.promptPreset = this.config.promptPreset || "code";
-    this.toolReadOnly = this.config.toolSafetyMode === "read";
+    this.permissionMode = normalizePermissionMode(this.config.permissionMode || this.config.toolSafetyMode);
+    // Pending approval requests from running agents; decisions are audited
+    // in the repo the request came from.
+    this.approvalRegistry = overrides.approvalRegistry || new ApprovalRegistry({
+      timeoutMs: overrides.approvalTimeoutMs,
+    });
+    this.approvalRegistry.onAudit = (entry, repoRoot) => this.recordAuditEntry(entry, repoRoot || this.repoRoot);
+    // Set by startBackendServer once it knows its port; the Claude approval
+    // bridge calls back to it. Empty means Claude cannot ask (falls back).
+    this.approvalBridgeUrl = overrides.approvalBridgeUrl || "";
+    this.approvalBridges = new Map(); // bridge token -> { chatId, ask(summary) }
     this.messages = [];
     this.changes = [];
     this.activePlan = null;
@@ -149,6 +166,20 @@ class DesktopSessionService {
     const entry = live.find((item) => item.isDefault) || live[0];
     const effort = entry.defaultEffort || entry.efforts[0] || null;
     return effort ? `codex:${entry.model}:${effort}` : `codex:${entry.model}`;
+  }
+
+  // Read-only is one of the permission modes; this keeps the older boolean
+  // view working for code that only distinguishes read from write.
+  get toolReadOnly() {
+    return this.permissionMode === "read-only";
+  }
+
+  set toolReadOnly(value) {
+    if (value) {
+      this.permissionMode = "read-only";
+    } else if (!this.permissionMode || this.permissionMode === "read-only") {
+      this.permissionMode = DEFAULT_PERMISSION_MODE;
+    }
   }
 
   modelFamily(model) {
@@ -467,7 +498,7 @@ class DesktopSessionService {
       model: this.model || DEFAULT_MODEL,
       providerState: {},
       changes: [],
-      toolSafetyMode: this.toolReadOnly ? "read" : "write",
+      permissionMode: this.permissionMode,
     });
     this.activeChatId = nextChatId;
     this.activeChatModel = this.model || DEFAULT_MODEL;
@@ -490,13 +521,14 @@ class DesktopSessionService {
     this.messages = normalizeMessages(payload.messages);
     this.changes = normalizeChanges(payload.changes);
     this.activePlan = normalizePlan(payload.plan);
-    this.toolReadOnly = String(payload.tool_safety_mode || "write") === "read";
+    this.permissionMode = chatPermissionMode(payload);
     this.toolExecutor.readOnly = this.toolReadOnly;
     this.persistConfig();
     return this.snapshot({ lite });
   }
 
   deleteChat(chatId, repoRoot = null, { lite = false } = {}) {
+    this.approvalRegistry.forgetChat(chatId);
     if (this.requestRegistry.has(chatId)) {
       // Interrupt the running request and force-remove it from the registry so
       // the delete can proceed immediately. On Windows, taskkill is async and the
@@ -539,9 +571,12 @@ class DesktopSessionService {
     if (!chatId) {
       throw new Error("Chat id is required.");
     }
-    if (!this.requestRegistry.interrupt(chatId)) {
+    if (!this.requestRegistry.has(chatId)) {
       throw new Error("Chat is not currently running.");
     }
+    // Anything still waiting for the user is declined (and audited) first.
+    this.approvalRegistry.cancelChat(chatId, "interrupted");
+    this.requestRegistry.interrupt(chatId);
     // Release the running-chat lock immediately so the user can start a new
     // request without waiting for the provider process to fully unwind.
     // The request handler's cleanup is idempotent and will still run when the
@@ -593,7 +628,7 @@ class DesktopSessionService {
     this.modelExplicit = false;
     this.model = firstInstalledModel(this);
     this.promptPreset = "code";
-    this.toolReadOnly = false;
+    this.permissionMode = DEFAULT_PERMISSION_MODE;
     this.messages = [];
     this.changes = [];
     this.activePlan = null;
@@ -634,7 +669,7 @@ class DesktopSessionService {
     this.modelExplicit = false;
     this.model = firstInstalledModel(this);
     this.promptPreset = "code";
-    this.toolReadOnly = false;
+    this.permissionMode = DEFAULT_PERMISSION_MODE;
     this.activeChatId = "";
     this.activeChatModel = "";
     this.messages = [];
@@ -689,30 +724,54 @@ class DesktopSessionService {
     return this.snapshot({ lite });
   }
 
-  updateChatPreferences({ toolSafetyMode, chatId = null, repoRoot = null }, { lite = false } = {}) {
-    const normalizedMode = String(toolSafetyMode || "write").trim().toLowerCase() === "read" ? "read" : "write";
+  // Sets a chat's permission mode (or the default for new chats when no
+  // chatId). Accepts the new permissionMode or the legacy read/write
+  // toolSafetyMode; see resolveRequestPermissionMode for how they combine.
+  updateChatPreferences({ toolSafetyMode = null, permissionMode = null, chatId = null, repoRoot = null, by = "desktop" }, { lite = false } = {}) {
+    const targetRoot = repoRoot ? path.resolve(repoRoot) : this.repoRoot;
     if (chatId) {
-      const store = repoRoot ? new ProjectChatStore(path.resolve(repoRoot)) : this.chatStore;
+      const store = repoRoot ? new ProjectChatStore(targetRoot) : this.chatStore;
       const payload = store.loadChat(chatId);
       if (!payload) {
         throw new Error(`Chat not found: ${chatId}`);
       }
+      const previous = chatPermissionMode(payload);
+      const nextMode = resolveRequestPermissionMode({ permissionMode, toolSafetyMode: toolSafetyMode || (permissionMode ? null : "write"), stored: previous });
       store.saveChat(chatId, normalizeMessages(payload.messages), {
         model: String(payload.model || DEFAULT_MODEL),
         providerState: payload.provider_state || {},
         changes: normalizeChanges(payload.changes),
-        toolSafetyMode: normalizedMode,
+        permissionMode: nextMode,
       });
-      if (this.activeChatId === chatId) {
-        this.toolReadOnly = normalizedMode === "read";
+      if (nextMode !== previous) {
+        this.recordAuditEntry({
+          source: "user",
+          chatId,
+          action: "permission_mode_changed",
+          detail: `${previous} -> ${nextMode}; by ${by}`,
+        }, targetRoot);
+      }
+      if (this.activeChatId === chatId && targetRoot === this.repoRoot) {
+        this.permissionMode = nextMode;
         this.toolExecutor.readOnly = this.toolReadOnly;
       }
     } else {
-      this.toolReadOnly = normalizedMode === "read";
+      this.permissionMode = resolveRequestPermissionMode({ permissionMode, toolSafetyMode: toolSafetyMode || (permissionMode ? null : "write"), stored: this.permissionMode });
       this.toolExecutor.readOnly = this.toolReadOnly;
     }
+    this.invalidateSnapshotCaches(targetRoot);
     this.persistConfig();
     return this.snapshot({ lite });
+  }
+
+  // An answer to a pending approval. `by` records who/where it came from.
+  respondToApproval({ approvalId, decision, alwaysAllow = false, chatId = null, by = "desktop" } = {}) {
+    const result = this.approvalRegistry.respond(approvalId, { decision, alwaysAllow, chatId, by });
+    return { ...result, pendingApprovals: this.approvalRegistry.pending() };
+  }
+
+  listApprovals(chatId = null) {
+    return { approvals: this.approvalRegistry.pending(chatId), waitingChatIds: this.approvalRegistry.waitingChatIds() };
   }
 
   readFile(rawPath) {

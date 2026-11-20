@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { resolveModelId } = require("./constants");
+const { chatPermissionMode, legacyToolSafetyMode, normalizePermissionMode } = require("./permissionModes");
 
 function nowIso() {
   return new Date().toISOString().slice(0, 19);
@@ -128,7 +129,8 @@ class ProjectChatStore {
       createdAt: String(item.created_at || ""),
       model: resolveModelId(item.model),
       changeCount: Number(item.change_count || 0),
-      toolSafetyMode: String(item.tool_safety_mode || "write"),
+      permissionMode: chatPermissionMode(item),
+      toolSafetyMode: legacyToolSafetyMode(chatPermissionMode(item)),
     }));
   }
 
@@ -151,9 +153,9 @@ class ProjectChatStore {
     }
   }
 
-  createChat(messages, { model, providerState = null, changes = [], toolSafetyMode = "write" } = {}) {
+  createChat(messages, { model, providerState = null, changes = [], toolSafetyMode = undefined, permissionMode = undefined } = {}) {
     const chatId = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)}-${crypto.randomBytes(3).toString("hex")}`;
-    this.saveChat(chatId, messages, { model, providerState, changes, toolSafetyMode });
+    this.saveChat(chatId, messages, { model, providerState, changes, toolSafetyMode, permissionMode });
     return chatId;
   }
 
@@ -187,7 +189,9 @@ class ProjectChatStore {
     };
   }
 
-  saveChat(chatId, messages, { model, providerState = null, changes = [], toolSafetyMode = "write", plan = undefined, customTitle = undefined } = {}) {
+  // permissionMode wins; a bare legacy toolSafetyMode ("read"/"write") maps to
+  // read-only / full-access; with neither, the chat keeps its current mode.
+  saveChat(chatId, messages, { model, providerState = null, changes = [], toolSafetyMode = undefined, permissionMode = undefined, plan = undefined, customTitle = undefined } = {}) {
     if (!chatId) {
       return;
     }
@@ -198,6 +202,11 @@ class ProjectChatStore {
     const nextCustomTitle = customTitle === undefined ? existingCustomTitle : normalizeCustomTitle(customTitle);
     const title = nextCustomTitle || this.titleFromMessages(messages);
     const nextPlan = plan === undefined ? existingPayload?.plan : plan;
+    const mode = permissionMode
+      ? normalizePermissionMode(permissionMode)
+      : toolSafetyMode
+        ? normalizePermissionMode(toolSafetyMode)
+        : chatPermissionMode(existingPayload);
     const payload = {
       chat_id: chatId,
       title,
@@ -205,7 +214,8 @@ class ProjectChatStore {
       model,
       messages,
       changes,
-      tool_safety_mode: toolSafetyMode || "write",
+      permission_mode: mode,
+      tool_safety_mode: legacyToolSafetyMode(mode),
     };
     if (nextCustomTitle) {
       payload.custom_title = nextCustomTitle;
@@ -225,7 +235,8 @@ class ProjectChatStore {
       existing.updated_at = timestamp;
       existing.model = model;
       existing.change_count = Array.isArray(changes) ? changes.length : 0;
-      existing.tool_safety_mode = toolSafetyMode || "write";
+      existing.permission_mode = mode;
+      existing.tool_safety_mode = legacyToolSafetyMode(mode);
       existing.has_plan = Boolean(nextPlan?.path);
       if (!existing.created_at) {
         existing.created_at = timestamp;
@@ -238,7 +249,8 @@ class ProjectChatStore {
         updated_at: timestamp,
         model,
         change_count: Array.isArray(changes) ? changes.length : 0,
-        tool_safety_mode: toolSafetyMode || "write",
+        permission_mode: mode,
+        tool_safety_mode: legacyToolSafetyMode(mode),
         has_plan: Boolean(nextPlan?.path),
       });
     }
@@ -273,7 +285,8 @@ class ProjectChatStore {
         updated_at: String(payload.updated_at || nowIso()),
         model: String(payload.model || ""),
         change_count: Array.isArray(payload.changes) ? payload.changes.length : 0,
-        tool_safety_mode: String(payload.tool_safety_mode || "write"),
+        permission_mode: chatPermissionMode(payload),
+        tool_safety_mode: legacyToolSafetyMode(chatPermissionMode(payload)),
         has_plan: Boolean(payload.plan?.path),
       });
     }

@@ -11,6 +11,7 @@ async function handle(ctx) {
       model:         body.model         || null,
       promptPreset:  body.promptPreset  || null,
       toolSafetyMode: body.toolSafetyMode || null,
+      permissionMode: body.permissionMode || null,
     }));
     return true;
   }
@@ -31,6 +32,7 @@ async function handle(ctx) {
         model:         body.model         || null,
         promptPreset:  body.promptPreset  || null,
         toolSafetyMode: body.toolSafetyMode || null,
+        permissionMode: body.permissionMode || null,
       })) {
         response.write(`${JSON.stringify(event)}\n`);
       }
