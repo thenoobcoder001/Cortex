@@ -15,6 +15,7 @@ export default function useStreamingSend({
   syncSavedProjects,
   fetchProjectChats,
   terminal,
+  onStreamEvent = null,
 }) {
   const { liveTermWriteRef, runInTerminal, terminalPanelOpen, terminalViewMode } = terminal;
   const activeChatIdRef = useRef("");
@@ -95,7 +96,7 @@ export default function useStreamingSend({
       repoRoot: snap.config?.repoRoot || "",
       model: snap.config?.model || "",
       promptPreset: snap.config?.promptPreset || "",
-      toolSafetyMode: snap.config?.toolSafetyMode || "",
+      permissionMode: snap.config?.permissionMode || "",
     };
 
     setSendingChatIds((current) => (current.includes(chatId) ? current : [...current, chatId]));
@@ -115,6 +116,7 @@ export default function useStreamingSend({
         throw new Error(data?.detail || `Request failed (${response.status})`);
       }
       await readNdjsonStream(response, (event) => {
+        onStreamEvent?.(event);
         const eventChatId = event.chatId || chatId;
         if (event.type === "cli_output" || event.type === "assistant") {
           setPendingTurns((current) => ({
@@ -203,7 +205,7 @@ export default function useStreamingSend({
         repoRoot: currentConfig.repoRoot || "",
         model: currentConfig.model || "",
         promptPreset: currentConfig.promptPreset || "",
-        toolSafetyMode: currentConfig.toolSafetyMode || "",
+        permissionMode: currentConfig.permissionMode || "",
       };
 
       try {
@@ -218,6 +220,7 @@ export default function useStreamingSend({
         }
         let hadCliOutput = false;
         await readNdjsonStream(response, (event) => {
+          onStreamEvent?.(event);
           if (event.type === "cli_output") {
             const chunk = event.text || "";
             if (chunk) {
@@ -359,7 +362,7 @@ export default function useStreamingSend({
       repoRoot: currentConfig.repoRoot || "",
       model: currentConfig.model || "",
       promptPreset: currentConfig.promptPreset || "",
-      toolSafetyMode: currentConfig.toolSafetyMode || "",
+      permissionMode: currentConfig.permissionMode || "",
     };
     if (currentChatId && sendingChatIds.includes(currentChatId)) {
       return;
@@ -396,6 +399,7 @@ export default function useStreamingSend({
       }
 
       await readNdjsonStream(response, (event) => {
+        onStreamEvent?.(event);
         const eventChatId = event.chatId || requestKey;
 
         switch (event.type) {

@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ChevronRight, Folder, MoreHorizontal, Pencil, SquarePen, Trash2, X } from "lucide-react";
+import { AlertCircle, Check, ChevronRight, Folder, MoreHorizontal, Pencil, ShieldAlert, SquarePen, Trash2, X } from "lucide-react";
 import { normalizeProject } from "../app/utils.js";
 
 // Left sidebar listing saved projects and, for each expanded one, its chats (with inline rename and delete).
@@ -11,6 +11,7 @@ export default function ProjectSidebar({
   chatsForProject,
   runningChatIds,
   sendingChatIds,
+  waitingChatIds = [],
   uiPrefs,
   renamingChat,
   renameChatDraft,
@@ -89,6 +90,7 @@ export default function ProjectSidebar({
                     const showChatLoading =
                       runningChatIds.includes(chat.chatId) || sendingChatIds.includes(chat.chatId);
                     const showInterrupted = Boolean(chat.interrupted) && !showChatLoading;
+                    const waitingForApproval = waitingChatIds.includes(chat.chatId);
                     const normalizedProjectPath = normalizeProject(project.path);
                     const isRenaming =
                       renamingChat?.chatId === chat.chatId &&
@@ -140,11 +142,20 @@ export default function ProjectSidebar({
                           />
                         ) : (
                           <>
-                            <button type="button" className="chat-sidebar-item" title={chat.title}>
-                              <span className="chat-dot"></span>
+                            <button
+                              type="button"
+                              className="chat-sidebar-item"
+                              title={waitingForApproval ? `${chat.title} (waiting for your approval)` : chat.title}
+                            >
+                              <span className={waitingForApproval ? "chat-dot waiting" : "chat-dot"}></span>
                               <span className="chat-truncate">{chat.title || "Untitled chat"}</span>
                             </button>
-                            {showChatLoading && <span className="chat-loading-spinner" aria-hidden="true"></span>}
+                            {waitingForApproval && (
+                              <span className="chat-approval-indicator" title="Waiting for your approval">
+                                <ShieldAlert size={14} />
+                              </span>
+                            )}
+                            {showChatLoading && !waitingForApproval && <span className="chat-loading-spinner" aria-hidden="true"></span>}
                             {showInterrupted && (
                               <span
                                 className="chat-recovery-indicator"

@@ -1,5 +1,5 @@
 import { ArrowUp, Square } from "lucide-react";
-import { PROMPT_PRESETS, TOOL_SAFETY_OPTIONS } from "../app/constants.js";
+import { PERMISSION_MODE_OPTIONS, PROMPT_PRESETS } from "../app/constants.js";
 import { providerCliCommand } from "../app/utils.js";
 import ModelPicker from "./ModelPicker.jsx";
 
@@ -23,12 +23,13 @@ export default function ComposerPanel({
   running = false,
   enterToSend = true,
   onToggleModelMenu,
-  onToolSafetyChange,
+  onPermissionModeChange,
   sendingDisabled,
   selectedModelId,
   terminalPanelOpen,
   terminalViewMode,
-  toolSafetyMode,
+  permissionMode,
+  permissionModeInfo,
   promptPreset,
 }) {
   return (
@@ -72,11 +73,16 @@ export default function ComposerPanel({
             ))}
           </select>
           <select
-            value={toolSafetyMode || "write"}
-            onChange={(event) => void onToolSafetyChange(event.target.value)}
-            title="Chat permissions"
+            className={permissionModeInfo?.note ? "permission-mode-select has-fallback" : "permission-mode-select"}
+            value={permissionMode || "full-access"}
+            onChange={(event) => void onPermissionModeChange(event.target.value)}
+            title={[
+              PERMISSION_MODE_OPTIONS.find((option) => option.value === (permissionMode || "full-access"))?.hint,
+              permissionModeInfo?.note,
+            ].filter(Boolean).join("\n")}
+            aria-label="Chat permissions"
           >
-            {TOOL_SAFETY_OPTIONS.map((option) => (
+            {PERMISSION_MODE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -116,6 +122,9 @@ export default function ComposerPanel({
           </button>
         )}
       </div>
+      {permissionModeInfo?.note && (
+        <div className="permission-mode-note" role="note">{permissionModeInfo.note}</div>
+      )}
     </div>
   );
 }

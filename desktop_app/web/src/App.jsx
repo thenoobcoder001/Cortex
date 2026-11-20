@@ -6,6 +6,7 @@ import { PROMPT_PRESETS } from "./app/constants.js";
 import { buildDisplayMessages, normalizeProject, projectLabel, saveSavedProjects } from "./app/utils.js";
 import AppNavbar from "./components/AppNavbar.jsx";
 import BootScreen from "./components/BootScreen.jsx";
+import ApprovalPanel from "./components/ApprovalPanel.jsx";
 import ComposerPanel from "./components/ComposerPanel.jsx";
 import ConfirmDeleteChatDialog from "./components/ConfirmDeleteChatDialog.jsx";
 import ConversationSection from "./components/ConversationSection.jsx";
@@ -25,6 +26,7 @@ import useModelGroups from "./hooks/useModelGroups.js";
 import usePairingRequests from "./hooks/usePairingRequests.js";
 import useProjects from "./hooks/useProjects.js";
 import { useSettingsActions, useSettingsDrafts } from "./hooks/useSettings.js";
+import useApprovals from "./hooks/useApprovals.js";
 import useStreamingSend from "./hooks/useStreamingSend.js";
 import useTerminal from "./hooks/useTerminal.js";
 import useUpdateBanner from "./hooks/useUpdateBanner.js";
@@ -59,6 +61,8 @@ export default function App() {
   const terminal = useTerminal({ backendUrl, snapshot, postJson, setError });
   const { terminalPanelOpen, terminalViewMode } = terminal;
 
+  const approvals = useApprovals({ snapshot, postJson, setError });
+
   const streaming = useStreamingSend({
     backendUrl,
     snapshot,
@@ -69,6 +73,7 @@ export default function App() {
     syncSavedProjects,
     fetchProjectChats,
     terminal,
+    onStreamEvent: approvals.handleApprovalEvent,
   });
   const { activePendingTurn, pendingTurns, sendingChatIds, setDraft, setPendingTurns, setSendingChatIds } = streaming;
 
@@ -176,13 +181,13 @@ export default function App() {
     closeAllMenus,
   });
 
-  const handleToolSafetyChange = async (toolSafetyMode) => {
+  const handlePermissionModeChange = async (permissionMode) => {
     setError("");
     try {
       const nextSnapshot = await postJson("/api/chats/preferences", {
         chatId: snapshot?.config?.activeChatId || null,
         repoRoot: snapshot?.config?.repoRoot || "",
-        toolSafetyMode,
+        permissionMode,
       });
       setSnapshot(nextSnapshot);
       setRepoDraft(nextSnapshot.config.repoRoot);
@@ -397,6 +402,7 @@ export default function App() {
           toggleRepo={projects.toggleRepo}
           chatsForProject={projects.chatsForProject}
           runningChatIds={runningChatIds}
+          waitingChatIds={approvals.waitingChatIds}
           sendingChatIds={sendingChatIds}
           uiPrefs={uiPrefs}
           renamingChat={chats.renamingChat}
@@ -473,6 +479,12 @@ export default function App() {
           />
           </div>{/* chat-main */}
 
+          <ApprovalPanel
+            approvals={approvals.activeApprovals}
+            answering={approvals.answering}
+            onRespond={approvals.respond}
+          />
+
           <ComposerPanel
             activeModelParent={activeModelParent}
             draft={streaming.draft}
@@ -498,13 +510,14 @@ export default function App() {
             running={terminalViewMode === "chat" && activeChatRunning}
             enterToSend={uiPrefs.enterToSend}
             onToggleModelMenu={menus.toggleModelMenu}
-            onToolSafetyChange={handleToolSafetyChange}
+            onPermissionModeChange={handlePermissionModeChange}
             promptPreset={snapshot.config.promptPreset}
             selectedModelId={snapshot.config.model}
             sendingDisabled={terminalViewMode === "chat" && Boolean(snapshot.config.activeChatId) && sendingChatIds.includes(snapshot.config.activeChatId)}
             terminalPanelOpen={terminalPanelOpen}
             terminalViewMode={terminalViewMode}
-            toolSafetyMode={snapshot.config.toolSafetyMode}
+            permissionMode={snapshot.config.permissionMode}
+            permissionModeInfo={snapshot.config.permissionModeInfo}
           />
         </main>
         </div>{/* workspace-body */}
