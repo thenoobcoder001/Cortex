@@ -310,6 +310,35 @@ test("codex approval requests are answered from the user's decision", async () =
   assert.equal(byId.get(11).result.decision, "decline");
 });
 
+test("codex auto-accept edits answers in-repo patches itself, audited, and asks for outside ones", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot, new ToolCallingProvider({ name: "list_files", args: {} }));
+  const provider = new CodexProvider(repoRoot);
+  const stdin = new PassThrough();
+  const written = [];
+  stdin.on("data", (chunk) => written.push(...String(chunk).split("\n").filter(Boolean).map((line) => JSON.parse(line))));
+  const events = [];
+  service.approvalRegistry.subscribe("chat-c", (event) => events.push(event));
+  const askApproval = (summary) => service.approvalRegistry.request("chat-c", { ...summary, repoRoot }).promise;
+  const items = new Map([
+    ["inside", { id: "inside", type: "fileChange", changes: [{ path: path.join(repoRoot, "a.txt"), diff: "+a", kind: { type: "add" } }] }],
+    ["outside", { id: "outside", type: "fileChange", changes: [{ path: path.join(os.tmpdir(), "elsewhere.txt"), diff: "+b", kind: { type: "add" } }] }],
+  ]);
+  await provider.answerServerRequest({ stdin }, { id: 1, method: "item/fileChange/requestApproval", params: { itemId: "inside" } }, { askApproval, items, permissionMode: "auto-accept-edits" });
+  assert.equal(events.length, 0, "no card for an in-repo edit");
+  const outside = provider.answerServerRequest({ stdin }, { id: 2, method: "item/fileChange/requestApproval", params: { itemId: "outside" } }, { askApproval, items, permissionMode: "auto-accept-edits" });
+  assert.equal(events[0]?.type, "approval_request");
+  service.respondToApproval({ approvalId: events[0].approval.id, decision: "decline" });
+  await outside;
+  await new Promise((resolve) => setImmediate(resolve));
+  const byId = new Map(written.map((message) => [message.id, message]));
+  assert.equal(byId.get(1).result.decision, "accept");
+  assert.equal(byId.get(2).result.decision, "decline");
+  const autoApproved = auditActions(service).find((entry) => entry.action === "approved");
+  assert.equal(autoApproved.source, "cortex");
+  assert.match(autoApproved.detail, /auto-accept edits mode/);
+});
+
 test("claude: bridge args, tool summaries and the MCP approval round trip", async () => {
   const provider = new ClaudeCliProvider(os.tmpdir());
   const { configPath, cleanup } = writeClaudeMcpConfig({ url: "http://127.0.0.1:1/api/approvals/bridge", token: "t" });

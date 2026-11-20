@@ -111,6 +111,14 @@ class ApprovalRegistry {
 
     this._audit(approval, "approval_requested");
 
+    // The mode itself allows this (e.g. an edit in Auto-accept edits) but the
+    // provider still asked; answer at once and keep the audit trail.
+    if (summary.autoApprove) {
+      const by = String(summary.autoApprove === true ? "permission mode" : summary.autoApprove);
+      this._audit(approval, "approved", { source: "cortex", detail: `by ${by}` });
+      return { approval: { ...approval, autoResolved: true }, promise: Promise.resolve({ decision: "approve", by, always: false }) };
+    }
+
     if (approval.canAlwaysAllow && this.isAlwaysAllowed(approval.chatId, approval.command)) {
       const result = { decision: "approve", by: "always-allow rule", always: true };
       this._audit(approval, "approved", { source: "cortex", detail: "by always-allow rule for this chat" });

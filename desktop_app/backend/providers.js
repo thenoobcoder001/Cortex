@@ -324,7 +324,19 @@ class CodexProvider {
   // Answers an app-server request for approval (or anything else the server
   // asks the client). Unknown requests get a JSON-RPC error so the turn
   // never hangs waiting for us.
-  async answerServerRequest(child, message, { askApproval, items }) {
+  changesInsideRepo(changes) {
+    const list = Array.isArray(changes) ? changes : [];
+    return list.length > 0 && list.every((change) => {
+      const target = path.resolve(this.repoRoot, String(change?.path || ""));
+      const moved = change?.kind?.move_path ? path.resolve(this.repoRoot, String(change.kind.move_path)) : null;
+      return [target, moved].filter(Boolean).every((candidate) => {
+        const relative = path.relative(this.repoRoot, candidate);
+        return relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+      });
+    });
+  }
+
+  async answerServerRequest(child, message, { askApproval, items, permissionMode = "full-access" }) {
     const params = message.params || {};
     const send = (payload) => {
       try {
@@ -350,11 +362,18 @@ class CodexProvider {
       }
       case "item/fileChange/requestApproval": {
         const item = items.get(String(params.itemId || "")) || {};
+        // Codex's "untrusted" policy asks for every patch. In Auto-accept
+        // edits, Cortex answers patches inside the repo itself (still
+        // audited) and only asks the user about commands and outside paths.
+        const autoApprove = permissionMode === "auto-accept-edits" && !params.grantRoot && this.changesInsideRepo(item.changes)
+          ? "auto-accept edits mode"
+          : false;
         const answer = await askOrDecline(askApproval, {
           kind: "file_change",
           toolName: "apply_patch",
           ...codexFileChangeSummary(item.changes),
           reason: String(params.reason || ""),
+          autoApprove,
         });
         send({ result: { decision: approved(answer) ? "accept" : "decline" } });
         return;
@@ -456,7 +475,7 @@ class CodexProvider {
 
         // Server -> client request (has both an id and a method).
         if (message.id !== undefined && message.method) {
-          void this.answerServerRequest(child, message, { askApproval, items });
+          void this.answerServerRequest(child, message, { askApproval, items, permissionMode: normalizePermissionMode(permissionMode) });
           return;
         }
 
