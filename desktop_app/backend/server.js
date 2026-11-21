@@ -22,6 +22,7 @@ const fileRoutes     = require("./routes/file");
 const androidRoutes  = require("./routes/android");
 const auditRoutes    = require("./routes/audit");
 const approvalRoutes = require("./routes/approvals");
+const turnsRoutes    = require("./routes/turns");
 
 // ── Audit log ─────────────────────────────────────────────────────────────
 const AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024;
@@ -296,6 +297,7 @@ const ROUTE_HANDLERS = [
   androidRoutes,
   auditRoutes,
   approvalRoutes,
+  turnsRoutes,
 ];
 
 // ── Server ────────────────────────────────────────────────────────────────

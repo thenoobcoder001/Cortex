@@ -41,6 +41,15 @@ const {
   saveCompletedChat,
 } = require("./sessionPersistence");
 const { sendMessageEvents } = require("./sessionSend");
+const {
+  RevertConflictError,
+  buildTurnRecord,
+  saveTurnRecord,
+  loadTurnRecord,
+  publicTurnView,
+  revertTurnFiles,
+  summarizeTurn,
+} = require("./turnChanges");
 
 function isAndroidEmulatorRequest(messages) {
   const latestUser = [...messages]
@@ -835,7 +844,14 @@ class DesktopSessionService {
     if (this.config.assistantMemory) {
       systemParts.push(`Assistant memory:\n${this.config.assistantMemory}`);
     }
-    return [{ role: "system", content: systemParts.join("\n\n") }, ...messages];
+    // turnChanges is UI metadata; API providers reject unknown message fields.
+    const providerMessages = messages.map((message) => {
+      if (!message?.turnChanges) return message;
+      const copy = { ...message };
+      delete copy.turnChanges;
+      return copy;
+    });
+    return [{ role: "system", content: systemParts.join("\n\n") }, ...providerMessages];
   }
 
   recentChatContext(messages, limit = 5) {
@@ -847,9 +863,28 @@ class DesktopSessionService {
   }
 
   finalRepoChanges(repoRoot, beforeState, meta = {}) {
+    return this.finishTurnChanges(repoRoot, beforeState, meta).changes;
+  }
+
+  // Ends a turn: diffs the repo against `beforeState`, audits the changes and,
+  // when `chatId` is given and files changed, stores a per-turn record for
+  // the diff panel. Returns { changes, turn } where `turn` is the summary to
+  // attach to the assistant message (null when nothing changed).
+  finishTurnChanges(repoRoot, beforeState, meta = {}, { chatId = null } = {}) {
     const fileService = new RepoFileService(repoRoot);
     const afterState = fileService.snapshotRepoState(repoRoot, this.repoSnapshotOptions);
     const changes = normalizeChanges(fileService.diffRepoState(beforeState, afterState));
+    let turn = null;
+    if (chatId && changes.length) {
+      try {
+        const record = buildTurnRecord({ repoRoot, chatId, beforeState, afterState, changes });
+        saveTurnRecord(repoRoot, record);
+        turn = summarizeTurn(record);
+      } catch {
+        // The diff panel is a convenience; never fail the turn over it.
+        turn = null;
+      }
+    }
     const truncatedScans = [["before", snapshotInfo(beforeState)], ["after", snapshotInfo(afterState)]]
       .filter(([, info]) => info?.truncated);
     if (changes.length || truncatedScans.length) {
@@ -869,7 +904,82 @@ class DesktopSessionService {
         });
       }
     }
-    return changes;
+    return { changes, turn };
+  }
+
+  _turnStoreFor(repoRoot) {
+    const targetRoot = path.resolve(repoRoot || this.repoRoot);
+    return {
+      targetRoot,
+      chatStore: targetRoot === this.repoRoot ? this.chatStore : new ProjectChatStore(targetRoot),
+      auditStore: targetRoot === this.repoRoot ? this.auditStore : new AuditStore(targetRoot),
+    };
+  }
+
+  // Full diff for one assistant turn, loaded on demand by the diff panel.
+  getTurnDiff({ chatId, turnId, repoRoot = null } = {}) {
+    const { targetRoot } = this._turnStoreFor(repoRoot);
+    const record = loadTurnRecord(targetRoot, chatId, turnId);
+    if (!record) {
+      throw new Error("No saved changes for this turn.");
+    }
+    return publicTurnView(targetRoot, record);
+  }
+
+  // Restores the files one turn changed (or just `filePath`) to how they were
+  // before it. Refuses, writing nothing, if any of them changed since.
+  revertTurn({ chatId, turnId, repoRoot = null, path: filePath = null } = {}, { lite = false } = {}) {
+    const { targetRoot, chatStore, auditStore } = this._turnStoreFor(repoRoot);
+    const record = loadTurnRecord(targetRoot, chatId, turnId);
+    if (!record) {
+      throw new Error("No saved changes for this turn.");
+    }
+    const auditBase = { source: "cortex", chatId, provider: "", model: "" };
+    const busy = this.requestRegistry.ids().some((id) => {
+      const entry = this.requestRegistry.get(id);
+      return !entry?.repoRoot || path.resolve(entry.repoRoot) === targetRoot;
+    });
+    if (busy) {
+      const message = "A chat is still running in this project. Wait for it to finish, then revert.";
+      auditStore.record({ ...auditBase, action: "revert_refused", path: filePath || "", success: false, detail: `Turn ${turnId}: ${message}` });
+      throw new RevertConflictError(message);
+    }
+
+    let reverted;
+    try {
+      ({ reverted } = revertTurnFiles(targetRoot, record, { path: filePath }));
+    } catch (error) {
+      auditStore.record({
+        ...auditBase,
+        action: "revert_refused",
+        path: filePath || "",
+        success: false,
+        detail: `Turn ${turnId}: ${String(error?.message || error)}`,
+      });
+      throw error;
+    }
+    saveTurnRecord(targetRoot, record);
+    for (const revertedPath of reverted) {
+      const file = record.files.find((item) => item.path === revertedPath);
+      auditStore.record({
+        ...auditBase,
+        action: "revert",
+        path: revertedPath,
+        detail: `Turn ${turnId}: undid ${file?.action || "change"} (restored pre-turn state).`,
+      });
+    }
+
+    const summary = summarizeTurn(record);
+    const messages = chatStore.updateMessageTurn(chatId, turnId, summary);
+    if (messages && this.activeChatId === chatId && this.repoRoot === targetRoot) {
+      this.messages = normalizeMessages(messages);
+    }
+    this.invalidateSnapshotCaches(targetRoot);
+    return {
+      reverted,
+      turn: publicTurnView(targetRoot, record),
+      snapshot: this.snapshot({ lite }),
+    };
   }
 
   listAuditEntries(repoRoot, options = {}) {

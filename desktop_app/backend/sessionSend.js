@@ -18,6 +18,12 @@ function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
   return chatStore.savePlan(chatId, title, userPrompt, assistantText);
 }
 
+// The assistant reply, plus a small summary of the files this turn changed
+// (full diffs live in the turn record and load on demand).
+function assistantReply(content, turn) {
+  return turn ? { role: "assistant", content, turnChanges: turn } : { role: "assistant", content };
+}
+
 async function *drainQueuedEvents(worker, queue, takeWaiter) {
   let queueWaiter = null;
   const notify = () => {
@@ -229,7 +235,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     return service.saveCompletedChat({
       chatStore: requestChatStore,
       chatId,
-      messages: [...baseMessages, { role: "assistant", content: finalText }],
+      messages: [...baseMessages, assistantReply(finalText, changes.turn)],
       model: requestModel,
       providerState: changes.providerState,
       permissionMode: requestPermissionMode,
@@ -263,8 +269,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       }
       providerState[cliEntry.sessionKey] = cliEntry.provider.sessionId || "";
       if (requestModel.startsWith("codex:")) providerState.codex_permission_mode = requestPermissionMode;
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-      const snapshot = finishTurn(finalText, { providerState, finalChanges });
+      const { changes: finalChanges, turn } = service.finishTurnChanges(requestRepoRoot, repoStateBefore, auditMeta, { chatId });
+      const snapshot = finishTurn(finalText, { providerState, finalChanges, turn });
       yield service.event("assistant", { text: finalText, chatId });
       yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
       return;
@@ -272,8 +278,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
 
     if (!service.requestUsesTools(requestModel, message, effectivePromptPreset)) {
       const finalText = await provider.chatCompletion(baseForProvider, requestModel, requestOptions);
-      const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-      const snapshot = finishTurn(finalText, { providerState, finalChanges });
+      const { changes: finalChanges, turn } = service.finishTurnChanges(requestRepoRoot, repoStateBefore, auditMeta, { chatId });
+      const snapshot = finishTurn(finalText, { providerState, finalChanges, turn });
       yield service.event("assistant", { text: finalText, chatId });
       yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
       return;
@@ -285,8 +291,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       yield service.event("status", { phase: "thinking", message: `Thinking... round ${roundIndex + 1}`, chatId });
       const [finalText, assistantMessage, toolCalls] = await provider.chatWithTools(workingMessages, requestModel, TOOLS, requestOptions);
       if (finalText != null) {
-        const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-        const snapshot = finishTurn(finalText, { providerState, finalChanges });
+        const { changes: finalChanges, turn } = service.finishTurnChanges(requestRepoRoot, repoStateBefore, auditMeta, { chatId });
+        const snapshot = finishTurn(finalText, { providerState, finalChanges, turn });
         yield service.event("assistant", { text: finalText, chatId });
         yield service.event("completed", { assistantMessage: finalText, elapsedSeconds: 0, usedTools, snapshot, chatId });
         return;
@@ -331,8 +337,8 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     }
 
     const fallbackText = await provider.chatCompletion(workingMessages, requestModel, requestOptions);
-    const finalChanges = service.finalRepoChanges(requestRepoRoot, repoStateBefore, auditMeta);
-    const snapshot = finishTurn(fallbackText, { providerState, finalChanges });
+    const { changes: finalChanges, turn } = service.finishTurnChanges(requestRepoRoot, repoStateBefore, auditMeta, { chatId });
+    const snapshot = finishTurn(fallbackText, { providerState, finalChanges, turn });
     yield service.event("assistant", { text: fallbackText, chatId });
     yield service.event("completed", { assistantMessage: fallbackText, elapsedSeconds: 0, usedTools: 0, snapshot, chatId });
   } catch (error) {

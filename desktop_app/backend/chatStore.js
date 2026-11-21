@@ -3,6 +3,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { resolveModelId } = require("./constants");
 const { chatPermissionMode, legacyToolSafetyMode, normalizePermissionMode } = require("./permissionModes");
+const { deleteTurnRecords } = require("./turnChanges");
 
 function nowIso() {
   return new Date().toISOString().slice(0, 19);
@@ -294,6 +295,26 @@ class ProjectChatStore {
     return normalizedTitle;
   }
 
+  // Updates the `turnChanges` summary on the assistant message of one turn
+  // without bumping the chat's updated_at. Returns the new messages, or null.
+  updateMessageTurn(chatId, turnId, summary) {
+    const payload = this.loadChat(chatId);
+    if (!payload || !Array.isArray(payload.messages)) {
+      return null;
+    }
+    let found = false;
+    payload.messages = payload.messages.map((message) => {
+      if (message?.turnChanges?.id !== turnId) return message;
+      found = true;
+      return { ...message, turnChanges: { ...summary } };
+    });
+    if (!found) {
+      return null;
+    }
+    fs.writeFileSync(this.chatFile(chatId), JSON.stringify(payload, null, 2), "utf8");
+    return payload.messages;
+  }
+
   deleteChat(chatId) {
     if (!chatId) {
       return false;
@@ -306,6 +327,7 @@ class ProjectChatStore {
     } catch {
       return false;
     }
+    deleteTurnRecords(this.repoRoot, chatId);
     const items = this.loadIndex();
     const nextItems = items.filter((item) => String(item.chat_id || "") !== chatId);
     this.saveIndex(nextItems);
