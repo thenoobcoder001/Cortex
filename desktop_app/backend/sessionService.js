@@ -978,7 +978,8 @@ class DesktopSessionService {
     return {
       reverted,
       turn: publicTurnView(targetRoot, record),
-      snapshot: this.snapshot({ lite }),
+      // Same shape as a status poll: no workspace diff.
+      snapshot: this.snapshot({ lite, includeChanges: false }),
     };
   }
 
