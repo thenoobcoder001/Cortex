@@ -1,5 +1,6 @@
 import { Bug, Compass, FlaskConical, ListChecks } from "lucide-react";
 import MarkdownMessage from "./MarkdownMessage.jsx";
+import TurnChangesSummary from "./TurnChangesSummary.jsx";
 
 const STARTERS = [
   {
@@ -28,7 +29,9 @@ export default function ConversationSection({
   activePendingTurn,
   copyText,
   displayMessages,
+  onOpenTurnDiff,
   onPickStarter,
+  openTurnId,
   projectName,
   scrollRef,
 }) {
@@ -75,6 +78,13 @@ export default function ConversationSection({
                   <pre>{String(message.content || "")}</pre>
                 )}
               </div>
+              {message.role === "assistant" && message.turnChanges && (
+                <TurnChangesSummary
+                  turn={message.turnChanges}
+                  active={openTurnId === message.turnChanges.id}
+                  onOpen={onOpenTurnDiff}
+                />
+              )}
             </div>
           </div>
         ))

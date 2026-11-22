@@ -10,6 +10,8 @@ import ApprovalPanel from "./components/ApprovalPanel.jsx";
 import ComposerPanel from "./components/ComposerPanel.jsx";
 import ConfirmDeleteChatDialog from "./components/ConfirmDeleteChatDialog.jsx";
 import ConversationSection from "./components/ConversationSection.jsx";
+import DiffPanel from "./components/DiffPanel.jsx";
+import useDiffPanel from "./hooks/useDiffPanel.js";
 import PairingRequestsBanner from "./components/PairingRequestsBanner.jsx";
 import PlanCard from "./components/PlanCard.jsx";
 import ProjectContextMenu from "./components/ProjectContextMenu.jsx";
@@ -117,6 +119,11 @@ export default function App() {
   const activeModelId = snapshot?.config?.model || "";
   const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:|^hermes:/, "");
   const activePlan = snapshot?.activePlan || null;
+
+  const diffPanel = useDiffPanel({
+    activeChatId: snapshot?.config?.activeChatId || "",
+    repoRoot: snapshot?.config?.repoRoot || "",
+  });
 
   const displayMessages = useMemo(
     () => buildDisplayMessages(snapshot?.messages, activePendingTurn),
@@ -393,7 +400,7 @@ export default function App() {
           handleCopyWorkspacePath={handleCopyWorkspacePath}
         />
 
-        <div className="workspace-body">
+        <div className={`workspace-body${diffPanel.target ? " has-diff-panel" : ""}`}>
         <ProjectSidebar
           snapshot={snapshot}
           activeRepoRoot={activeRepoRoot}
@@ -470,6 +477,8 @@ export default function App() {
             activePendingTurn={activePendingTurn}
             copyText={copyText}
             displayMessages={displayMessages}
+            onOpenTurnDiff={diffPanel.openTurn}
+            openTurnId={diffPanel.target?.turnId || ""}
             onPickStarter={(prompt) => {
               setDraft(prompt);
               window.requestAnimationFrame(() => document.querySelector(".composer-panel textarea")?.focus());
@@ -520,6 +529,17 @@ export default function App() {
             permissionModeInfo={snapshot.config.permissionModeInfo}
           />
         </main>
+        {diffPanel.target && (
+          <DiffPanel
+            key={`${diffPanel.target.chatId}:${diffPanel.target.turnId}`}
+            backendUrl={backendUrl}
+            chatId={diffPanel.target.chatId}
+            repoRoot={diffPanel.target.repoRoot}
+            turnId={diffPanel.target.turnId}
+            onClose={diffPanel.close}
+            onSnapshot={setSnapshot}
+          />
+        )}
         </div>{/* workspace-body */}
       </div>
 

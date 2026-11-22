@@ -1,0 +1,314 @@
+/* Per-turn diff: the summary chip under assistant messages and the
+   right-side diff panel. */
+
+.workspace-body.has-diff-panel {
+  grid-template-columns: 320px minmax(0, 1fr) var(--diff-panel-width, min(620px, 45vw));
+}
+
+.sidebar-collapsed .workspace-body.has-diff-panel {
+  grid-template-columns: 0px minmax(0, 1fr) var(--diff-panel-width, min(620px, 45vw));
+}
+
+.turn-changes-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.turn-changes-summary:hover,
+.turn-changes-summary.active {
+  background: var(--panel-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.turn-changes-add {
+  color: var(--success);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.turn-changes-del {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.turn-changes-reverted {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-muted-strong);
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.tdiff-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.tdiff-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tdiff-panel-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.tdiff-panel-stats {
+  display: flex;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.tdiff-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.tdiff-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tdiff-btn:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+
+.tdiff-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tdiff-btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.tdiff-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tdiff-icon-btn:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.tdiff-panel-error,
+.tdiff-panel-notice {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tdiff-panel-error {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.tdiff-panel-notice {
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.tdiff-panel-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.tdiff-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 24px;
+}
+
+.tdiff-file-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.tdiff-file-link,
+.tdiff-file-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tdiff-file-link:hover,
+.tdiff-file-toggle:hover {
+  background: var(--surface-muted-strong);
+}
+
+.tdiff-file-link.reverted .tdiff-file-path {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+
+.tdiff-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.tdiff-action {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tdiff-action-added { color: var(--success); }
+.tdiff-action-deleted { color: var(--danger); }
+.tdiff-action-modified { color: var(--accent-text); }
+
+.tdiff-file {
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg);
+  scroll-margin-top: 8px;
+}
+
+.tdiff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.tdiff-file-blocked,
+.tdiff-file-note {
+  padding: 6px 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.tdiff-table {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.tdiff-row {
+  display: grid;
+  grid-template-columns: 44px 44px 16px max-content;
+  min-width: 100%;
+  white-space: pre;
+}
+
+.tdiff-hunk {
+  display: block;
+  padding: 2px 10px;
+  color: var(--text-faint);
+  background: var(--surface-muted);
+}
+
+.tdiff-no {
+  padding: 0 6px;
+  text-align: right;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.tdiff-sign {
+  user-select: none;
+  color: var(--text-faint);
+}
+
+.tdiff-text {
+  padding-right: 12px;
+  color: var(--text);
+}
+
+.tdiff-add {
+  background: var(--diff-add-bg);
+}
+
+.tdiff-add .tdiff-sign {
+  color: var(--success);
+}
+
+.tdiff-del {
+  background: var(--diff-remove-bg);
+}
+
+.tdiff-del .tdiff-sign {
+  color: var(--danger);
+}
+
+.tdiff-panel .spin {
+  animation: spin 1s linear infinite;
+}
