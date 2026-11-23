@@ -1650,6 +1650,52 @@ button:disabled {
   display: block;
 }
 
+/* Copy button on assistant code blocks: shown on hover/focus, always on touch. */
+.code-block {
+  position: relative;
+}
+
+.code-block-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.code-block:hover .code-block-copy,
+.code-block-copy:focus-visible,
+.code-block-copy.is-copied {
+  opacity: 1;
+}
+
+.code-block-copy:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.code-block-copy.is-copied {
+  color: var(--success);
+}
+
+@media (hover: none) {
+  .code-block-copy {
+    opacity: 1;
+  }
+}
+
 .message-row.assistant .message-content blockquote {
   margin-left: 0;
   padding-left: 14px;
