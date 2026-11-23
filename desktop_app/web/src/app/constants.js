@@ -51,6 +51,17 @@ export const EXTERNAL_EDITOR_OPTIONS = [
   { id: "terminal",     label: "Terminal" },
 ];
 
+// Settings page sections; `icon` is a key into SettingsPage's NAV_ICONS.
+export const SETTINGS_SECTIONS = [
+  { id: "general", label: "General", icon: "sliders" },
+  { id: "workspace", label: "Workspace", icon: "folder" },
+  { id: "memory", label: "Memory", icon: "brain" },
+  { id: "connections", label: "Connections", icon: "link" },
+  { id: "providers", label: "Providers", icon: "bot" },
+  { id: "updates", label: "Updates", icon: "refresh" },
+  { id: "danger", label: "Danger zone", icon: "alert" },
+];
+
 export const FALLBACK_APP_VERSION = "0.0.9";
 export const THEME_MODE_STORAGE_KEY = "cortex.theme-mode";
 export const SAVED_PROJECTS_KEY = "cortex.saved-projects";

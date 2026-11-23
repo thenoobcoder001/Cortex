@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import qrcode from "qrcode-generator";
 import { ArrowLeft, Bot, Brain, Folder, Link2, RefreshCw, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { SETTINGS_SECTIONS } from "./app/constants.js";
 
 function UpdateSection() {
   const [status, setStatus] = useState(null); // { state, version, error, currentVersion }
@@ -605,15 +606,7 @@ function TailscaleSection({ backendUrl, remoteAccessEnabledDraft, setRemoteAcces
   );
 }
 
-const SETTINGS_NAV = [
-  { id: "general", label: "General", icon: "sliders" },
-  { id: "workspace", label: "Workspace", icon: "folder" },
-  { id: "memory", label: "Memory", icon: "brain" },
-  { id: "connections", label: "Connections", icon: "link" },
-  { id: "providers", label: "Providers", icon: "bot" },
-  { id: "updates", label: "Updates", icon: "refresh" },
-  { id: "danger", label: "Danger zone", icon: "alert" },
-];
+const SETTINGS_NAV = SETTINGS_SECTIONS;
 
 const NAV_ICONS = {
   sliders: SlidersHorizontal,
@@ -679,9 +672,15 @@ export default function SettingsPage({
   onDeleteSettingsFile,
   configPath,
   backendUrl,
+  activeSection: activeSectionProp,
+  onSectionChange,
 }) {
   const { tailscaleUrls, localNetworkUrls } = splitRemoteAccessUrls(remoteAccessUrls);
-  const [activeSection, setActiveSection] = useState("general");
+  // Controlled by the app when `activeSection` is passed (the command palette
+  // can open a specific section); otherwise local.
+  const [localSection, setLocalSection] = useState("general");
+  const activeSection = activeSectionProp || localSection;
+  const setActiveSection = onSectionChange || setLocalSection;
   const activeLabel = SETTINGS_NAV.find((item) => item.id === activeSection)?.label ?? "Settings";
 
   return (
