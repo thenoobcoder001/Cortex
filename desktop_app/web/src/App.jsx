@@ -3,10 +3,12 @@ import SettingsPage from "./SettingsPage.jsx";
 import AuditPage from "./AuditPage.jsx";
 import { postJson as postJsonTo } from "./app/api.js";
 import { PROMPT_PRESETS } from "./app/constants.js";
+import { buildPaletteCommands } from "./app/paletteCommands.js";
 import { buildDisplayMessages, normalizeProject, projectLabel, saveSavedProjects } from "./app/utils.js";
 import AppNavbar from "./components/AppNavbar.jsx";
 import BootScreen from "./components/BootScreen.jsx";
 import ApprovalPanel from "./components/ApprovalPanel.jsx";
+import CommandPalette from "./components/CommandPalette.jsx";
 import ComposerPanel from "./components/ComposerPanel.jsx";
 import ConfirmDeleteChatDialog from "./components/ConfirmDeleteChatDialog.jsx";
 import ConversationSection from "./components/ConversationSection.jsx";
@@ -23,6 +25,7 @@ import useBackendStatus from "./hooks/useBackendStatus.js";
 import useBootSplash from "./hooks/useBootSplash.js";
 import useChats from "./hooks/useChats.js";
 import useDisplayPrefs from "./hooks/useDisplayPrefs.js";
+import useKeyboardShortcuts from "./hooks/useKeyboardShortcuts.js";
 import useMenus from "./hooks/useMenus.js";
 import useModelGroups from "./hooks/useModelGroups.js";
 import usePairingRequests from "./hooks/usePairingRequests.js";
@@ -41,6 +44,8 @@ export default function App() {
   const [repoDraft, setRepoDraft] = useState("");
   const [currentScreen, setCurrentScreen] = useState("chat");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("general");
 
   const postJson = (path, payload) => postJsonTo(backendUrl, path, payload);
 
@@ -296,6 +301,78 @@ export default function App() {
     }
   };
 
+  // ── Command palette + keyboard shortcuts ──────────────────────────────
+  const focusComposer = () =>
+    window.requestAnimationFrame(() => document.querySelector(".composer-panel textarea")?.focus());
+  const openSettings = (section = "general") => {
+    setSettingsSection(section);
+    setCurrentScreen("settings");
+  };
+  const appActions = {
+    newChat: async () => {
+      setCurrentScreen("chat");
+      await chats.handleNewChat();
+      focusComposer();
+    },
+    toggleSidebar: () => {
+      setCurrentScreen("chat");
+      setSidebarCollapsed((collapsed) => !collapsed);
+    },
+    toggleTerminal: () => {
+      setCurrentScreen("chat");
+      return terminal.handleToggleTerminal();
+    },
+    openSettings,
+    openAudit: () => setCurrentScreen("audit"),
+    pickProject: handlePickRepo,
+    activateChat: async (chatId, repoRoot) => {
+      setCurrentScreen("chat");
+      await chats.handleActivateChat(chatId, repoRoot);
+    },
+    openProject: (repoRoot) => {
+      setCurrentScreen("chat");
+      return handleOpenSavedProject(repoRoot);
+    },
+    setModel: (model) => handleConfigUpdate({ model }).catch(() => {}),
+    setTheme: displayPrefs.setThemeMode,
+    openInEditor: handleOpenInEditor,
+  };
+  const togglePalette = () => {
+    if (!paletteOpen) {
+      // Load chat lists for projects the sidebar hasn't fetched yet.
+      savedProjects.forEach((project) => {
+        if (normalizeProject(project.path) !== activeRepoRoot) void fetchProjectChats(project.path).catch(() => {});
+      });
+      closeAllMenus();
+    }
+    setPaletteOpen(!paletteOpen);
+  };
+  useKeyboardShortcuts(
+    {
+      palette: togglePalette,
+      newChat: () => void appActions.newChat(),
+      toggleSidebar: appActions.toggleSidebar,
+      toggleTerminal: () => void appActions.toggleTerminal(),
+      settings: () => openSettings(),
+      escape: () => { if (!paletteOpen) closeAllMenus(); },
+    },
+    { enabled: Boolean(snapshot) },
+  );
+  const paletteItems = paletteOpen
+    ? buildPaletteCommands({
+      activeChatId: snapshot?.config?.activeChatId || "",
+      activeRepoRoot,
+      activeModelId,
+      themeMode: displayPrefs.themeMode,
+      projects: savedProjects,
+      chatsForProject: projects.chatsForProject,
+      models: snapshot?.models || [],
+      isModelGroupConnected: (group) => modelGroupStates.get(group)?.connected !== false,
+      actions: appActions,
+    })
+    : [];
+  const palette = <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />;
+
   if (!snapshot) {
     return (
       <BootScreen
@@ -311,6 +388,7 @@ export default function App() {
 
   if (currentScreen === "settings") {
     return (
+      <>
       <SettingsPage
         error={error}
         networkSettingsSaving={settingsDrafts.networkSettingsSaving}
@@ -348,17 +426,24 @@ export default function App() {
         onDeleteSettingsFile={settingsActions.handleDeleteSettingsFile}
         configPath={snapshot?.config?.configPath || ""}
         backendUrl={backendUrl}
+        activeSection={settingsSection}
+        onSectionChange={setSettingsSection}
       />
+      {palette}
+      </>
     );
   }
 
   if (currentScreen === "audit") {
     return (
+      <>
       <AuditPage
         backendUrl={backendUrl}
         repoRoot={snapshot.config.repoRoot}
         onBack={() => setCurrentScreen("chat")}
       />
+      {palette}
+      </>
     );
   }
 
@@ -568,6 +653,8 @@ export default function App() {
           handleDeleteChat={chats.handleDeleteChat}
         />
       )}
+
+      {palette}
 
       {boot.splashVisible && (
         <BootScreen
