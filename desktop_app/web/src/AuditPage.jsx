@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, Ban, CircleAlert, Download, FilePen, FilePlus, FileSearch, FileUp, FileX, FolderPlus, History,
-  RefreshCw, Replace, ShieldAlert, ShieldCheck, ShieldX, SquareTerminal, TriangleAlert,
+  RefreshCw, Replace, ShieldAlert, ShieldCheck, ShieldOff, ShieldQuestion, ShieldX, SlidersHorizontal, SquareTerminal, TriangleAlert, Undo2,
 } from "lucide-react";
 import { AUDIT_ACTIONS, AUDIT_STATUS_BADGES, auditActionInfo, auditEntryLabel, auditEntryStatus, middleTruncate } from "./app/auditActions.js";
 import "./audit.css";
 
-const ICONS = { FilePen, FilePlus, FileSearch, FileUp, FileX, FolderPlus, Replace, ShieldX, SquareTerminal, TriangleAlert };
+const ICONS = { Ban, FilePen, FilePlus, FileSearch, FileUp, FileX, FolderPlus, Replace, ShieldCheck, ShieldOff, ShieldQuestion, ShieldX, SlidersHorizontal, SquareTerminal, TriangleAlert, Undo2 };
 const STATUS_ICONS = { blocked: Ban, failed: CircleAlert, incomplete: TriangleAlert };
 const PATH_MAX = 72;
 

@@ -16,6 +16,14 @@ function backendAuditActions() {
     if (!name.endsWith(".js") || name.endsWith(".test.js")) continue;
     const text = fs.readFileSync(path.join(backendDir, name), "utf8");
     for (const match of text.matchAll(/\baction:\s*"([a-z_]+)"/g)) found.add(match[1]);
+    // Actions passed positionally, e.g. this._audit(approval, "approval_requested").
+    for (const match of text.matchAll(/_audit\([^,()]+,\s*"([a-z_]+)"/g)) found.add(match[1]);
+  }
+  // The approval registry picks "approved" / "declined" from the decision.
+  const registry = fs.readFileSync(path.join(backendDir, "approvalRegistry.js"), "utf8");
+  for (const match of registry.matchAll(/\?\s*"([a-z_]+)"\s*:\s*"([a-z_]+)"\s*,\s*\{/g)) {
+    found.add(match[1]);
+    found.add(match[2]);
   }
   // Blocked tool calls use the TOOL_AUDIT_ACTIONS map in toolExecutor.js.
   const executor = fs.readFileSync(path.join(backendDir, "toolExecutor.js"), "utf8");

@@ -15,6 +15,12 @@ export const AUDIT_ACTIONS = [
   { id: "run_command", label: "Ran command", attempt: "Run command", filter: "Commands", icon: "SquareTerminal" },
   { id: "read", label: "Read file", attempt: "Read file", filter: "File reads (outside project)", icon: "FileSearch" },
   { id: "audit_incomplete", label: "Audit incomplete", attempt: "Audit incomplete", filter: "Incomplete audits", icon: "TriangleAlert" },
+  { id: "approval_requested", label: "Asked for approval", attempt: "Ask for approval", filter: "Approval requests", icon: "ShieldQuestion" },
+  { id: "approved", label: "Approved", attempt: "Approve", filter: "Approvals", icon: "ShieldCheck" },
+  { id: "declined", label: "Declined", attempt: "Decline", filter: "Declines", icon: "ShieldOff" },
+  { id: "permission_mode_changed", label: "Changed permission mode", attempt: "Change permission mode", filter: "Permission mode changes", icon: "SlidersHorizontal" },
+  { id: "revert", label: "Reverted turn changes", attempt: "Revert turn changes", filter: "Reverts", icon: "Undo2" },
+  { id: "revert_refused", label: "Revert refused", attempt: "Revert refused", filter: "Refused reverts", icon: "Ban" },
   { id: "hmac_replay", label: "Replayed request rejected", attempt: "Replayed request rejected", filter: "Replayed requests", icon: "ShieldX" },
 ];
 
