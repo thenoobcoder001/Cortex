@@ -477,6 +477,12 @@ tool call including writes outside the working directory. `auto` still runs with
 interactive prompts but applies the CLI's own judgment about what is safe. Combined
 with `cwd: this.repoRoot`, write operations default to staying in the project folder.
 
+> **Update (2026-11):** Gemini CLI was replaced by the Antigravity CLI (`agy`,
+> `AgyCliProvider`). Permission modes map to session-only `--settings` rules
+> (`permissions.deny` for Read-only) and, for Supervised / Auto-accept edits, a
+> per-turn PreToolUse hook that asks Cortex and fails closed; see
+> `backend/permissionModes.js` (`agyPermissionConfig`).
+
 #### O. Validate `repoRoot` against saved projects allowlist (P0)
 
 In `backend/server.js`, before processing any request that includes a `repoRoot`

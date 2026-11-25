@@ -8,7 +8,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0d1117?style=flat-square&logo=windows&logoColor=white)](https://github.com/thenoobcoder001/Cortex/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0d1117?style=flat-square)](LICENSE)
 
-**Claude · Codex · Gemini** — one window, your code, all your AI tools.
+**Claude · Codex · Antigravity · Gemini** — one window, your code, all your AI tools.
 
 **⬇ Download** — [click here](https://thenoobcoder001.github.io/Cortex/) or go to [GitHub Releases](https://github.com/thenoobcoder001/Cortex/releases/latest)
 
@@ -22,7 +22,7 @@
 
 ## What is Cortex?
 
-Cortex is a desktop app that runs AI coding agents — Claude CLI, OpenAI Codex, Gemini CLI, Groq, and Gemini API — directly against your local code repositories. No browser tab, no copy-pasting file paths. Open a project folder, pick a model, and start building.
+Cortex is a desktop app that runs AI coding agents — Claude CLI, OpenAI Codex, Antigravity CLI (`agy`), Hermes, Groq, and Gemini API — directly against your local code repositories. No browser tab, no copy-pasting file paths. Open a project folder, pick a model, and start building.
 
 > **Think of it as a universal remote control for AI coding assistants.**
 
@@ -56,9 +56,9 @@ Cortex is a desktop app that runs AI coding agents — Claude CLI, OpenAI Codex,
 <td>gpt-5.5 &nbsp;·&nbsp; gpt-5.4 &nbsp;·&nbsp; gpt-5.4-mini &nbsp;·&nbsp; gpt-5.3-codex<br><sub>Each model: Extra High / High / Medium / Low effort</sub></td>
 </tr>
 <tr>
-<td><img src="https://cdn.simpleicons.org/google/4285F4" height="14">&nbsp; <b>Gemini CLI</b></td>
-<td><code>gemini</code> CLI · stream-json</td>
-<td>Gemini 2.5 Pro &nbsp;·&nbsp; Gemini 2.5 Flash</td>
+<td><img src="https://cdn.simpleicons.org/google/4285F4" height="14">&nbsp; <b>Antigravity</b></td>
+<td><code>agy</code> CLI · stream-json (replaces Gemini CLI)</td>
+<td>Live list from <code>agy models</code> — e.g. Gemini 3.8 Flash (High / Medium / Low effort), Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B<br><sub>Supervised / Auto-accept edits ask through Cortex approval cards</sub></td>
 </tr>
 <tr>
 <td><img src="https://cdn.simpleicons.org/google/34A853" height="14">&nbsp; <b>Gemini API</b></td>
@@ -69,11 +69,6 @@ Cortex is a desktop app that runs AI coding agents — Claude CLI, OpenAI Codex,
 <td><img src="https://cdn.simpleicons.org/groq/F55036" height="14">&nbsp; <b>Groq</b></td>
 <td>Direct HTTP · Groq API key</td>
 <td>llama-3.3-70b &nbsp;·&nbsp; deepseek-r1 &nbsp;·&nbsp; mixtral</td>
-</tr>
-<tr>
-<td>⚡ <b>Antigravity</b></td>
-<td><code>agy</code> CLI</td>
-<td><i>Coming soon on Windows</i></td>
 </tr>
 </tbody>
 </table>
@@ -87,7 +82,7 @@ Cortex is a desktop app that runs AI coding agents — Claude CLI, OpenAI Codex,
 <td valign="top" width="50%">
 
 ### 🤖 Multi-provider AI
-Run Claude, Codex, Gemini, or Groq from a single UI. Switch model or provider mid-project without restarting.
+Run Claude, Codex, Antigravity, Hermes, Gemini, or Groq from a single UI. Switch model or provider mid-project without restarting.
 
 ### 📂 Project workspaces
 Pick any folder as a workspace. The AI runs in context of that repo — not a blank sandbox.
@@ -203,7 +198,7 @@ Electron main.js
             ├─ ProjectChatStore     — per-repo chat history
             ├─ RepoFileService      — file snapshots + diffs
             ├─ ToolExecutor         — file read/write/edit for API-backed models
-            └─ Providers            — Codex · Claude · GeminiCli · GeminiApi · Groq · Agy
+            └─ Providers            — Codex · Claude · Agy (Antigravity) · Hermes · GeminiApi · Groq
 
 React renderer  (Vite in dev,  dist/ in prod)
   └─ fetches /api/status, /api/chat/send-stream, /api/config, …

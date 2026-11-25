@@ -1,6 +1,6 @@
 # Cortex
 
-A desktop chat interface that unifies your AI coding assistants — Claude, Gemini CLI, and Codex — into a single app. Switch providers, manage multiple projects, and keep persistent chat history, all without leaving one window.
+A desktop chat interface that unifies your AI coding assistants — Claude, Codex, and Antigravity — into a single app. Switch providers, manage multiple projects, and keep persistent chat history, all without leaving one window.
 
 ---
 
@@ -16,13 +16,13 @@ A desktop chat interface that unifies your AI coding assistants — Claude, Gemi
 
 ## Why
 
-Most AI coding CLIs are powerful but isolated. You end up with multiple terminals open, no shared history, and no easy way to switch between Claude, Codex, and Gemini mid-project. Cortex wraps them all in one place.
+Most AI coding CLIs are powerful but isolated. You end up with multiple terminals open, no shared history, and no easy way to switch between Claude, Codex, and Antigravity mid-project. Cortex wraps them all in one place.
 
 ---
 
 ## Features
 
-- **Multiple AI providers** — Claude CLI, Gemini CLI, OpenAI Codex, and more, all from one window
+- **Multiple AI providers** — Claude CLI, OpenAI Codex, Antigravity CLI, and more, all from one window
 - **Project workspaces** — pick any folder as a project; the AI runs in context of that repo
 - **Persistent chat sessions** — history is saved per project and restored on next launch
 - **Live streaming** — responses stream as they arrive
@@ -41,7 +41,7 @@ Cortex currently ships with three built-in providers, with more on the way:
 | Provider | Requires |
 |---|---|
 | Claude | [`claude` CLI](https://claude.ai/code) installed and authenticated |
-| Gemini CLI | [`gemini` CLI](https://github.com/google-gemini/gemini-cli) installed and authenticated |
+| Antigravity | [`agy` CLI](https://antigravity.google) installed (Windows: `winget install Google.AntigravityCLI`) and signed in; models come from `agy models`. Replaces Gemini CLI — chats on Gemini CLI models move to the nearest Antigravity model. |
 | OpenAI Codex | [`codex` CLI](https://github.com/openai/codex) installed |
 
 You only need the providers you want to use. Cortex detects which CLIs are available on your PATH automatically.
