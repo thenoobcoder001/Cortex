@@ -228,7 +228,7 @@ export default function useStreamingSend({
               write(chunk);
             }
           } else if (event.type === "assistant") {
-            // CLI providers (claude/codex/gemini-cli) already streamed the full text
+            // CLI providers (claude/codex/agy) already streamed the full text
             // via cli_output chunks — writing it again here would double the response.
             if (!hadCliOutput) {
               write(event.text || "");

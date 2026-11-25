@@ -51,6 +51,18 @@ export const EXTERNAL_EDITOR_OPTIONS = [
   { id: "terminal",     label: "Terminal" },
 ];
 
+// Settings → Providers: display names, and how to install a missing CLI.
+export const PROVIDER_LABELS = {
+  claude: "Claude",
+  codex: "Codex",
+  antigravity: "Antigravity",
+  hermes: "Hermes",
+};
+
+export const PROVIDER_INSTALL_HINTS = {
+  antigravity: "Install the Antigravity CLI (agy) from antigravity.google (Windows: winget install Google.AntigravityCLI), then run agy once to sign in.",
+};
+
 // Settings page sections; `icon` is a key into SettingsPage's NAV_ICONS.
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General", icon: "sliders" },

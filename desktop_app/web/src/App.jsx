@@ -122,7 +122,7 @@ export default function App() {
   );
 
   const activeModelId = snapshot?.config?.model || "";
-  const activeModelShort = activeModelId.replace(/^codex:|^gemini-cli:|^claude:|^hermes:/, "");
+  const activeModelShort = activeModelId.replace(/^codex:|^agy:|^claude:|^hermes:/, "");
   const activePlan = snapshot?.activePlan || null;
 
   const diffPanel = useDiffPanel({

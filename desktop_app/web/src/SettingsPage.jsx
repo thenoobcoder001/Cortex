@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import qrcode from "qrcode-generator";
 import { ArrowLeft, Bot, Brain, Folder, Link2, RefreshCw, SlidersHorizontal, TriangleAlert } from "lucide-react";
-import { SETTINGS_SECTIONS } from "./app/constants.js";
+import { PROVIDER_INSTALL_HINTS, PROVIDER_LABELS, SETTINGS_SECTIONS } from "./app/constants.js";
 
 function UpdateSection() {
   const [status, setStatus] = useState(null); // { state, version, error, currentVersion }
@@ -949,7 +949,7 @@ export default function SettingsPage({
             <div className="provider-grid">
               {Object.entries(providers || {}).map(([providerId, provider]) => (
                 <div key={providerId} className="provider-card">
-                  <span className="provider-name">{providerId}</span>
+                  <span className="provider-name">{PROVIDER_LABELS[providerId] || providerId}</span>
                   <span className={provider.available ? "provider-ok" : "provider-muted"}>
                     {provider.available ? "available" : "missing"}
                   </span>
@@ -966,6 +966,9 @@ export default function SettingsPage({
                       {providerTestState[providerId]?.status === "running" ? "Testing..." : "Test connection"}
                     </button>
                   </div>
+                  {!provider.available && PROVIDER_INSTALL_HINTS[providerId] && (
+                    <div className="provider-test-result">{PROVIDER_INSTALL_HINTS[providerId]}</div>
+                  )}
                   {providerTestState[providerId]?.message && (
                     <div
                       className={
