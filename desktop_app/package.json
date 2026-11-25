@@ -61,7 +61,8 @@
       "maintainer": "CHIRAG <support@cortex-ai.com>"
     },
     "asarUnpack": [
-      "backend/approvalMcpServer.js"
+      "backend/approvalMcpServer.js",
+      "backend/agyApprovalHook.js"
     ],
     "npmRebuild": false
   },

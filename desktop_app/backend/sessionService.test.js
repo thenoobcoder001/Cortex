@@ -140,7 +140,7 @@ function createService(repoRoot, overrides = {}) {
     config: overrides.config || new MemoryConfig(repoRoot),
     repoRoot,
     codexProvider: overrides.codexProvider || new FakeCliProvider(),
-    geminiCliProvider: overrides.geminiCliProvider || new FakeCliProvider(),
+    agyProvider: overrides.agyProvider || new FakeCliProvider(),
     claudeProvider: overrides.claudeProvider || new FakeCliProvider(),
     groqProvider: new FakeApiProvider(),
     geminiProvider: new FakeApiProvider(),
@@ -172,18 +172,19 @@ test("codex streaming send completes and clears request state", async () => {
   assert.equal(chats[0].toolSafetyMode, "read");
 });
 
-test("CLI provider limit errors are normalized for codex, gemini-cli, and claude", async () => {
+test("CLI provider limit errors are normalized for codex, antigravity (incl. old gemini-cli ids), and claude", async () => {
   const repoRoot = makeTempRepo();
   const limitMessage = "usage limit reached, please try again later";
   const service = createService(repoRoot, {
     codexProvider: new ErrorCliProvider(limitMessage),
-    geminiCliProvider: new ErrorCliProvider(limitMessage),
+    agyProvider: new ErrorCliProvider(limitMessage),
     claudeProvider: new ErrorCliProvider(limitMessage),
   });
 
   const cases = [
     ["codex:gpt-5.4", "API limits reached for Codex."],
-    ["gemini-cli:auto-gemini-2.5", "API limits reached for Gemini CLI."],
+    ["agy:default", "API limits reached for Antigravity."],
+    ["gemini-cli:auto-gemini-2.5", "API limits reached for Antigravity."],
     ["claude:sonnet", "API limits reached for Claude."],
   ];
 
@@ -319,7 +320,7 @@ test("interrupt endpoint aborts a running codex chat and emits interrupted event
 test("interrupt releases the chat lock immediately so a new chat can start", async () => {
   const repoRoot = makeTempRepo();
   const service = createService(repoRoot, {
-    geminiCliProvider: new FakeCliProvider({ chunks: ["one ", "two ", "three"], delayMs: 25 }),
+    agyProvider: new FakeCliProvider({ chunks: ["one ", "two ", "three"], delayMs: 25 }),
   });
 
   const events = [];
@@ -626,23 +627,35 @@ test("claude provider connection test reports success", async () => {
   assert.equal(result.message, "OK");
 });
 
-test("gemini CLI connection test reports executable readiness without starting a chat", async () => {
+test("antigravity connection test lists models without starting a chat", async () => {
   const repoRoot = makeTempRepo();
-  const geminiCliProvider = new FakeCliProvider({ chunks: ["unexpected"], delayMs: 1 });
-  geminiCliProvider.chatCompletion = async () => {
-    throw new Error("Gemini CLI readiness test should not start a chat.");
+  const agyProvider = new FakeCliProvider({ chunks: ["unexpected"], delayMs: 1 });
+  agyProvider.chatCompletion = async () => {
+    throw new Error("Antigravity readiness test should not start a chat.");
   };
+  agyProvider.listModels = async () => [
+    { model: "gemini-3.8-flash-high", displayName: "Gemini 3.8 Flash", base: "gemini-3.8-flash", effort: "high" },
+    { model: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6 (Thinking)", base: "claude-sonnet-4-6", effort: null },
+  ];
   const service = createService(repoRoot, {
-    geminiCliProvider,
+    agyProvider,
   });
 
   const result = await service.testProviderConnection({
-    providerId: "geminiCli",
+    providerId: "antigravity",
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.providerId, "geminiCli");
-  assert.equal(result.message, "Gemini CLI is available.");
+  assert.equal(result.providerId, "antigravity");
+  assert.equal(result.message, "Antigravity is signed in; 2 models available.");
+  // The picker now shows the live list, effort variants grouped by base model.
+  const agy = service.snapshot({ lite: true }).models.filter((model) => model.group === "Antigravity");
+  assert.deepEqual(agy.map((model) => [model.id, model.subGroup]), [
+    ["agy:default", "default"],
+    ["agy:gemini-3.8-flash-high", "gemini-3.8-flash"],
+    ["agy:claude-sonnet-4-6", "claude-sonnet-4-6"],
+  ]);
+  assert.equal(agy[1].label, "Gemini 3.8 Flash · High");
 });
 
 

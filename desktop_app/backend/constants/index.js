@@ -5,7 +5,9 @@ const { TOOLS } = require("./tools");
 const APP_NAME = "Cortex";
 const VERSION = require("../../package.json").version;
 
-const DEFAULT_MODEL = "gemini-cli:auto";
+// Antigravity's own default model (no --model flag). Used when nothing is
+// set up yet, so the UI still has something to show.
+const DEFAULT_MODEL = "agy:default";
 const MAX_TOOL_ROUNDS = 8;
 
 const PRESET_PROMPTS = {
@@ -53,12 +55,18 @@ const GEMINI_MODELS = [
   ["gemini-3-flash-preview", "Gemini 3 Flash [preview]"],
 ];
 
-// Gemini CLI --model values. "auto" is the CLI's own default alias: it picks
-// (and falls back between) the CLI's current Pro and Flash models.
-const GEMINI_CLI_MODELS = [
-  ["gemini-cli:auto", "Auto [Gemini CLI]"],
-  ["gemini-cli:gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"],
-  ["gemini-cli:gemini-3-flash-preview", "Gemini 3 Flash Preview"],
+// Antigravity CLI (`agy`) --model values, as listed by `agy models`
+// (agy 1.4.12, 2026-11). Only a fallback: the picker shows the live list once
+// `agy models` answers. A "-low/-medium/-high" suffix is the effort variant of
+// one model. "agy:default" passes no --model and lets agy pick.
+const AGY_MODELS = [
+  ["agy:default", "Default [Antigravity]"],
+  ["agy:gemini-3.8-flash-high", "Gemini 3.8 Flash · High"],
+  ["agy:gemini-3.8-flash-medium", "Gemini 3.8 Flash · Medium"],
+  ["agy:gemini-3.8-flash-low", "Gemini 3.8 Flash · Low"],
+  ["agy:claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"],
+  ["agy:claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"],
+  ["agy:gpt-oss-120b-medium", "GPT-OSS 120B · Medium"],
 ];
 
 const CLAUDE_MODELS = [
@@ -101,9 +109,17 @@ const CODEX_MODELS = [
 // Model ids offered by earlier versions, mapped to the closest current one so
 // saved settings and chats keep working after a model is retired.
 const LEGACY_MODEL_IDS = {
-  "gemini-cli:auto-gemini-2.5": "gemini-cli:auto",
-  "gemini-cli:auto-gemini-3": "gemini-cli:auto",
-  "gemini-cli:manual": "gemini-cli:auto",
+  // Gemini CLI was replaced by Antigravity CLI (agy); its chats and settings
+  // move to the nearest agy model. Pro maps to agy's strongest Gemini effort.
+  "gemini-cli:auto": "agy:default",
+  "gemini-cli:auto-gemini-2.5": "agy:default",
+  "gemini-cli:auto-gemini-3": "agy:default",
+  "gemini-cli:manual": "agy:default",
+  "gemini-cli:gemini-3.1-pro-preview": "agy:gemini-3.8-flash-high",
+  "gemini-cli:gemini-3-pro-preview": "agy:gemini-3.8-flash-high",
+  "gemini-cli:gemini-2.5-pro": "agy:gemini-3.8-flash-high",
+  "gemini-cli:gemini-3-flash-preview": "agy:gemini-3.8-flash-medium",
+  "gemini-cli:gemini-2.5-flash": "agy:gemini-3.8-flash-medium",
   "gemini-2.0-flash": "gemini-3.6-flash",
   "gemini-2.0-flash-lite": "gemini-3.5-flash-lite",
   "gemini-2.0-flash-lite-preview": "gemini-3.5-flash-lite",
@@ -127,11 +143,8 @@ function resolveModelId(model) {
   const value = String(model || "").trim();
   if (!value) return "";
   if (hasOwn(LEGACY_MODEL_IDS, value)) return LEGACY_MODEL_IDS[value];
-  // Gemini CLI ids carry an API model id after the prefix; map those too.
-  const prefix = "gemini-cli:";
-  if (value.startsWith(prefix) && hasOwn(LEGACY_MODEL_IDS, value.slice(prefix.length))) {
-    return prefix + LEGACY_MODEL_IDS[value.slice(prefix.length)];
-  }
+  // Any other Gemini CLI id (the CLI is retired) runs on Antigravity's default.
+  if (value.startsWith("gemini-cli:")) return DEFAULT_MODEL;
   return value;
 }
 
@@ -144,7 +157,7 @@ module.exports = {
   BASE_ASSISTANT_SYSTEM_PROMPT,
   ANDROID_EMULATOR_SYSTEM_PROMPT,
   GEMINI_MODELS,
-  GEMINI_CLI_MODELS,
+  AGY_MODELS,
   CLAUDE_MODELS,
   HERMES_MODELS,
   GROQ_MODELS,

@@ -3,9 +3,8 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { buildCleanEnv } = require("./androidEnv");
 const platform = require("./platform");
-const { resolveModelId } = require("./constants");
-const { codexPolicy, claudePermissionArgs, geminiApprovalMode, normalizePermissionMode } = require("./permissionModes");
-const { writeClaudeMcpConfig } = require("./approvalBridge");
+const { codexPolicy, claudePermissionArgs, agyPermissionConfig, agyFallbackNote, normalizePermissionMode } = require("./permissionModes");
+const { writeClaudeMcpConfig, writeAgyHookWorkspace } = require("./approvalBridge");
 
 // Strip ANSI escape sequences from PTY output
 function stripAnsi(str) {
@@ -184,10 +183,9 @@ function isApiLimitError(error) {
 function providerDisplayName(model) {
   const value = String(model || "");
   if (value.startsWith("codex:")) return "Codex";
-  if (value.startsWith("gemini-cli:")) return "Gemini CLI";
   if (value.startsWith("claude:")) return "Claude";
   if (value.startsWith("hermes:")) return "Hermes";
-  if (value.startsWith("agy:")) return "Agy";
+  if (value.startsWith("agy:")) return "Antigravity";
   if (value.startsWith("gemini")) return "Gemini";
   return "API";
 }
@@ -664,12 +662,151 @@ class CodexProvider {
   }
 }
 
-class GeminiCliProvider {
+// ── Antigravity CLI (agy) ────────────────────────────────────────────────
+// Replaced Gemini CLI. Runs `agy -p` in print mode with NDJSON in and out:
+//   stdin   {"event":"user","message":{"role":"user","content":"..."}}
+//   stdout  {"event":"init","conversation_id":...,"init":{model,cwd,tools,permission_mode}}
+//           {"event":"step_update","step_update":{conversation_id,step_index,state,step_type,...}}
+//             step_type "agent_response": text_delta (state ACTIVE/DONE)
+//             step_type "tool": tool_name, tool_info {name, parameters, output | error}
+//                               (state ACTIVE, then DONE or ERROR)
+//           {"event":"result","result":{conversation_id,status,response,error?,denied_actions?,finished_reason?}}
+// Samples: tests/fixtures/agy. Resume is --conversation <id>; an unknown id
+// makes agy warn on stderr and start a new conversation.
+
+const AGY_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const AGY_EFFORT_LABEL = /^(.*?)\s*\((minimal|low|medium|high|extra high|xhigh|max)\)$/i;
+
+/**
+ * Parses `agy models` output ("<id>\t<label>" per line). Effort variants
+ * ("gemini-3.8-flash-high" / "Gemini 3.8 Flash (High)") share a `base` so the
+ * picker can group them like Codex. Returns
+ * [{ model, displayName, base, effort }].
+ */
+function parseAgyModels(text) {
+  const entries = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const [rawId, ...rest] = line.split("\t");
+    const model = String(rawId || "").trim();
+    if (!model || !rest.length || /\s/.test(model)) continue;
+    const label = rest.join(" ").trim() || model;
+    const idMatch = model.match(new RegExp(`^(.+)-(${AGY_EFFORTS.join("|")})$`));
+    const labelMatch = label.match(AGY_EFFORT_LABEL);
+    if (idMatch && labelMatch) {
+      entries.push({ model, displayName: labelMatch[1].trim(), base: idMatch[1], effort: idMatch[2] });
+    } else {
+      entries.push({ model, displayName: label, base: model, effort: null });
+    }
+  }
+  return entries;
+}
+
+/**
+ * Follows one agy stream-json run. Calls onText(delta) for reply text (with a
+ * paragraph break between separate agent responses), onToolCall / onToolResult
+ * for tool steps, and keeps the conversation id and the final result.
+ */
+class AgyStreamParser {
+  constructor({ onText = null, onToolCall = null, onToolResult = null } = {}) {
+    this.onText = onText;
+    this.onToolCall = onToolCall;
+    this.onToolResult = onToolResult;
+    this.conversationId = "";
+    this.text = "";
+    this.result = null;
+    this.lastTextStep = null;
+    this.startedTools = new Set();
+  }
+
+  emitText(delta) {
+    if (!delta) return;
+    this.text += delta;
+    this.onText?.(delta);
+  }
+
+  push(event) {
+    if (!event || typeof event !== "object") return;
+    if (event.event === "init") {
+      this.conversationId = String(event.conversation_id || this.conversationId || "");
+      return;
+    }
+    if (event.event === "result") {
+      this.result = event.result && typeof event.result === "object" ? event.result : {};
+      this.conversationId = String(this.result.conversation_id || this.conversationId || "");
+      return;
+    }
+    if (event.event !== "step_update") return;
+    const step = event.step_update || {};
+    if (!this.conversationId && step.conversation_id) this.conversationId = String(step.conversation_id);
+    if (step.step_type === "agent_response") {
+      const delta = String(step.text_delta || "");
+      if (!delta) return;
+      if (this.lastTextStep !== step.step_index && this.text.trim()) {
+        // A new response after a tool call: start a new paragraph.
+        const trimmed = this.text.replace(/[ \t]+$/, "");
+        const gap = trimmed.endsWith("\n\n") ? "" : trimmed.endsWith("\n") ? "\n" : "\n\n";
+        this.emitText(gap);
+      }
+      this.lastTextStep = step.step_index;
+      this.emitText(delta);
+      return;
+    }
+    if (step.step_type === "tool") {
+      const info = step.tool_info || {};
+      const id = String(step.step_index ?? "");
+      const name = String(step.tool_name || info.name || "tool");
+      const args = info.parameters && typeof info.parameters === "object" ? info.parameters : {};
+      if (!this.startedTools.has(id)) {
+        this.startedTools.add(id);
+        this.onToolCall?.({ id, name, args });
+      }
+      if (step.state === "DONE") {
+        this.onToolResult?.({ id, name, ok: true, result: String(info.output || "done") });
+      } else if (step.state === "ERROR") {
+        this.onToolResult?.({ id, name, ok: false, result: `ERROR: ${String(info.error?.message || "tool failed")}` });
+      }
+    }
+  }
+
+  // The reply: streamed text, or the result's response if nothing streamed.
+  finalText() {
+    const streamed = this.text.trim();
+    return streamed || String(this.result?.response || "").trim();
+  }
+
+  deniedActions() {
+    const list = Array.isArray(this.result?.denied_actions) ? this.result.denied_actions : [];
+    return list.map((item) => String(item?.display_name || item?.action || "")).filter(Boolean);
+  }
+}
+
+// One `agy -p` error line: the structured AGY_ERROR JSON, an "error:" line,
+// or the last non-empty stderr line.
+function agyErrorText(stderr) {
+  const lines = String(stderr || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const structured = lines.find((line) => line.startsWith("AGY_ERROR:"));
+  if (structured) {
+    try {
+      const parsed = JSON.parse(structured.slice("AGY_ERROR:".length));
+      return String(parsed?.message || parsed?.error || structured);
+    } catch {
+      return structured;
+    }
+  }
+  const marked = lines.find((line) => /^error:/i.test(line));
+  return (marked || lines.at(-1) || "").replace(/^error:\s*/i, "");
+}
+
+class AgyCliProvider {
   constructor(repoRoot) {
     this.repoRoot = path.resolve(repoRoot);
     this.sessionId = "";
     this.sessionMode = "fresh";
     this._available = null;
+    // Live `agy models` list ([{ model, displayName, base, effort }]) once known.
+    this.models = null;
+    // Whether agy has been seen loading Cortex's hook from an added workspace.
+    this._hookVerified = false;
   }
 
   setRepoRoot(repoRoot) {
@@ -681,9 +818,13 @@ class GeminiCliProvider {
     this.repoRoot = resolved;
   }
 
+  resolveCli() {
+    return which("agy.exe") || which("agy.cmd") || which("agy");
+  }
+
   get available() {
     if (this._available === null) {
-      this._available = Boolean(which("gemini.cmd") || which("gemini.ps1") || which("gemini"));
+      this._available = Boolean(this.resolveCli());
     }
     return this._available;
   }
@@ -692,34 +833,103 @@ class GeminiCliProvider {
     return this.available;
   }
 
+  // The --model value for a Cortex id, or "" to let agy pick its default
+  // (agy:default, or a model agy no longer lists).
   cliModelName(model) {
-    if (!String(model || "").startsWith("gemini-cli:")) {
-      return model;
+    const value = String(model || "");
+    const id = value.startsWith("agy:") ? value.slice("agy:".length) : value;
+    if (!id || id === "default") return "";
+    if (Array.isArray(this.models) && this.models.length && !this.models.some((entry) => entry.model === id)) {
+      return "";
     }
-    // "auto" is passed through: it is the CLI's own default alias.
-    return resolveModelId(model).slice("gemini-cli:".length);
+    return id;
   }
 
-  buildArgs(model, { permissionMode = "full-access" } = {}) {
+  // Runs agy to completion and returns { code, stdout, stderr } (code null on
+  // timeout). For short subcommands such as `agy models`.
+  _runQuick(args, { timeoutMs = 30000, env = {} } = {}) {
+    const cli = this.resolveCli();
+    if (!cli) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let stdout = "";
+      let stderr = "";
+      let child;
+      try {
+        child = spawnCommand(cli, args, { cwd: this.repoRoot, stdio: ["ignore", "pipe", "pipe"], env });
+      } catch {
+        resolve(null);
+        return;
+      }
+      const timer = setTimeout(() => {
+        platform.killProcessTree(child);
+        resolve({ code: null, stdout, stderr });
+      }, timeoutMs);
+      child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+      child.once("error", () => {
+        clearTimeout(timer);
+        resolve(null);
+      });
+      child.once("close", (code) => {
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr });
+      });
+    });
+  }
+
+  /**
+   * Asks `agy models` which models this account can use. Returns the parsed
+   * list (see parseAgyModels) or null when agy is missing, signed out or
+   * slow. Keeps the list for cliModelName.
+   */
+  async listModels({ timeoutMs = 30000 } = {}) {
+    const result = await this._runQuick(["models"], { timeoutMs });
+    if (!result || result.code !== 0) return null;
+    const models = parseAgyModels(result.stdout);
+    if (!models.length) return null;
+    this.models = models;
+    return models;
+  }
+
+  // Checks once that agy loads hooks from an added workspace (asking `/hooks`
+  // costs no model turn). Without that check a Supervised turn would run
+  // approved-by-rule commands with nobody asking.
+  async verifyHook(hook) {
+    if (this._hookVerified) return true;
+    const result = await this._runQuick(
+      ["-p", "/hooks", "--output-format", "json", "--add-dir", hook.dir],
+      { timeoutMs: 30000, env: hook.env },
+    );
+    let hooks = [];
+    try {
+      hooks = JSON.parse(String(result?.stdout || "").trim())?.command?.data?.hooks || [];
+    } catch {
+      hooks = [];
+    }
+    const hookDir = path.resolve(hook.dir).toLowerCase();
+    this._hookVerified = hooks.some((entry) => entry?.enabled !== false
+      && path.resolve(String(entry?.source || "")).toLowerCase().startsWith(hookDir));
+    return this._hookVerified;
+  }
+
+  buildArgs(model, { permission = agyPermissionConfig("full-access"), hookDir = "" } = {}) {
     const args = [
-      "--prompt",
-      "",
-      "--output-format",
-      "stream-json",
-      // Headless Gemini CLI cannot ask anyone. "default" refuses every tool
-      // that needs confirmation (read-only / supervised); "auto_edit"
-      // auto-approves edit tools and refuses the rest. "yolo" auto-approves
-      // everything including writes to arbitrary paths — too permissive for
-      // remote operation, so it is never used.
-      "--approval-mode",
-      geminiApprovalMode(permissionMode),
-      "--skip-trust",
-      "--accept-raw-output-risk",
-      "--extensions",
-      "none",
+      "-p", "",
+      "--input-format", "stream-json",
+      "--output-format", "stream-json",
+      // A message starting with "/" is the user's text, not an agy command.
+      "--disable-slash-commands",
+      ...permission.args,
     ];
+    if (permission.settings) {
+      // Session-only settings; never written to the user's agy config.
+      args.push("--settings", JSON.stringify(permission.settings));
+    }
+    if (hookDir) {
+      args.push("--add-dir", hookDir);
+    }
     if (this.sessionMode === "resume_id" && this.sessionId) {
-      args.push("--resume", this.sessionId);
+      args.push("--conversation", this.sessionId);
     }
     const cliModel = this.cliModelName(model);
     if (cliModel) {
@@ -729,31 +939,64 @@ class GeminiCliProvider {
   }
 
   async chatCompletionStreamRaw(messages, model, options = {}) {
-    const { onOutput = null, signal = null, onProcessStart = null, permissionMode = "full-access" } = options;
+    const { signal = null, permissionMode = "full-access", approvalBridge = null, onNotice = null } = options;
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
-    const command = which("gemini.cmd") || which("gemini.ps1") || which("gemini");
-    if (!command) {
-      throw new Error("gemini CLI not found in PATH");
+    const cli = this.resolveCli();
+    if (!cli) {
+      throw new Error("agy CLI not found in PATH");
     }
-    const prompt = buildCompactPrompt(messages, {
-      head: [
-        "You are running in non-interactive terminal stream-json mode.",
-        "Return only the final answer to the user's request.",
-        "Do not output planning or tool chatter.",
-      ].join("\n"),
-    });
-    const child = spawnCommand(command, this.buildArgs(model, { permissionMode }), {
+    const mode = normalizePermissionMode(permissionMode);
+    const wantsHook = (mode === "supervised" || mode === "auto-accept-edits")
+      && Boolean(approvalBridge?.url && approvalBridge?.token);
+    let hook = null;
+    if (wantsHook) {
+      try {
+        hook = writeAgyHookWorkspace({ url: approvalBridge.url, token: approvalBridge.token, repoRoot: this.repoRoot });
+        if (!(await this.verifyHook(hook))) {
+          hook.cleanup();
+          hook = null;
+        }
+      } catch {
+        hook?.cleanup();
+        hook = null;
+      }
+      if (!hook) onNotice?.(agyFallbackNote(mode));
+    }
+    try {
+      approvalBridge?.onWorkspace?.(hook?.dir || "");
+      const permission = agyPermissionConfig(mode, { hook: Boolean(hook) });
+      return await this._runAgy(cli, messages, model, options, { permission, hook });
+    } finally {
+      hook?.cleanup();
+    }
+  }
+
+  async _runAgy(cli, messages, model, options, { permission, hook, retried = false }) {
+    const { onOutput = null, onEvent = null, signal = null, onProcessStart = null } = options;
+    const resuming = this.sessionMode === "resume_id" && Boolean(this.sessionId);
+    const prompt = resuming
+      ? latestUserMessage(messages)
+      : buildCompactPrompt(messages, {
+        head: [
+          "You are running inside Cortex in non-interactive print mode.",
+          `Work in ${this.repoRoot}.`,
+          "Return the final answer to the user's request.",
+        ].join("\n"),
+      });
+    const child = spawnCommand(cli, this.buildArgs(model, { permission, hookDir: hook?.dir || "" }), {
       cwd: this.repoRoot,
       stdio: ["pipe", "pipe", "pipe"],
+      env: hook ? hook.env : {},
     });
     onProcessStart?.(child.pid);
-    child.stdin.write(prompt);
-    child.stdin.end();
+    child.stdin.on("error", () => {});
+    child.stdin.end(`${JSON.stringify({ event: "user", message: { role: "user", content: prompt } })}\n`);
+
     let stderr = "";
-    let assistantText = "";
     let aborted = false;
+    let staleResume = false;
     let abortListener = null;
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString("utf8");
@@ -761,58 +1004,70 @@ class GeminiCliProvider {
     if (signal) {
       abortListener = () => {
         aborted = true;
-        if (process.platform === "win32" && child.pid !== undefined) {
-          try {
-            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-          } catch {
-            child.kill();
-          }
-          return;
-        }
-        child.kill();
+        platform.killProcessTree(child);
       };
       signal.addEventListener("abort", abortListener, { once: true });
     }
+    const parser = new AgyStreamParser({
+      onText: (delta) => onOutput?.(delta),
+      onToolCall: ({ id, name, args }) => onEvent?.("tool_call", { id, name, args }),
+      onToolResult: ({ id, name, ok, result }) => onEvent?.("tool_result", { id, name, ok, result, change: null }),
+    });
+    const closed = new Promise((resolve) => child.once("close", resolve));
     const stream = readline.createInterface({ input: child.stdout });
     try {
       for await (const line of stream) {
+        const trimmed = String(line || "").trim();
+        if (!trimmed) continue;
         let event;
         try {
-          event = JSON.parse(line);
+          event = JSON.parse(trimmed);
         } catch {
           continue;
         }
-        if (event.type === "init" && event.session_id) {
-          this.sessionId = String(event.session_id);
-          this.sessionMode = "resume_id";
-        }
-        if (event.type === "message" && event.role === "assistant") {
-          const content = String(event.content || "");
-          const nextText = event.delta ? `${assistantText}${content}` : content;
-          const delta = nextText.startsWith(assistantText) ? nextText.slice(assistantText.length) : content;
-          assistantText = nextText;
-          if (delta) {
-            onOutput?.(delta);
-          }
+        parser.push(event);
+        // A stale --conversation id: agy starts a new conversation instead.
+        // Stop before the model runs and retry with the full context.
+        if (event.event === "init" && resuming && parser.conversationId && parser.conversationId !== this.sessionId) {
+          staleResume = true;
+          platform.killProcessTree(child);
+          break;
         }
       }
+      let settleTimer = null;
       const exitCode = await Promise.race([
-        new Promise((resolve) => child.once("close", resolve)),
-        // If aborted, don't wait forever for the process to close
-        new Promise((resolve) => setTimeout(() => resolve(null), aborted ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS)),
+        closed,
+        new Promise((resolve) => {
+          settleTimer = setTimeout(() => resolve(null), aborted || staleResume ? CLI_ABORT_SETTLE_MS : CLI_TURN_TIMEOUT_MS);
+        }),
       ]);
+      clearTimeout(settleTimer);
       if (aborted) {
-        throw new InterruptError("Request interrupted.", assistantText);
+        throw new InterruptError("Request interrupted.", parser.text);
       }
-      if (exitCode !== 0) {
-        if (this.sessionMode === "resume_id") {
-          this.sessionId = "";
-          this.sessionMode = "fresh";
-          return this.chatCompletionStreamRaw(messages, model, options);
-        }
-        throw new Error(`gemini CLI failed: ${(stderr || `exit code ${exitCode}`).trim()}`);
+      if (staleResume && !retried) {
+        this.sessionId = "";
+        this.sessionMode = "fresh";
+        return this._runAgy(cli, messages, model, options, { permission, hook, retried: true });
       }
-      return assistantText || "(No response from Gemini CLI.)";
+      if (parser.conversationId) {
+        this.sessionId = parser.conversationId;
+        this.sessionMode = "resume_id";
+      }
+      const status = String(parser.result?.status || "");
+      if (exitCode !== 0 || status === "ERROR") {
+        const detail = String(parser.result?.error || "").trim() || agyErrorText(stderr) || `exit code ${exitCode}`;
+        throw new Error(`agy CLI failed: ${detail}`);
+      }
+      let text = parser.finalText();
+      const denied = parser.deniedActions();
+      if (denied.length) {
+        const note = `Antigravity was not allowed to: ${[...new Set(denied)].join(", ")} (blocked by this chat's permission mode).`;
+        const addition = text ? `\n\n_${note}_` : note;
+        onOutput?.(addition);
+        text = `${text}${addition}`;
+      }
+      return text || "(No response from Antigravity.)";
     } finally {
       if (signal && abortListener) {
         signal.removeEventListener("abort", abortListener);
@@ -830,7 +1085,6 @@ class GeminiCliProvider {
     return [await this.chatCompletion(messages, model, options), null, null];
   }
 }
-
 
 class ClaudeCliProvider {
   constructor(repoRoot) {
@@ -1431,7 +1685,9 @@ module.exports = {
   spawnCommand,
   which,
   CodexProvider,
-  GeminiCliProvider,
+  AgyCliProvider,
+  AgyStreamParser,
+  parseAgyModels,
   ClaudeCliProvider,
   HermesCliProvider,
   GroqProvider,

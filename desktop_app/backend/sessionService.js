@@ -15,7 +15,7 @@ const { ProjectChatStore } = require("./chatStore");
 const { RepoFileService, snapshotInfo } = require("./fileService");
 const { ToolExecutor } = require("./toolExecutor");
 const { AuditStore } = require("./auditStore");
-const { CodexProvider, GeminiCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
+const { CodexProvider, AgyCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
 const { ApprovalRegistry } = require("./approvalRegistry");
 const {
@@ -92,17 +92,15 @@ class DesktopSessionService {
     this.toolExecutor.onAudit = (entry) => this.auditStore.record(entry);
     this.groqProvider = overrides.groqProvider || new GroqProvider(this.config.apiKey || process.env.GROQ_API_KEY || "");
     this.geminiProvider = overrides.geminiProvider || new GeminiApiProvider(this.config.geminiApiKey || process.env.GEMINI_API_KEY || "");
-    this.geminiCliProvider = overrides.geminiCliProvider || new GeminiCliProvider(this.repoRoot);
+    this.agyProvider = overrides.agyProvider || new AgyCliProvider(this.repoRoot);
     this.claudeProvider = overrides.claudeProvider || new ClaudeCliProvider(this.repoRoot);
     this.hermesProvider = overrides.hermesProvider || new HermesCliProvider(this.repoRoot);
     this.codexProvider = overrides.codexProvider || new CodexProvider(this.repoRoot, this.config.openaiApiKey || process.env.OPENAI_API_KEY || "");
-    this.geminiCliProvider.sessionId = this.config.geminiSessionId || "";
-    this.geminiCliProvider.sessionMode = this.geminiCliProvider.sessionId ? "resume_id" : "fresh";
     this.codexProvider.sessionId = this.config.codexSessionId || "";
     this.codexProvider.sessionMode = this.codexProvider.sessionId ? "resume_id" : "fresh";
     // A model the user picked is kept; otherwise use the first installed provider.
     this.modelExplicit = isExplicitModelChoice(this.config, this);
-    this.model = this.modelExplicit ? this.config.model : firstInstalledModel(this);
+    this.model = this.modelExplicit ? (resolveModelId(this.config.model) || firstInstalledModel(this)) : firstInstalledModel(this);
     this.promptPreset = this.config.promptPreset || "code";
     this.permissionMode = normalizePermissionMode(this.config.permissionMode || this.config.toolSafetyMode);
     // Pending approval requests from running agents; decisions are audited
@@ -138,6 +136,34 @@ class DesktopSessionService {
     if (!overrides.codexProvider) {
       void this.refreshCodexModels();
     }
+    this.agyModels = null;
+    if (!overrides.agyProvider) {
+      void this.refreshAgyModels();
+    }
+  }
+
+  /**
+   * Loads the models `agy models` lists for this account. A saved agy model
+   * that is no longer listed moves to agy's own default.
+   */
+  async refreshAgyModels() {
+    if (typeof this.agyProvider.listModels !== "function" || !this.agyProvider.available) {
+      return this.agyModels;
+    }
+    const live = await this.agyProvider.listModels();
+    if (!Array.isArray(live) || !live.length) {
+      return this.agyModels;
+    }
+    this.agyModels = live;
+    if (this.modelFamily(this.model) === "agy" && this.model !== DEFAULT_MODEL) {
+      const savedName = String(this.model).slice("agy:".length);
+      if (!live.some((entry) => entry.model === savedName)) {
+        this.model = DEFAULT_MODEL;
+        this.persistConfig();
+      }
+    }
+    this.invalidateSnapshotCaches?.();
+    return this.agyModels;
   }
 
   /**
@@ -291,7 +317,7 @@ class DesktopSessionService {
     this.chatStore.setRepoRoot(this.repoRoot);
     this.toolExecutor.setRepoRoot(this.repoRoot);
     this.auditStore.setRepoRoot(this.repoRoot);
-    this.geminiCliProvider.setRepoRoot(this.repoRoot);
+    this.agyProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
     this.hermesProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
@@ -451,15 +477,15 @@ class DesktopSessionService {
       const sessionId = String(this.hermesProvider.sessionId || providerState.hermes_session_id || "").trim();
       return sessionId ? `hermes chat --resume ${quoteShellArg(sessionId)}` : "hermes";
     }
-    if (model.startsWith("gemini-cli:")) {
-      const sessionId = String(this.geminiCliProvider.sessionId || providerState.gemini_cli_session_id || "").trim();
-      return sessionId ? `gemini --resume ${quoteShellArg(sessionId)}` : "gemini";
+    if (model.startsWith("agy:")) {
+      const sessionId = String(this.agyProvider.sessionId || providerState.agy_conversation_id || "").trim();
+      return sessionId ? `agy --conversation ${quoteShellArg(sessionId)}` : "agy";
     }
     return "";
   }
 
   _resetAllCliSessions() {
-    for (const provider of [this.claudeProvider, this.hermesProvider, this.codexProvider, this.geminiCliProvider]) {
+    for (const provider of [this.claudeProvider, this.hermesProvider, this.codexProvider, this.agyProvider]) {
       provider.sessionId = "";
       provider.sessionMode = "fresh";
     }
@@ -626,7 +652,7 @@ class DesktopSessionService {
     this.chatStore.setRepoRoot(this.repoRoot);
     this.toolExecutor.setRepoRoot(this.repoRoot);
     this.auditStore.setRepoRoot(this.repoRoot);
-    this.geminiCliProvider.setRepoRoot(this.repoRoot);
+    this.agyProvider.setRepoRoot(this.repoRoot);
     this.claudeProvider.setRepoRoot(this.repoRoot);
     this.hermesProvider.setRepoRoot(this.repoRoot);
     this.codexProvider.setRepoRoot(this.repoRoot);
@@ -799,14 +825,14 @@ class DesktopSessionService {
   providerForRequest(model) {
     if (String(model).startsWith("claude:")) return this.claudeProvider;
     if (String(model).startsWith("hermes:")) return this.hermesProvider;
-    if (String(model).startsWith("gemini-cli:")) return this.geminiCliProvider;
+    if (String(model).startsWith("agy:")) return this.agyProvider;
     if (String(model).startsWith("gemini")) return this.geminiProvider;
     if (String(model).startsWith("codex:")) return this.codexProvider;
     return this.groqProvider;
   }
 
   requestUsesTools(model, message, preset) {
-    if (String(model).startsWith("gemini-cli:") || String(model).startsWith("codex:") || String(model).startsWith("claude:") || String(model).startsWith("hermes:")) {
+    if (String(model).startsWith("agy:") || String(model).startsWith("codex:") || String(model).startsWith("claude:") || String(model).startsWith("hermes:")) {
       return false;
     }
     if (preset === "chat") {
@@ -1125,14 +1151,21 @@ class DesktopSessionService {
         }
       }
 
-      if (normalized === "geminiCli") {
-        if (!this.geminiCliProvider.available) {
-          throw new Error("Gemini CLI is not available in PATH.");
+      if (normalized === "antigravity") {
+        if (!this.agyProvider.available) {
+          throw new Error("Antigravity CLI (agy) is not available in PATH. Install it from https://antigravity.google and sign in with `agy`.");
         }
+        // `agy models` needs a signed-in account but spends no model quota.
+        const live = await this.agyProvider.listModels();
+        if (!Array.isArray(live) || !live.length) {
+          throw new Error("agy is installed but could not list models. Run `agy` once in a terminal to sign in.");
+        }
+        this.agyModels = live;
+        this.invalidateSnapshotCaches?.();
         return {
           ok: true,
           providerId: normalized,
-          message: "Gemini CLI is available.",
+          message: `Antigravity is signed in; ${live.length} models available.`,
         };
       }
 

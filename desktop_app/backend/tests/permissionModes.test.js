@@ -7,7 +7,7 @@ const {
   legacyToolSafetyMode,
   codexPolicy,
   claudePermissionArgs,
-  geminiApprovalMode,
+  agyPermissionConfig,
   apiToolGate,
   describePermissionMode,
   CLAUDE_APPROVAL_TOOL,
@@ -67,16 +67,44 @@ test("claude modes map to --permission-mode and the approval prompt tool", () =>
   assert.equal(noBridge[noBridge.indexOf("--permission-prompts") + 1], "none");
 });
 
-test("gemini cli and hermes fall back and say so", () => {
-  assert.equal(geminiApprovalMode("read-only"), "default");
-  assert.equal(geminiApprovalMode("supervised"), "default");
-  assert.equal(geminiApprovalMode("auto-accept-edits"), "auto_edit");
-  assert.equal(geminiApprovalMode("full-access"), "auto_edit");
+test("antigravity maps each mode onto agy settings, asking through the hook", () => {
+  const full = agyPermissionConfig("full-access");
+  assert.deepEqual(full.args, ["--dangerously-skip-permissions"]);
+  assert.equal(full.settings, null);
 
-  const gem = describePermissionMode("gemini-cli:auto", "supervised");
-  assert.equal(gem.effectiveMode, "read-only");
-  assert.equal(gem.interactive, false);
-  assert.ok(gem.note);
+  const readOnly = agyPermissionConfig("read-only");
+  assert.deepEqual(readOnly.args, []);
+  assert.deepEqual(readOnly.settings.permissions.deny, ["write_file(*)", "command(*)", "mcp(*)"]);
+  assert.equal(readOnly.hook, false);
+
+  // With the hook, the hook is the gate; the allow rule only stops headless
+  // agy from refusing a command the user approved.
+  for (const mode of ["supervised", "auto-accept-edits"]) {
+    const hooked = agyPermissionConfig(mode, { hook: true });
+    assert.equal(hooked.hook, true);
+    assert.equal(hooked.effectiveMode, mode);
+    assert.deepEqual(hooked.settings.permissions.allow, ["command(*)"]);
+    assert.ok(!hooked.args.includes("--dangerously-skip-permissions"));
+  }
+
+  // Without it nobody can answer: Supervised becomes Read-only, Auto-accept
+  // edits refuses commands.
+  const supervised = agyPermissionConfig("supervised");
+  assert.equal(supervised.effectiveMode, "read-only");
+  assert.deepEqual(supervised.settings, readOnly.settings);
+  const edits = agyPermissionConfig("auto-accept-edits");
+  assert.ok(edits.settings.permissions.deny.includes("command(*)"));
+  assert.ok(!edits.settings.permissions.deny.includes("write_file(*)"));
+
+  assert.equal(describePermissionMode("agy:default", "supervised").interactive, true);
+  const noBridge = describePermissionMode("agy:default", "supervised", { bridge: false });
+  assert.equal(noBridge.interactive, false);
+  assert.equal(noBridge.effectiveMode, "read-only");
+  assert.ok(noBridge.note);
+  assert.equal(describePermissionMode("agy:default", "full-access").note, "");
+});
+
+test("hermes falls back and says so", () => {
 
   const hermes = describePermissionMode("hermes:default", "read-only");
   assert.equal(hermes.effectiveMode, "full-access");
@@ -84,7 +112,7 @@ test("gemini cli and hermes fall back and say so", () => {
 
   assert.equal(describePermissionMode("codex:gpt-5.4", "supervised").interactive, true);
   assert.equal(describePermissionMode("claude:haiku", "supervised").interactive, true);
-  assert.equal(describePermissionMode("claude:haiku", "supervised", { claudeBridge: false }).interactive, false);
+  assert.equal(describePermissionMode("claude:haiku", "supervised", { bridge: false }).interactive, false);
   assert.equal(describePermissionMode("llama-3.3-70b", "auto-accept-edits").interactive, true);
   assert.equal(describePermissionMode("codex:gpt-5.4", "full-access").interactive, false);
 });

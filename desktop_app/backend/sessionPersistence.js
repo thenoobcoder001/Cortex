@@ -18,7 +18,6 @@ function persistConfig(service) {
   service.config.promptPreset = service.promptPreset;
   service.config.toolSafetyMode = service.toolReadOnly ? "read" : "write";
   service.config.permissionMode = service.permissionMode || "";
-  service.config.geminiSessionId = service.geminiCliProvider.sessionId || "";
   service.config.codexSessionId = service.codexProvider.sessionId || "";
   service.config.interruptedRuns = [...service.interruptedRuns.values()];
   service.config.save();

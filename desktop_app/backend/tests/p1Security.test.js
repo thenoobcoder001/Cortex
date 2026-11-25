@@ -291,7 +291,7 @@ test("P1-Q: messagesWithContext includes repoRoot confinement prefix", () => {
     toolExecutor:    { readOnly: false, runTool: async () => ({ output: "" }) },
     groqProvider:    { available: false, connected: false, setApiKey: () => {} },
     geminiProvider:  { available: false, connected: false, setApiKey: () => {} },
-    geminiCliProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
+    agyProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
 
     claudeProvider:  { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
     codexProvider:   { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {}, setApiKey: () => {} },
@@ -318,7 +318,7 @@ test("P1-Q: messagesWithContext omits confinement prefix when repoRoot is empty"
     toolExecutor:    { readOnly: false, runTool: async () => ({ output: "" }) },
     groqProvider:    { available: false, connected: false, setApiKey: () => {} },
     geminiProvider:  { available: false, connected: false, setApiKey: () => {} },
-    geminiCliProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
+    agyProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
 
     claudeProvider:  { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
     codexProvider:   { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {}, setApiKey: () => {} },
@@ -345,7 +345,7 @@ test("P1-R: _ensureClaudeSettings writes .claudeignore when absent", () => {
     toolExecutor:    { readOnly: false, runTool: async () => ({ output: "" }) },
     groqProvider:    { available: false, connected: false, setApiKey: () => {} },
     geminiProvider:  { available: false, connected: false, setApiKey: () => {} },
-    geminiCliProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
+    agyProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
 
     claudeProvider:  { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
     codexProvider:   { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {}, setApiKey: () => {} },
@@ -381,7 +381,7 @@ test("P1-R: _ensureClaudeSettings does not overwrite existing .claudeignore", ()
     toolExecutor:    { readOnly: false, runTool: async () => ({ output: "" }) },
     groqProvider:    { available: false, connected: false, setApiKey: () => {} },
     geminiProvider:  { available: false, connected: false, setApiKey: () => {} },
-    geminiCliProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
+    agyProvider: { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
 
     claudeProvider:  { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {} },
     codexProvider:   { available: false, connected: false, sessionId: "", sessionMode: "fresh", setRepoRoot: () => {}, setApiKey: () => {} },

@@ -96,7 +96,7 @@ function createService(repoRoot, provider, overrides = {}) {
     config: new MemoryConfig(repoRoot),
     repoRoot,
     codexProvider: new IdleCli(),
-    geminiCliProvider: new IdleCli(),
+    agyProvider: new IdleCli(),
     claudeProvider: new IdleCli(),
     hermesProvider: new IdleCli(),
     groqProvider: provider,

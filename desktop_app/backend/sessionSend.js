@@ -11,6 +11,7 @@ const {
   providerFamily,
   resolveRequestPermissionMode,
 } = require("./permissionModes");
+const { agyToolSummary } = require("./approvalBridge");
 
 function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
   const titleSource = String(userPrompt || "").split(/\r?\n/, 1)[0].trim() || "Implementation Plan";
@@ -60,6 +61,10 @@ async function *runCliRequest(provider, messages, model, service, chatId, extraO
     waiter.current?.();
   });
 
+  const push = (type, payload) => {
+    queue.push(service.event(type, { ...payload, chatId }));
+    waiter.current?.();
+  };
   const job = (async () => {
     try {
       finalText = await provider.chatCompletionStreamRaw(messages, model, {
@@ -68,9 +73,12 @@ async function *runCliRequest(provider, messages, model, service, chatId, extraO
         onProcessStart: (pid) => service.requestRegistry.attachProcess(chatId, pid),
         onOutput: (chunk) => {
           if (!chunk) return;
-          queue.push(service.event("cli_output", { stream: "stdout", text: chunk, chatId }));
-          waiter.current?.();
+          push("cli_output", { stream: "stdout", text: chunk });
         },
+        // Tool steps, for providers that report them (Antigravity).
+        onEvent: (type, payload) => push(type, payload),
+        // A permission fallback decided at run time (e.g. no approval hook).
+        onNotice: (message) => push("status", { phase: "permissions", message }),
       });
     } catch (error) {
       cliError = error;
@@ -96,10 +104,32 @@ async function *runCliRequest(provider, messages, model, service, chatId, extraO
 function isCliModel(model) {
   return (
     model.startsWith("codex:")
-    || model.startsWith("gemini-cli:")
+    || model.startsWith("agy:")
     || model.startsWith("claude:")
     || model.startsWith("hermes:")
   );
+}
+
+// Answers one tool call from Antigravity's approval hook: reads pass, the
+// hook's own folder is refused, everything else goes to an approval card
+// (or is auto-approved and audited for repo edits in Auto-accept edits).
+async function answerAgyTool(service, bridge, toolName, input, { chatId, repoRoot, permissionMode, auditMeta }) {
+  const summary = agyToolSummary(toolName, input, { repoRoot, permissionMode, controlDir: bridge.controlDir });
+  if (summary.pass) {
+    return { decision: "approve", by: summary.by };
+  }
+  if (summary.block) {
+    service.recordAuditEntry({
+      ...auditMeta,
+      source: "cortex",
+      chatId,
+      action: "declined",
+      success: true,
+      detail: `tool ${String(toolName || "")}; ${summary.block}`,
+    }, repoRoot);
+    return { decision: "decline", by: "cortex" };
+  }
+  return bridge.ask(summary);
 }
 
 function restoreCliSession(provider, storedId) {
@@ -114,7 +144,7 @@ function clearCliSession(provider) {
 
 function cliProviderEntry(model, service) {
   if (model.startsWith("codex:"))      return { provider: service.codexProvider,    sessionKey: "codex_session_id" };
-  if (model.startsWith("gemini-cli:")) return { provider: service.geminiCliProvider, sessionKey: "gemini_cli_session_id" };
+  if (model.startsWith("agy:"))        return { provider: service.agyProvider,       sessionKey: "agy_conversation_id" };
   if (model.startsWith("claude:"))     return { provider: service.claudeProvider,    sessionKey: "claude_session_id" };
   if (model.startsWith("hermes:"))     return { provider: service.hermesProvider,    sessionKey: "hermes_session_id" };
   return null;
@@ -152,12 +182,12 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
 
   let baseMessages = existingPayload ? normalizeMessages(existingPayload.messages) : [];
   let storedChanges = existingPayload ? normalizeChanges(existingPayload.changes) : [];
-  const existingModel = existingPayload ? String(existingPayload.model || "") : "";
+  const existingModel = existingPayload ? resolveModelId(existingPayload.model) : "";
 
   // Restore per-provider CLI session IDs from the chat's persisted state.
   restoreCliSession(service.codexProvider,    existingProviderState.codex_session_id);
-  restoreCliSession(service.geminiCliProvider, existingProviderState.gemini_cli_session_id);
-  restoreCliSession(service.claudeProvider,    existingProviderState.claude_session_id);
+  restoreCliSession(service.agyProvider,      existingProviderState.agy_conversation_id);
+  restoreCliSession(service.claudeProvider,   existingProviderState.claude_session_id);
   restoreCliSession(service.hermesProvider,    existingProviderState.hermes_session_id);
 
   // Codex threads keep the sandbox they started with; start a fresh thread
@@ -221,7 +251,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
   yield service.event("status", { phase: "started", message: `Running ${service.providerNameForModel(requestModel)}...`, chatId });
 
   const auditMeta = { provider: service.providerNameForModel(requestModel), model: requestModel, chatId };
-  const modeInfo = describePermissionMode(requestModel, requestPermissionMode, { claudeBridge: Boolean(service.approvalBridgeUrl) });
+  const modeInfo = describePermissionMode(requestModel, requestPermissionMode, { bridge: Boolean(service.approvalBridgeUrl) });
   if (modeInfo.note) {
     yield service.event("status", { phase: "permissions", message: modeInfo.note, permissionMode: modeInfo, chatId });
   }
@@ -253,12 +283,29 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     const cliEntry = cliProviderEntry(requestModel, service);
     if (cliEntry) {
       const cliOptions = { permissionMode: requestPermissionMode, askApproval };
-      // Claude asks through a local MCP server that calls back into Cortex;
-      // the per-turn token ties those calls to this chat.
-      if (providerFamily(requestModel) === "claude" && modeInfo.interactive && service.approvalBridgeUrl) {
+      // Claude asks through a local MCP server, Antigravity through a
+      // PreToolUse hook; both call back into Cortex with a per-turn token
+      // that ties those calls to this chat.
+      const family = providerFamily(requestModel);
+      if ((family === "claude" || family === "agy") && modeInfo.interactive && service.approvalBridgeUrl) {
         bridgeToken = crypto.randomBytes(24).toString("hex");
-        service.approvalBridges.set(bridgeToken, { chatId, ask: askApproval });
-        cliOptions.approvalBridge = { url: service.approvalBridgeUrl, token: bridgeToken };
+        const bridge = { chatId, ask: askApproval };
+        if (family === "agy") {
+          bridge.controlDir = "";
+          bridge.handle = (toolName, input) => answerAgyTool(service, bridge, toolName, input, {
+            chatId,
+            repoRoot: requestRepoRoot,
+            permissionMode: requestPermissionMode,
+            auditMeta,
+          });
+        }
+        service.approvalBridges.set(bridgeToken, bridge);
+        cliOptions.approvalBridge = {
+          url: service.approvalBridgeUrl,
+          token: bridgeToken,
+          // The provider says which folder holds this turn's hook.
+          onWorkspace: (dir) => { bridge.controlDir = dir; },
+        };
       }
       let finalText = "";
       const cliStream = runCliRequest(cliEntry.provider, baseForProvider, requestModel, service, chatId, cliOptions);

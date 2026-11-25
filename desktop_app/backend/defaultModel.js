@@ -4,20 +4,22 @@ const {
   DEFAULT_MODEL,
   CLAUDE_MODELS,
   CODEX_MODELS,
-  GEMINI_CLI_MODELS,
+  AGY_MODELS,
   HERMES_MODELS,
   GEMINI_MODELS,
   GROQ_MODELS,
+  resolveModelId,
 } = require("./constants");
 
-// Providers in the order a new user should land on them. CLI providers count
-// when their binary is installed; API providers only when a key is set.
+// Providers in the order a new user should land on them: Claude, Codex,
+// Antigravity, Hermes, then the API providers. CLI providers count when their
+// binary is installed; API providers only when a key is set.
 // Each check is a function so later providers aren't probed (a `where`/`which`
 // spawn each) once an earlier one matches.
 const PREFERENCE = [
   [(s) => s.claudeProvider?.available, () => CLAUDE_MODELS[0][0]],
   [(s) => s.codexProvider?.available, (s) => s.defaultCodexModelId?.() || CODEX_MODELS[0][0]],
-  [(s) => s.geminiCliProvider?.available, () => GEMINI_CLI_MODELS[0][0]],
+  [(s) => s.agyProvider?.available, () => AGY_MODELS[0][0]],
   [(s) => s.hermesProvider?.available, () => HERMES_MODELS[0][0]],
   [(s) => s.geminiProvider?.connected, () => GEMINI_MODELS[0][0]],
   [(s) => s.groqProvider?.connected, () => GROQ_MODELS[0][0]],
@@ -47,9 +49,10 @@ function firstInstalledModel(service) {
  * Whether the saved config model was picked by the user (and so must be
  * kept) rather than written as a default.
  *
- * Configs written before `model_explicit` existed always held DEFAULT_MODEL
- * after the first launch, picked or not. Keep that one only when Gemini CLI
- * is actually installed; otherwise it can't work and was never a real choice.
+ * Configs written before `model_explicit` existed always held the default
+ * (then "gemini-cli:auto", which now maps to Antigravity's default) after the
+ * first launch, picked or not. Keep that one only when Antigravity is
+ * actually installed; otherwise it can't work and was never a real choice.
  */
 function isExplicitModelChoice(config, service) {
   const saved = String(config?.model || "");
@@ -59,8 +62,8 @@ function isExplicitModelChoice(config, service) {
   if (typeof config.modelExplicit === "boolean") {
     return config.modelExplicit;
   }
-  if (saved === DEFAULT_MODEL) {
-    return Boolean(service?.geminiCliProvider?.available);
+  if (resolveModelId(saved) === DEFAULT_MODEL) {
+    return Boolean(service?.agyProvider?.available);
   }
   return true;
 }

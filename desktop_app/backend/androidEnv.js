@@ -180,9 +180,10 @@ const CLI_ALLOWED_ENV_KEYS = new Set([
   // AI CLI keys — only what each tool actually needs
   "ANTHROPIC_API_KEY",   // Claude Code
   "OPENAI_API_KEY",      // Codex
-  "GEMINI_API_KEY",      // Gemini CLI
-  "GOOGLE_API_KEY",      // Gemini CLI alternate
+  "GEMINI_API_KEY",      // Antigravity CLI (agy) API-key sign-in
+  "GOOGLE_API_KEY",      // Google API key alternate
   "GOOGLE_APPLICATION_CREDENTIALS",  // Google service account / OAuth helper
+  "AGY_ADC_AUTH",        // Antigravity CLI: sign in with Application Default Credentials
   "HERMES_HOME",         // Hermes Agent config dir (config.yaml, provider keys)
   "HERMES_GIT_BASH_PATH", // Hermes Agent shell tool on Windows
   // Android SDK (populated by resolveAndroidEnv)

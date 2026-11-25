@@ -66,7 +66,7 @@ function makeService(repoRoot) {
     repoRoot,
     claudeProvider: claude,
     codexProvider: new EditingCliProvider(repoRoot),
-    geminiCliProvider: new EditingCliProvider(repoRoot),
+    agyProvider: new EditingCliProvider(repoRoot),
   });
   return { service, claude };
 }

@@ -1,7 +1,7 @@
 const {
   APP_NAME,
   VERSION,
-  GEMINI_CLI_MODELS,
+  AGY_MODELS,
   CLAUDE_MODELS,
   HERMES_MODELS,
   CODEX_MODELS,
@@ -12,7 +12,7 @@ const { DEFAULT_PERMISSION_MODE, describePermissionMode } = require("./permissio
 function modelFamily(model) {
   if (String(model).startsWith("claude:")) return "claude";
   if (String(model).startsWith("hermes:")) return "hermes";
-  if (String(model).startsWith("gemini-cli:")) return "gemini-cli";
+  if (String(model).startsWith("agy:")) return "agy";
   if (String(model).startsWith("gemini")) return "gemini";
   if (String(model).startsWith("codex:")) return "codex";
   return "groq";
@@ -21,7 +21,7 @@ function modelFamily(model) {
 function providerNameForModel(model) {
   if (String(model).startsWith("claude:")) return "Claude";
   if (String(model).startsWith("hermes:")) return "Hermes";
-  if (String(model).startsWith("gemini-cli:")) return "Gemini CLI";
+  if (String(model).startsWith("agy:")) return "Antigravity";
   if (String(model).startsWith("gemini")) return "Gemini";
   if (String(model).startsWith("codex:")) return "Codex";
   return "Groq";
@@ -58,12 +58,36 @@ function codexModels(service) {
   });
 }
 
+// Antigravity: agy's default first, then the live `agy models` list (the
+// constant until agy answers). Every entry has a subGroup (its base model) so
+// the picker shows effort variants like Codex's.
+function agyModels(service) {
+  const live = service?.agyModels;
+  if (!Array.isArray(live) || !live.length) {
+    return AGY_MODELS.map(([id, label]) => {
+      const name = id.slice("agy:".length);
+      const effort = name.match(/-(minimal|low|medium|high|xhigh|max)$/);
+      return { id, label, group: "Antigravity", subGroup: effort ? name.slice(0, -effort[0].length) : name };
+    });
+  }
+  const [defaultId, defaultLabel] = AGY_MODELS[0];
+  return [
+    { id: defaultId, label: defaultLabel, group: "Antigravity", subGroup: "default" },
+    ...live.map((entry) => ({
+      id: `agy:${entry.model}`,
+      label: entry.effort ? `${entry.displayName} · ${EFFORT_LABELS[entry.effort] || entry.effort}` : entry.displayName,
+      group: "Antigravity",
+      subGroup: entry.base || entry.model,
+    })),
+  ];
+}
+
 function models(service) {
   return [
     ...codexModels(service),
     ...CLAUDE_MODELS.map(([id, label]) => ({ id, label, group: "Claude" })),
+    ...agyModels(service),
     ...HERMES_MODELS.map(([id, label]) => ({ id, label, group: "Hermes" })),
-    ...GEMINI_CLI_MODELS.map(([id, label]) => ({ id, label, group: "Gemini CLI (Legacy)" })),
   ];
 }
 
@@ -72,7 +96,7 @@ function providersSnapshot(service) {
     claude: { available: service.claudeProvider.available, connected: service.claudeProvider.connected },
     hermes: { available: service.hermesProvider?.available || false, connected: service.hermesProvider?.connected || false },
     codex: { available: service.codexProvider.available, connected: service.codexProvider.connected },
-    geminiCli: { available: service.geminiCliProvider.available, connected: service.geminiCliProvider.connected },
+    antigravity: { available: service.agyProvider?.available || false, connected: service.agyProvider?.connected || false },
   };
 }
 
@@ -97,7 +121,7 @@ function buildSnapshot(service, { lite = false, includeChanges = true } = {}) {
       permissionModeInfo: describePermissionMode(
         service.model,
         service.permissionMode || DEFAULT_PERMISSION_MODE,
-        { claudeBridge: Boolean(service.approvalBridgeUrl) },
+        { bridge: Boolean(service.approvalBridgeUrl) },
       ),
       assistantMemory: service.config.assistantMemory || "",
       contextCarryMessages: service.config.contextCarryMessages ?? 5,

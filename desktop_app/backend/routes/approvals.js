@@ -7,8 +7,9 @@ const { claudeToolSummary } = require("../approvalBridge");
 //   GET  /api/approvals?chatId=     pending requests (all chats if no chatId)
 //   POST /api/approvals/respond     { approvalId, decision: "approve"|"decline", alwaysAllow?, chatId? }
 //   POST /api/approvals/bridge      local only: the Claude approval MCP server
-//                                   asking on behalf of a running turn; the
-//                                   response is held until the user decides.
+//                                   or the Antigravity approval hook asking on
+//                                   behalf of a running turn; the response is
+//                                   held until the user decides.
 //
 // /respond is an ordinary authenticated route, so the phone reaches it through
 // the relay like any other request; the decision is audited with where it came from.
@@ -42,14 +43,17 @@ async function handle(ctx) {
   }
 
   if (method === "POST" && pathname === "/api/approvals/bridge") {
-    // Only the MCP server Cortex itself started for a running Claude turn may
-    // ask: loopback, no relay header, and the per-turn token.
+    // Only the bridge Cortex itself started for a running turn (Claude's MCP
+    // server, Antigravity's hook) may ask: loopback, no relay header, and the
+    // per-turn token.
     const bridge = ctx.isLocal ? service.approvalBridges.get(String(body.token || "")) : null;
     if (!bridge) {
       reply(403, { detail: "Unknown approval bridge." });
       return true;
     }
-    const answer = await bridge.ask(claudeToolSummary(body.toolName, body.input));
+    const answer = typeof bridge.handle === "function"
+      ? await bridge.handle(body.toolName, body.input)
+      : await bridge.ask(claudeToolSummary(body.toolName, body.input));
     reply(200, { decision: answer.decision, by: answer.by });
     return true;
   }

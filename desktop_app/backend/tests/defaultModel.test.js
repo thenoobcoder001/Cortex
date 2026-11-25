@@ -27,11 +27,11 @@ function api(key = "") {
   };
 }
 
-function providers({ claude = false, codex = false, geminiCli = false, hermes = false, geminiKey = "", groqKey = "" } = {}) {
+function providers({ claude = false, codex = false, agy = false, hermes = false, geminiKey = "", groqKey = "" } = {}) {
   return {
     claudeProvider: cli(claude),
     codexProvider: cli(codex),
-    geminiCliProvider: cli(geminiCli),
+    agyProvider: cli(agy),
     hermesProvider: cli(hermes),
     geminiProvider: api(geminiKey),
     groqProvider: api(groqKey),
@@ -74,11 +74,11 @@ function tempRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "cortex-default-model-"));
 }
 
-test("first installed provider follows Claude, Codex, Gemini CLI, Hermes, API keys", () => {
+test("first installed provider follows Claude, Codex, Antigravity, Hermes, API keys", () => {
   const codexDefault = CODEX_MODELS[0][0];
-  assert.equal(firstInstalledModel(providers({ claude: true, codex: true, geminiCli: true })), "claude:sonnet");
-  assert.equal(firstInstalledModel(providers({ codex: true, geminiCli: true })), codexDefault);
-  assert.equal(firstInstalledModel(providers({ geminiCli: true, hermes: true })), "gemini-cli:auto");
+  assert.equal(firstInstalledModel(providers({ claude: true, codex: true, agy: true })), "claude:sonnet");
+  assert.equal(firstInstalledModel(providers({ codex: true, agy: true })), codexDefault);
+  assert.equal(firstInstalledModel(providers({ agy: true, hermes: true })), "agy:default");
   assert.equal(firstInstalledModel(providers({ hermes: true, geminiKey: "k" })), "hermes:default");
   assert.equal(firstInstalledModel(providers({ geminiKey: "k", groqKey: "k" })), GEMINI_MODELS[0][0]);
   assert.equal(firstInstalledModel(providers({ groqKey: "k" })), "openai/gpt-oss-120b");
@@ -91,18 +91,21 @@ test("codex default comes from the service's live model list when it has one", (
 });
 
 test("explicit-choice detection keeps picked models and drops the old unpicked default", () => {
-  const noGemini = providers({ claude: true });
-  const withGemini = providers({ geminiCli: true });
-  assert.equal(isExplicitModelChoice({ model: "" }, noGemini), false);
-  assert.equal(isExplicitModelChoice({ model: "claude:opus", modelExplicit: true }, noGemini), true);
-  assert.equal(isExplicitModelChoice({ model: "claude:opus", modelExplicit: false }, noGemini), false);
+  const noAgy = providers({ claude: true });
+  const withAgy = providers({ agy: true });
+  assert.equal(isExplicitModelChoice({ model: "" }, noAgy), false);
+  assert.equal(isExplicitModelChoice({ model: "claude:opus", modelExplicit: true }, noAgy), true);
+  assert.equal(isExplicitModelChoice({ model: "claude:opus", modelExplicit: false }, noAgy), false);
   // Configs saved before the flag existed.
-  assert.equal(isExplicitModelChoice({ model: "codex:gpt-5.4:high", modelExplicit: null }, noGemini), true);
-  assert.equal(isExplicitModelChoice({ model: DEFAULT_MODEL, modelExplicit: null }, noGemini), false);
-  assert.equal(isExplicitModelChoice({ model: DEFAULT_MODEL, modelExplicit: null }, withGemini), true);
+  assert.equal(isExplicitModelChoice({ model: "codex:gpt-5.4:high", modelExplicit: null }, noAgy), true);
+  assert.equal(isExplicitModelChoice({ model: DEFAULT_MODEL, modelExplicit: null }, noAgy), false);
+  assert.equal(isExplicitModelChoice({ model: DEFAULT_MODEL, modelExplicit: null }, withAgy), true);
+  // The default saved before Gemini CLI was replaced by Antigravity.
+  assert.equal(isExplicitModelChoice({ model: "gemini-cli:auto", modelExplicit: null }, noAgy), false);
+  assert.equal(isExplicitModelChoice({ model: "gemini-cli:auto", modelExplicit: null }, withAgy), true);
 });
 
-test("fresh config with only Claude and Codex installed defaults to Claude, not Gemini CLI", () => {
+test("fresh config with only Claude and Codex installed defaults to Claude, not Antigravity", () => {
   const repo = tempRepo();
   const config = new MemoryConfig(repo);
   const service = makeService(config, { claude: true, codex: true });
@@ -114,10 +117,22 @@ test("fresh config with only Claude and Codex installed defaults to Claude, not 
   assert.equal(config.modelExplicit, false);
 });
 
-test("a config holding the old Gemini CLI default is moved when Gemini CLI is missing", () => {
+test("a config holding the old Gemini CLI default is moved when Antigravity is missing", () => {
   const repo = tempRepo();
-  const service = makeService(new MemoryConfig(repo, { model: DEFAULT_MODEL }), { codex: true });
+  const service = makeService(new MemoryConfig(repo, { model: "gemini-cli:auto" }), { codex: true });
   assert.equal(service.model, CODEX_MODELS[0][0]);
+});
+
+test("a config holding the old Gemini CLI default moves to Antigravity when agy is installed", () => {
+  const repo = tempRepo();
+  const service = makeService(new MemoryConfig(repo, { model: "gemini-cli:auto" }), { codex: true, agy: true });
+  assert.equal(service.model, "agy:default");
+});
+
+test("a picked Gemini CLI model loads as its Antigravity replacement", () => {
+  const repo = tempRepo();
+  const service = makeService(new MemoryConfig(repo, { model: "gemini-cli:gemini-3.1-pro-preview", modelExplicit: true }), { agy: true });
+  assert.equal(service.model, "agy:gemini-3.8-flash-high");
 });
 
 test("a model the user picked is kept even when a preferred provider is installed", () => {
@@ -132,10 +147,10 @@ test("a model the user picked is kept even when a preferred provider is installe
   const second = makeService(config, { claude: true, codex: true });
   assert.equal(second.model, "codex:gpt-5.4:high");
 
-  // Picking Gemini CLI explicitly sticks too, installed or not.
-  second.updateConfig({ model: "gemini-cli:auto" }, { lite: true });
+  // Picking Antigravity explicitly sticks too, installed or not.
+  second.updateConfig({ model: "agy:gemini-3.8-flash-low" }, { lite: true });
   const third = makeService(config, { claude: true });
-  assert.equal(third.model, "gemini-cli:auto");
+  assert.equal(third.model, "agy:gemini-3.8-flash-low");
 });
 
 test("an automatic default follows setup changes such as a newly added API key", () => {

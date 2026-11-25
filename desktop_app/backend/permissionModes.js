@@ -69,7 +69,7 @@ function providerFamily(model) {
   const value = String(model || "");
   if (value.startsWith("codex:")) return "codex";
   if (value.startsWith("claude:")) return "claude";
-  if (value.startsWith("gemini-cli:")) return "gemini-cli";
+  if (value.startsWith("agy:")) return "agy";
   if (value.startsWith("hermes:")) return "hermes";
   return "api"; // Groq / Gemini API, which run through toolExecutor
 }
@@ -122,14 +122,51 @@ function claudePermissionArgs(mode, { promptTool = false } = {}) {
   return args;
 }
 
-// ── Gemini CLI ───────────────────────────────────────────────────────────
-// Headless Gemini CLI cannot ask anyone: in "default" mode it refuses every
-// tool that needs confirmation, in "auto_edit" it runs edits and refuses
-// shell commands. "yolo" is deliberately never used (see providers.js).
-function geminiApprovalMode(mode) {
+// ── Antigravity CLI (agy) ────────────────────────────────────────────────
+// Headless `agy -p` never prompts. Measured on agy 1.4.12:
+//   - edits inside the workspace run without asking (default
+//     "request-review" policy only reviews in the interactive UI);
+//   - shell commands are soft-denied unless a permissions.allow rule
+//     matches (reported as denied_actions);
+//   - permissions.deny rules ("write_file(*)", "command(*)") block the tool;
+//   - a PreToolUse hook (hooks.json in a workspace's .agents folder) runs
+//     before every tool and can deny it; a failing or timed-out hook also
+//     blocks the tool.
+// Cortex passes rules with --settings (session-only, never saved) and, for
+// the modes that ask, adds a per-turn workspace whose hook asks Cortex
+// (agyApprovalHook.js). The hook is the gate; "command(*)" only stops
+// headless agy refusing what the user approved.
+const AGY_DENY_WRITES = "write_file(*)";
+const AGY_DENY_COMMANDS = "command(*)";
+const AGY_DENY_MCP = "mcp(*)";
+
+// { args, settings, hook, effectiveMode } for one turn. `hook` says whether
+// the approval hook is wired up; without it nobody can answer, so whatever
+// would ask is denied instead.
+function agyPermissionConfig(mode, { hook = false } = {}) {
   const normalized = normalizePermissionMode(mode);
-  if (normalized === "read-only" || normalized === "supervised") return "default";
-  return "auto_edit";
+  if (normalized === "full-access") {
+    return { args: ["--dangerously-skip-permissions"], settings: null, hook: false, effectiveMode: "full-access" };
+  }
+  const readOnly = { permissions: { deny: [AGY_DENY_WRITES, AGY_DENY_COMMANDS, AGY_DENY_MCP] } };
+  if (normalized === "read-only") {
+    return { args: [], settings: readOnly, hook: false, effectiveMode: "read-only" };
+  }
+  if (hook) {
+    return { args: [], settings: { permissions: { allow: [AGY_DENY_COMMANDS] } }, hook: true, effectiveMode: normalized };
+  }
+  if (normalized === "supervised") {
+    return { args: [], settings: readOnly, hook: false, effectiveMode: "read-only" };
+  }
+  // Auto-accept edits without the hook: edits run, commands are refused.
+  return { args: [], settings: { permissions: { deny: [AGY_DENY_COMMANDS, AGY_DENY_MCP] } }, hook: false, effectiveMode: "auto-accept-edits" };
+}
+
+// What the composer says when the approval hook can't be used.
+function agyFallbackNote(mode) {
+  return normalizePermissionMode(mode) === "supervised"
+    ? "Antigravity can't reach Cortex for approvals right now, so edits and commands are declined (runs as Read-only)."
+    : "Antigravity can't reach Cortex for approvals right now, so commands are declined; edits inside the project run.";
 }
 
 // ── API providers (toolExecutor) ─────────────────────────────────────────
@@ -150,8 +187,10 @@ function apiToolGate(mode, toolName) {
 
 // How a mode actually runs on a provider. `effectiveMode` is what the
 // provider enforces; `interactive` is true when Cortex will show approval
-// cards; `note` explains any fallback in plain words for the UI.
-function describePermissionMode(model, mode, { claudeBridge = true } = {}) {
+// cards; `note` explains any fallback in plain words for the UI. `bridge` is
+// false when the backend has no approval callback URL (Claude's MCP server
+// and Antigravity's hook both need it).
+function describePermissionMode(model, mode, { bridge = true } = {}) {
   const requested = normalizePermissionMode(mode);
   const family = providerFamily(model);
   const base = { requested, effectiveMode: requested, interactive: false, note: "" };
@@ -161,7 +200,7 @@ function describePermissionMode(model, mode, { claudeBridge = true } = {}) {
     return { ...base, interactive: asks };
   }
   if (family === "claude") {
-    if (asks && !claudeBridge) {
+    if (asks && !bridge) {
       return {
         ...base,
         note: "Approvals are unavailable for Claude right now; anything that would ask is declined.",
@@ -169,25 +208,11 @@ function describePermissionMode(model, mode, { claudeBridge = true } = {}) {
     }
     return { ...base, interactive: asks };
   }
-  if (family === "gemini-cli") {
-    if (requested === "supervised") {
-      return {
-        ...base,
-        effectiveMode: "read-only",
-        note: "Gemini CLI cannot ask for approval when run by Cortex, so edits and commands are declined (runs as Read-only).",
-      };
+  if (family === "agy") {
+    if (asks && !bridge) {
+      return { ...base, effectiveMode: agyPermissionConfig(requested).effectiveMode, note: agyFallbackNote(requested) };
     }
-    if (requested === "auto-accept-edits") {
-      return { ...base, note: "Gemini CLI cannot ask for approval when run by Cortex, so commands are declined; edits run." };
-    }
-    if (requested === "full-access") {
-      return {
-        ...base,
-        effectiveMode: "auto-accept-edits",
-        note: "Gemini CLI runs edits but declines shell commands in Full access (Cortex never uses its yolo mode).",
-      };
-    }
-    return { ...base, note: "Gemini CLI runs without edit or command tools." };
+    return { ...base, interactive: asks };
   }
   // Hermes has no permission flags Cortex can set.
   if (family === "hermes") {
@@ -213,7 +238,8 @@ module.exports = {
   providerFamily,
   codexPolicy,
   claudePermissionArgs,
-  geminiApprovalMode,
+  agyPermissionConfig,
+  agyFallbackNote,
   apiToolGate,
   describePermissionMode,
 };
