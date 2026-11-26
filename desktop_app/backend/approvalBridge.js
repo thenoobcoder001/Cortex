@@ -75,24 +75,37 @@ function bridgeCommand() {
   return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } };
 }
 
-// Writes a one-turn --mcp-config file. Returns { configPath, cleanup }.
-function writeClaudeMcpConfig({ url, token }) {
-  const { command, env } = bridgeCommand();
-  const config = {
-    mcpServers: {
-      cortex_approvals: {
-        type: "stdio",
-        command,
-        args: [MCP_SERVER_SCRIPT],
-        env: { ...env, CORTEX_APPROVAL_URL: url, CORTEX_APPROVAL_TOKEN: token },
-      },
-    },
-  };
+// Writes the one-turn files Claude needs: an --mcp-config for the bridge
+// (when `url`/`token` are given) and a --settings file (when `settings` is
+// given). Returns { configPath, settingsPath, cleanup }; either path is ""
+// when not written.
+function writeClaudeMcpConfig({ url = "", token = "", settings = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cortex-approvals-"));
-  const configPath = path.join(dir, `mcp-${crypto.randomBytes(4).toString("hex")}.json`);
-  fs.writeFileSync(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
+  const suffix = crypto.randomBytes(4).toString("hex");
+  let configPath = "";
+  if (url && token) {
+    const { command, env } = bridgeCommand();
+    const config = {
+      mcpServers: {
+        cortex_approvals: {
+          type: "stdio",
+          command,
+          args: [MCP_SERVER_SCRIPT],
+          env: { ...env, CORTEX_APPROVAL_URL: url, CORTEX_APPROVAL_TOKEN: token },
+        },
+      },
+    };
+    configPath = path.join(dir, `mcp-${suffix}.json`);
+    fs.writeFileSync(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
+  }
+  let settingsPath = "";
+  if (settings) {
+    settingsPath = path.join(dir, `settings-${suffix}.json`);
+    fs.writeFileSync(settingsPath, JSON.stringify(settings), { encoding: "utf8", mode: 0o600 });
+  }
   return {
     configPath,
+    settingsPath,
     cleanup: () => {
       try {
         fs.rmSync(dir, { recursive: true, force: true });

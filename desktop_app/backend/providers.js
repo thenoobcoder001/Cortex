@@ -5,6 +5,7 @@ const { buildCleanEnv } = require("./androidEnv");
 const platform = require("./platform");
 const { codexPolicy, claudePermissionArgs, agyPermissionConfig, agyFallbackNote, normalizePermissionMode } = require("./permissionModes");
 const { writeClaudeMcpConfig, writeAgyHookWorkspace } = require("./approvalBridge");
+const { claudeRiskyAskSettings, claudeShellAskSettings } = require("./riskyCommands");
 
 // Strip ANSI escape sequences from PTY output
 function stripAnsi(str) {
@@ -1162,7 +1163,7 @@ class ClaudeCliProvider {
 
   // `mcpConfigPath` is the per-turn approval bridge config; when it is set,
   // permission prompts go to Cortex, otherwise they are refused.
-  buildArgs(model, { permissionMode = "full-access", mcpConfigPath = "" } = {}) {
+  buildArgs(model, { permissionMode = "full-access", mcpConfigPath = "", settingsPath = "" } = {}) {
     const args = [
       "--print",
       "--verbose",
@@ -1176,10 +1177,11 @@ class ClaudeCliProvider {
     // Bash can `cd` anywhere and Read can open any file on the system.
     args.push("--add-dir", this.repoRoot);
 
-    // Full access: skip permissions (Bash still confined to repoRoot via
-    // --add-dir). Read-only: reads and searches only. Supervised / auto-accept
-    // edits: everything else goes through the approval prompt tool.
-    args.push(...claudePermissionArgs(permissionMode, { promptTool: Boolean(mcpConfigPath) }));
+    // Full access: skip permissions except risky shell commands, which ask
+    // (Bash still confined to repoRoot via --add-dir). Read-only: reads and
+    // searches only. Supervised / auto-accept edits: everything else goes
+    // through the approval prompt tool.
+    args.push(...claudePermissionArgs(permissionMode, { promptTool: Boolean(mcpConfigPath), settingsPath }));
     if (mcpConfigPath) {
       args.push("--mcp-config", mcpConfigPath);
     }
@@ -1210,17 +1212,22 @@ class ClaudeCliProvider {
       ].join("\n"),
     });
     const mode = normalizePermissionMode(permissionMode);
-    const bridge = approvalBridge?.url && approvalBridge?.token && (mode === "supervised" || mode === "auto-accept-edits")
-      ? writeClaudeMcpConfig(approvalBridge)
+    const useBridge = Boolean(approvalBridge?.url && approvalBridge?.token) && mode !== "read-only";
+    // Full access: with the bridge every shell call asks Cortex, which only
+    // shows risky ones; without it Claude's own risky-pattern rules decline.
+    const settings = mode === "full-access" ? (useBridge ? claudeShellAskSettings() : claudeRiskyAskSettings()) : null;
+    const bridge = useBridge || settings
+      ? writeClaudeMcpConfig({ ...(useBridge ? approvalBridge : {}), settings })
       : null;
     let child;
     try {
-      child = spawnCommand(entry.command, [...entry.argsPrefix, ...this.buildArgs(model, { permissionMode: mode, mcpConfigPath: bridge?.configPath || "" })], {
+      const turnArgs = { permissionMode: mode, mcpConfigPath: bridge?.configPath || "", settingsPath: bridge?.settingsPath || "" };
+      child = spawnCommand(entry.command, [...entry.argsPrefix, ...this.buildArgs(model, turnArgs)], {
         cwd: this.repoRoot,
         stdio: ["pipe", "pipe", "pipe"],
         // An approval can wait on the user for minutes; don't let Claude's MCP
         // call timeout decline it first.
-        env: bridge ? { MCP_TOOL_TIMEOUT: String(CLI_TURN_TIMEOUT_MS) } : {},
+        env: bridge?.configPath ? { MCP_TOOL_TIMEOUT: String(CLI_TURN_TIMEOUT_MS) } : {},
       });
     } catch (error) {
       bridge?.cleanup();

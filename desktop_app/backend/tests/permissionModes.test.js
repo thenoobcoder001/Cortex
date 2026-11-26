@@ -39,13 +39,25 @@ test("codex modes map to app-server approval policy and sandbox", () => {
   assert.deepEqual(codexPolicy("read-only"), { approvalPolicy: "never", sandbox: "read-only" });
   assert.deepEqual(codexPolicy("supervised"), { approvalPolicy: "untrusted", sandbox: "read-only" });
   assert.deepEqual(codexPolicy("auto-accept-edits"), { approvalPolicy: "untrusted", sandbox: "workspace-write" });
-  // Full access is exactly the old "write" behaviour.
-  assert.deepEqual(codexPolicy("full-access"), { approvalPolicy: "never", sandbox: "workspace-write" });
+  // Full access: same sandbox as before, but Codex asks before commands so
+  // Cortex can stop risky ones (everything else is accepted at once).
+  assert.deepEqual(codexPolicy("full-access"), { approvalPolicy: "untrusted", sandbox: "workspace-write" });
 });
 
 test("claude modes map to --permission-mode and the approval prompt tool", () => {
   const full = claudePermissionArgs("full-access");
   assert.ok(full.includes("--dangerously-skip-permissions"));
+  assert.ok(!full.includes("--settings"));
+
+  // Full access with the bridge: shell calls ask (settings file) and the
+  // bridge answers them.
+  const fullBridge = claudePermissionArgs("full-access", { promptTool: true, settingsPath: "s.json" });
+  assert.ok(fullBridge.includes("--dangerously-skip-permissions"));
+  assert.equal(fullBridge[fullBridge.indexOf("--settings") + 1], "s.json");
+  assert.equal(fullBridge[fullBridge.indexOf("--permission-prompt-tool") + 1], CLAUDE_APPROVAL_TOOL);
+  // Without the bridge the risky-pattern settings still apply and decline.
+  const fullNoBridge = claudePermissionArgs("full-access", { settingsPath: "s.json" });
+  assert.equal(fullNoBridge[fullNoBridge.indexOf("--permission-prompts") + 1], "none");
 
   const readOnly = claudePermissionArgs("read-only");
   assert.deepEqual(readOnly.slice(0, 2), ["--permission-mode", "dontAsk"]);
@@ -115,6 +127,17 @@ test("hermes falls back and says so", () => {
   assert.equal(describePermissionMode("claude:haiku", "supervised", { bridge: false }).interactive, false);
   assert.equal(describePermissionMode("llama-3.3-70b", "auto-accept-edits").interactive, true);
   assert.equal(describePermissionMode("codex:gpt-5.4", "full-access").interactive, false);
+});
+
+test("full access still asks about risky commands on codex, claude and api models", () => {
+  assert.equal(describePermissionMode("codex:gpt-5.4", "full-access").asksForRiskyCommands, true);
+  assert.equal(describePermissionMode("claude:haiku", "full-access").asksForRiskyCommands, true);
+  assert.equal(describePermissionMode("llama-3.3-70b", "full-access").asksForRiskyCommands, true);
+  assert.equal(describePermissionMode("codex:gpt-5.4", "supervised").asksForRiskyCommands, false);
+  assert.equal(describePermissionMode("hermes:default", "full-access").asksForRiskyCommands, false);
+  const noBridge = describePermissionMode("claude:haiku", "full-access", { bridge: false });
+  assert.equal(noBridge.asksForRiskyCommands, false);
+  assert.match(noBridge.note, /risky commands are declined/);
 });
 
 test("api tool gate asks, blocks or allows per mode", () => {

@@ -18,6 +18,7 @@ const { AuditStore } = require("./auditStore");
 const { CodexProvider, AgyCliProvider, ClaudeCliProvider, HermesCliProvider, GroqProvider, GeminiApiProvider, toUserFacingProviderError } = require("./providers");
 const { RequestRegistry } = require("./requestRegistry");
 const { ApprovalRegistry } = require("./approvalRegistry");
+const { ensureClaudeSettings } = require("./claudeSettings");
 const {
   DEFAULT_PERMISSION_MODE,
   chatPermissionMode,
@@ -336,77 +337,15 @@ class DesktopSessionService {
   }
 
   /**
-   * Write .claude/settings.json into repoRoot if it does not already exist.
-   * Restricts Claude Code's Bash tool to safe git/npm/node commands only and
-   * locks file access to the repo directory. Existing files are never modified
-   * so user-maintained settings are always respected.
+   * Write .claude/settings.json into repoRoot if it does not already exist:
+   * common dev commands allowed, risky ones "ask" (an approval card in
+   * Cortex), only wiping the disk denied. A file the person wrote is never
+   * touched; Cortex's own legacy deny list is moved to "ask" once (see
+   * claudeSettings.js).
    */
   _ensureClaudeSettings(repoRoot) {
     try {
-      const claudeDir = path.join(repoRoot, ".claude");
-      const settingsPath = path.join(claudeDir, "settings.json");
-      if (fs.existsSync(settingsPath)) return; // respect user-managed file
-      fs.mkdirSync(claudeDir, { recursive: true });
-      const settings = {
-        permissions: {
-          allow: [
-            // Safe read operations — always permitted
-            "Read",
-            "Glob",
-            "Grep",
-            "LS",
-            // Bash: allow only common dev commands; deny anything that looks
-            // like it could escape the repo or exfiltrate data
-            "Bash(git *)",
-            "Bash(npm *)",
-            "Bash(npx *)",
-            "Bash(node *)",
-            "Bash(yarn *)",
-            "Bash(pnpm *)",
-            "Bash(python *)",
-            "Bash(python3 *)",
-            "Bash(pip *)",
-            "Bash(pip3 *)",
-            "Bash(cargo *)",
-            "Bash(go *)",
-            "Bash(tsc *)",
-            "Bash(eslint *)",
-            "Bash(jest *)",
-            "Bash(ls *)",
-            "Bash(cat *)",
-            "Bash(echo *)",
-            "Bash(pwd)",
-            "Bash(find *)",
-            "Bash(grep *)",
-          ],
-          deny: [
-            // Block directory traversal out of the repo
-            "Bash(cd ..)",
-            "Bash(cd ../)",
-            "Bash(cd ../*)",
-            "Bash(cd /*)",
-            "Bash(cd [A-Z]:*)",  // Windows absolute paths e.g. cd C:\
-            // Block network exfiltration
-            "Bash(wget *)",
-            "Bash(Invoke-WebRequest *)",
-            "Bash(iwr *)",
-            // Block destructive filesystem commands
-            "Bash(rm -rf *)",
-            "Bash(rm -fr *)",
-            "Bash(rmdir /s *)",
-            "Bash(del /s *)",
-            "Bash(del /q *)",
-            "Bash(format *)",
-            // Block git operations that affect remotes or other repos
-            "Bash(git push --force *)",
-            "Bash(git -C *)",
-            // Block publish commands
-            "Bash(npm publish *)",
-            "Bash(yarn publish *)",
-          ],
-        },
-      };
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+      ensureClaudeSettings(repoRoot);
 
       // Write a .claudeignore baseline if one doesn't already exist.
       // This prevents the AI from reading secrets into its context window.

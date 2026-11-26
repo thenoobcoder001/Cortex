@@ -61,7 +61,11 @@ async function callApprove(args) {
     const answer = await askCortex(toolName, input);
     result = answer.decision === "approve"
       ? { behavior: "allow", updatedInput: input }
-      : { behavior: "deny", message: `The user declined this action in Cortex (${answer.by || "declined"}). Do not retry it; continue without it or ask the user.` };
+      : {
+        behavior: "deny",
+        message: String(answer.message || "")
+          || `The user declined this action in Cortex (${answer.by || "declined"}). Do not retry it; continue without it or ask the user.`,
+      };
   } catch (error) {
     result = { behavior: "deny", message: `Cortex could not ask for approval: ${String(error?.message || error)}` };
   }

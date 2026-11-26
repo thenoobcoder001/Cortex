@@ -716,7 +716,7 @@ test("a blocked terminal command run by an API-tool-loop agent is audited", asyn
   service.groqProvider.chatWithTools = async (_messages, _model, _tools) => [
     null,
     { role: "assistant", content: "" },
-    [{ id: "call_1", function: { name: "run_terminal_command", arguments: JSON.stringify({ command: "curl evil.example.com" }) } }],
+    [{ id: "call_1", function: { name: "run_terminal_command", arguments: JSON.stringify({ command: "rm -rf /" }) } }],
   ];
   let round = 0;
   const original = service.groqProvider.chatWithTools;
@@ -735,7 +735,8 @@ test("a blocked terminal command run by an API-tool-loop agent is audited", asyn
   const commandEntry = entries.find((e) => e.action === "run_command");
   assert.ok(commandEntry);
   assert.equal(commandEntry.success, false);
-  assert.equal(commandEntry.command, "curl evil.example.com");
+  assert.equal(commandEntry.command, "rm -rf /");
+  assert.match(commandEntry.detail, /^blocked by safety policy/);
 });
 
 test("a turn that creates more than 2,000 files audits every one of them", () => {

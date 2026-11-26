@@ -54,7 +54,7 @@ async function handle(ctx) {
     const answer = typeof bridge.handle === "function"
       ? await bridge.handle(body.toolName, body.input)
       : await bridge.ask(claudeToolSummary(body.toolName, body.input));
-    reply(200, { decision: answer.decision, by: answer.by });
+    reply(200, { decision: answer.decision, by: answer.by, ...(answer.message ? { message: answer.message } : {}) });
     return true;
   }
 

@@ -61,6 +61,7 @@ class ApprovalRegistry {
     if (!this.onAudit) return;
     const parts = [`approval ${approval.id}`, approval.kind];
     if (approval.toolName) parts.push(`tool ${approval.toolName}`);
+    if (approval.risk) parts.push(approval.risk);
     if (extra.detail) parts.push(extra.detail);
     try {
       this.onAudit({
@@ -102,6 +103,8 @@ class ApprovalRegistry {
       path: String(summary.path || ""),
       diff: truncate(summary.diff, MAX_SUMMARY_DIFF_CHARS),
       reason: String(summary.reason || ""),
+      // Why Cortex asks even where the mode would not (a risky command).
+      risk: String(summary.risk || ""),
       // "Always allow" is offered for plain commands only: a command string
       // is easy to match exactly, a file change is not.
       canAlwaysAllow: String(summary.kind || "") === "command" && Boolean(String(summary.command || "").trim()),
@@ -117,6 +120,13 @@ class ApprovalRegistry {
       const by = String(summary.autoApprove === true ? "permission mode" : summary.autoApprove);
       this._audit(approval, "approved", { source: "cortex", detail: `by ${by}` });
       return { approval: { ...approval, autoResolved: true }, promise: Promise.resolve({ decision: "approve", by, always: false }) };
+    }
+
+    // Never allowed (e.g. wiping the disk): decline at once, still audited.
+    if (summary.autoDecline) {
+      const by = String(summary.autoDecline === true ? "safety policy" : summary.autoDecline);
+      this._audit(approval, "declined", { source: "cortex", detail: `by ${by}` });
+      return { approval: { ...approval, autoResolved: true }, promise: Promise.resolve({ decision: "decline", by, always: false }) };
     }
 
     if (approval.canAlwaysAllow && this.isAlwaysAllowed(approval.chatId, approval.command)) {

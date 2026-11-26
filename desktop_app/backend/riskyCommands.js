@@ -204,6 +204,35 @@ function riskLabel(risk) {
   return `Risky command: ${risk.reason}`;
 }
 
+// What to do with one thing a provider asked about, given the chat's mode.
+// `summary` is an approval summary ({ kind, command, ... }). Returns
+// { gate, risk } where gate is
+//   "allow"  Full access and nothing risky: answer yes without a card
+//   "ask"    show an approval card (with `risk` when the command is risky)
+//   "block"  never allowed: decline without a card (still audited)
+function riskyGate(mode, summary = {}, { repoRoot = "", platform = process.platform } = {}) {
+  const risk = summary.kind === "command" ? assessCommand(summary.command, { repoRoot, platform }) : null;
+  if (risk?.level === "block") return { gate: "block", risk };
+  if (mode === "full-access") {
+    if (summary.kind === "command") return { gate: risk ? "ask" : "allow", risk };
+    // Extra sandbox permissions are rare and wide; keep the person in the loop.
+    if (summary.kind === "permissions") return { gate: "ask", risk: null };
+    return { gate: "allow", risk: null };
+  }
+  return { gate: "ask", risk };
+}
+
+// The message an agent gets back when a risky command is declined, so it can
+// carry on another way instead of retrying.
+function declineMessage(risk, by = "") {
+  const who = by ? ` (${by})` : "";
+  if (risk?.level === "block") {
+    return `Cortex blocks this command: it ${risk.reason}. Do not retry it; continue another way or ask the user.`;
+  }
+  const why = risk ? ` Cortex asked because this command ${risk.reason}.` : "";
+  return `The user declined this action in Cortex${who}.${why} Do not retry it; continue without it or ask the user.`;
+}
+
 // ── Claude CLI settings ────────────────────────────────────────────────────
 // Claude's own permission rules are prefix globs, so they cannot see where a
 // cd goes or tell localhost from the internet. They back the shared list
@@ -271,7 +300,9 @@ module.exports = {
   assessCommand,
   claudeRiskyAskSettings,
   claudeShellAskSettings,
+  declineMessage,
   leavesRepo,
   riskLabel,
+  riskyGate,
   toNativePath,
 };

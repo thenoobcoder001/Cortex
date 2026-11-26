@@ -4,6 +4,7 @@ const { spawn } = require("node:child_process");
 const { buildUnifiedDiff } = require("./fileService");
 const { resolveAndroidEnv } = require("./androidEnv");
 const platform = require("./platform");
+const { assessCommand } = require("./riskyCommands");
 
 const MUTATING_TOOLS = ["write_file", "edit_file", "delete_path", "rename_file", "create_directory", "run_terminal_command"];
 
@@ -108,7 +109,9 @@ class ToolExecutor {
     };
   }
 
-  async executeWithMetadata(name, args = {}) {
+  // options.approved: the person already said yes to this call (risky
+  // commands only run then).
+  async executeWithMetadata(name, args = {}, options = {}) {
     if (this.readOnly && MUTATING_TOOLS.includes(name)) {
       this._auditBlocked(name, args, `blocked: read-only mode (${name})`);
       return ["ERROR: tool safety mode is read-only; mutating tools are blocked.", null];
@@ -130,7 +133,7 @@ class ToolExecutor {
       case "list_files":
         return [this.listFiles(args), null];
       case "run_terminal_command":
-        return [await this.runTerminalCommand(args), null];
+        return [await this.runTerminalCommand(args, options), null];
       default:
         return [`ERROR: unknown tool '${name}'`, null];
     }
@@ -280,42 +283,27 @@ class ToolExecutor {
     return files.length ? files.join("\n") : "(no files)";
   }
 
-  runTerminalCommand(args) {
+  runTerminalCommand(args, { approved = false } = {}) {
     const command = String(args.command || "").trim();
     if (!command) {
       return Promise.resolve("ERROR: no command provided");
     }
 
-    // Block commands that escape the repo root.
-    // cwd is set to repoRoot but a shell can still cd out — these patterns stop that.
-    const BLOCKED = [
-      // Directory traversal
-      /(?:^|[&|;])\s*cd\s+\.\./, // cd ..
-      /(?:^|[&|;])\s*cd\s+[A-Za-z]:[\\/]/, // cd C:\ (Windows absolute)
-      /(?:^|[&|;])\s*cd\s+\/(?!.*\brel\b)/, // cd / (Unix root)
-      // Destructive filesystem
-      /rmdir\s+\/s/i,
-      /rm\s+-[a-z]*r[a-z]*f|rm\s+-[a-z]*f[a-z]*r/i, // rm -rf or rm -fr
-      /del\s+\/[sq]/i,
-      /format\s+[a-z]:/i,
-      // Network exfiltration
-      /\bcurl\b/i,
-      /\bwget\b/i,
-      /Invoke-WebRequest|Start-BitsTransfer|\biwr\b/i,
-      // Publishing / pushing to remotes
-      /\bnpm\s+publish\b/i,
-      /\byarn\s+publish\b/i,
-      /git\s+push\s+.*--force/i,
-      /git\s+-C\s+/i, // git -C <other-dir>
-    ];
-
-    for (const pattern of BLOCKED) {
-      if (pattern.test(command)) {
-        this._audit({ source: "agent", action: "run_command", command, success: false, detail: "blocked by safety policy" });
-        return Promise.resolve(
-          `ERROR: command blocked by safety policy — operation not permitted from remote session.`,
-        );
-      }
+    // The shared risky-command list (riskyCommands.js): never-allowed
+    // commands are refused; risky ones (recursive deletes, leaving the repo,
+    // downloads, force pushes...) run only once the person approved them,
+    // which sessionSend asks for before calling here.
+    const risk = assessCommand(command, { repoRoot: this.repoRoot });
+    if (risk && (risk.level === "block" || !approved)) {
+      const detail = risk.level === "block"
+        ? `blocked by safety policy: ${risk.reason}`
+        : `blocked by safety policy: not approved (${risk.reason})`;
+      this._audit({ source: "agent", action: "run_command", command, success: false, detail });
+      return Promise.resolve(
+        risk.level === "block"
+          ? `ERROR: command blocked by safety policy: it ${risk.reason}. Do not retry it; continue another way.`
+          : `ERROR: this command ${risk.reason} and needs the user's approval first.`,
+      );
     }
 
     return new Promise((resolve) => {

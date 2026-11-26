@@ -88,7 +88,9 @@ function codexPolicy(mode) {
     case "auto-accept-edits":
       return { approvalPolicy: "untrusted", sandbox: "workspace-write" };
     default:
-      return { approvalPolicy: "never", sandbox: "workspace-write" };
+      // Full access: Codex asks before commands and Cortex answers yes at
+      // once unless the command is risky (riskyCommands.js), which asks.
+      return { approvalPolicy: "untrusted", sandbox: "workspace-write" };
   }
 }
 
@@ -100,10 +102,18 @@ const CLAUDE_APPROVAL_TOOL = "mcp__cortex_approvals__approve";
 // `promptTool` is true when the approval bridge (a local MCP server that asks
 // Cortex) is wired up for this turn. Without it nobody can answer a prompt,
 // so anything that would ask is denied instead (--permission-prompts none).
-function claudePermissionArgs(mode, { promptTool = false } = {}) {
+// `settingsPath` is a per-turn settings file with "ask" rules: in Full access
+// every shell call asks the bridge, which only shows risky ones to the user
+// (Claude 2.1 sends ask rules to the prompt tool even when bypassing
+// permissions).
+function claudePermissionArgs(mode, { promptTool = false, settingsPath = "" } = {}) {
   const normalized = normalizePermissionMode(mode);
   if (normalized === "full-access") {
-    return ["--dangerously-skip-permissions", "--allowedTools", CLAUDE_ALL_TOOLS];
+    const args = ["--dangerously-skip-permissions", "--allowedTools", CLAUDE_ALL_TOOLS];
+    if (settingsPath) args.push("--settings", settingsPath);
+    if (promptTool) args.push("--permission-prompt-tool", CLAUDE_APPROVAL_TOOL);
+    else if (settingsPath) args.push("--permission-prompts", "none");
+    return args;
   }
   if (normalized === "read-only") {
     // dontAsk: anything not pre-approved is refused without prompting.
@@ -189,24 +199,29 @@ function apiToolGate(mode, toolName) {
 // provider enforces; `interactive` is true when Cortex will show approval
 // cards; `note` explains any fallback in plain words for the UI. `bridge` is
 // false when the backend has no approval callback URL (Claude's MCP server
-// and Antigravity's hook both need it).
+// and Antigravity's hook both need it). `asksForRiskyCommands` is true when
+// risky shell commands (riskyCommands.js) still get an approval card in
+// Full access.
 function describePermissionMode(model, mode, { bridge = true } = {}) {
   const requested = normalizePermissionMode(mode);
   const family = providerFamily(model);
-  const base = { requested, effectiveMode: requested, interactive: false, note: "" };
+  const base = { requested, effectiveMode: requested, interactive: false, asksForRiskyCommands: false, note: "" };
   const asks = requested === "supervised" || requested === "auto-accept-edits";
+  const full = requested === "full-access";
 
   if (family === "codex" || family === "api") {
-    return { ...base, interactive: asks };
+    return { ...base, interactive: asks, asksForRiskyCommands: full };
   }
   if (family === "claude") {
-    if (asks && !bridge) {
+    if ((asks || full) && !bridge) {
       return {
         ...base,
-        note: "Approvals are unavailable for Claude right now; anything that would ask is declined.",
+        note: full
+          ? "Approvals are unavailable for Claude right now; risky commands are declined."
+          : "Approvals are unavailable for Claude right now; anything that would ask is declined.",
       };
     }
-    return { ...base, interactive: asks };
+    return { ...base, interactive: asks, asksForRiskyCommands: full };
   }
   if (family === "agy") {
     if (asks && !bridge) {

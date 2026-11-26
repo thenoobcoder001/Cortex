@@ -12,6 +12,8 @@ const {
   resolveRequestPermissionMode,
 } = require("./permissionModes");
 const { agyToolSummary } = require("./approvalBridge");
+const { assessCommand, declineMessage, riskLabel, riskyGate } = require("./riskyCommands");
+const { ensureClaudeSettings } = require("./claudeSettings");
 
 function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
   const titleSource = String(userPrompt || "").split(/\r?\n/, 1)[0].trim() || "Implementation Plan";
@@ -256,8 +258,17 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     yield service.event("status", { phase: "permissions", message: modeInfo.note, permissionMode: modeInfo, chatId });
   }
   const approvalContext = { provider: auditMeta.provider, model: requestModel, repoRoot: requestRepoRoot };
-  // Providers call this to ask the user; it resolves to { decision, by }.
-  const askApproval = (summary) => service.approvalRegistry.request(chatId, { ...summary, ...approvalContext }).promise;
+  // Providers call this to ask the user; it resolves to { decision, by,
+  // message? }. Risky commands ask in every mode (Full access included),
+  // the rest of Full access is answered here without a card.
+  const askApproval = async (summary) => {
+    const verdict = riskyGate(requestPermissionMode, summary, { repoRoot: requestRepoRoot });
+    if (verdict.gate === "allow") return { decision: "approve", by: "full access" };
+    const request = { ...summary, ...approvalContext, risk: riskLabel(verdict.risk) };
+    if (verdict.gate === "block") request.autoDecline = "safety policy";
+    const answer = await service.approvalRegistry.request(chatId, request).promise;
+    return answer.decision === "approve" ? answer : { ...answer, message: declineMessage(verdict.risk, answer.by) };
+  };
   let bridgeToken = "";
 
   const finishTurn = (finalText, changes) => {
@@ -287,7 +298,12 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
       // PreToolUse hook; both call back into Cortex with a per-turn token
       // that ties those calls to this chat.
       const family = providerFamily(requestModel);
-      if ((family === "claude" || family === "agy") && modeInfo.interactive && service.approvalBridgeUrl) {
+      // A repo opened by an older Cortex still denies risky commands in its
+      // .claude/settings.json (deny beats ask); move those rules to ask.
+      if (family === "claude") ensureClaudeSettings(requestRepoRoot);
+      // Claude also asks in Full access, but only about risky commands.
+      const usesBridge = modeInfo.interactive || (family === "claude" && modeInfo.asksForRiskyCommands);
+      if ((family === "claude" || family === "agy") && usesBridge && service.approvalBridgeUrl) {
         bridgeToken = crypto.randomBytes(24).toString("hex");
         const bridge = { chatId, ask: askApproval };
         if (family === "agy") {
@@ -354,8 +370,13 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         service.toolExecutor.readOnly = requestToolReadOnly;
         service.toolExecutor.auditMeta = auditMeta;
         // Supervised / auto-accept-edits: ask before the tool touches anything.
-        if (apiToolGate(requestPermissionMode, toolName) === "ask") {
-          const summary = service.toolExecutor.approvalSummary(toolName, args);
+        // Risky commands ask in Full access too; never-allowed ones are
+        // refused by the executor (and audited there).
+        const toolGate = apiToolGate(requestPermissionMode, toolName);
+        const risk = toolName === "run_terminal_command" ? assessCommand(args.command, { repoRoot: requestRepoRoot }) : null;
+        const mustAsk = risk?.level !== "block" && (toolGate === "ask" || (toolGate === "allow" && risk?.level === "ask"));
+        if (mustAsk) {
+          const summary = { ...service.toolExecutor.approvalSummary(toolName, args), risk: riskLabel(risk) };
           const { approval, promise } = service.approvalRegistry.request(chatId, { ...summary, ...approvalContext });
           if (!approval.autoResolved) {
             yield service.event("approval_request", { chatId, approval });
@@ -365,13 +386,13 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
             yield service.event("approval_resolved", { chatId, approvalId: approval.id, decision: answer.decision, by: answer.by });
           }
           if (answer.decision !== "approve") {
-            const declined = `ERROR: the user declined this action (${answer.by}). Do not retry it; continue without it or ask the user.`;
+            const declined = `ERROR: ${declineMessage(risk, answer.by)}`;
             yield service.event("tool_result", { name: toolName, result: declined, change: null, chatId });
             workingMessages.push({ role: "tool", tool_call_id: toolCall.id, name: toolName, content: declined });
             continue;
           }
         }
-        const [result, change] = await service.toolExecutor.executeWithMetadata(toolName, args);
+        const [result, change] = await service.toolExecutor.executeWithMetadata(toolName, args, { approved: mustAsk });
         if (change) storedChanges = [...storedChanges, change];
         yield service.event("tool_result", { name: toolName, result, change, chatId });
         workingMessages.push({
