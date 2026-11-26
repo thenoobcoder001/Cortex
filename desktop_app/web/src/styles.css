@@ -3455,6 +3455,20 @@ button:disabled {
   color: var(--text-muted);
 }
 
+.approval-card.risky {
+  border-color: #e8875b;
+}
+
+.approval-card.risky .approval-card-head .ui-icon {
+  color: #e8875b;
+}
+
+.approval-card-risk {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8875b;
+}
+
 .approval-card-toggle {
   align-self: flex-start;
   background: none;
@@ -3471,15 +3485,6 @@ button:disabled {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.approval-card-always {
-  margin-right: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .approval-card-actions .primary-button,

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, FilePen, ShieldAlert, Terminal, X } from "lucide-react";
+import { AlertTriangle, Check, CheckCheck, FilePen, ShieldAlert, Terminal, X } from "lucide-react";
 
 const KIND_LABELS = {
   command: "Run a command",
@@ -8,14 +8,19 @@ const KIND_LABELS = {
   tool: "Use a tool",
 };
 
+// One request: why Cortex asks, what would run, and Allow once / Always
+// allow in this chat / Decline. The agent carries on from the answer.
 function ApprovalCard({ approval, answering, onRespond }) {
-  const [alwaysAllow, setAlwaysAllow] = useState(false);
   const [showDiff, setShowDiff] = useState(true);
-  const Icon = approval.kind === "command" ? Terminal : approval.kind === "file_change" ? FilePen : ShieldAlert;
+  const Icon = approval.risk ? AlertTriangle : approval.kind === "command" ? Terminal : approval.kind === "file_change" ? FilePen : ShieldAlert;
   const busy = Boolean(answering);
 
   return (
-    <div className="approval-card" role="alertdialog" aria-label={`${approval.provider || "Agent"} wants to ${KIND_LABELS[approval.kind] || "act"}`}>
+    <div
+      className={approval.risk ? "approval-card risky" : "approval-card"}
+      role="alertdialog"
+      aria-label={`${approval.provider || "Agent"} wants to ${KIND_LABELS[approval.kind] || "act"}`}
+    >
       <div className="approval-card-head">
         <Icon size={15} className="ui-icon" />
         <span className="approval-card-title">
@@ -23,6 +28,7 @@ function ApprovalCard({ approval, answering, onRespond }) {
         </span>
         {approval.toolName && <span className="approval-card-tool">{approval.toolName}</span>}
       </div>
+      {approval.risk && <div className="approval-card-risk">{approval.risk}</div>}
       {approval.command && <pre className="approval-card-command">{approval.command}</pre>}
       {approval.path && <div className="approval-card-path" title={approval.path}>{approval.path}</div>}
       {approval.reason && <div className="approval-card-reason">{approval.reason}</div>}
@@ -35,34 +41,36 @@ function ApprovalCard({ approval, answering, onRespond }) {
         </>
       )}
       <div className="approval-card-actions">
-        {approval.canAlwaysAllow && (
-          <label className="approval-card-always">
-            <input
-              type="checkbox"
-              checked={alwaysAllow}
-              disabled={busy}
-              onChange={(event) => setAlwaysAllow(event.target.checked)}
-            />
-            Always allow this command in this chat
-          </label>
-        )}
         <button
           type="button"
           className="ghost-button approval-decline"
           disabled={busy}
+          title="The agent is told you declined and continues another way"
           onClick={() => void onRespond(approval, "decline")}
         >
           <X size={14} className="ui-icon" />
           {answering === "decline" ? "Declining..." : "Decline"}
         </button>
+        {approval.canAlwaysAllow && (
+          <button
+            type="button"
+            className="ghost-button approval-always"
+            disabled={busy}
+            title="Allow this exact command for the rest of this chat without asking"
+            onClick={() => void onRespond(approval, "approve", { alwaysAllow: true })}
+          >
+            <CheckCheck size={14} className="ui-icon" />
+            Always allow in this chat
+          </button>
+        )}
         <button
           type="button"
           className="primary-button approval-approve"
           disabled={busy}
-          onClick={() => void onRespond(approval, "approve", { alwaysAllow })}
+          onClick={() => void onRespond(approval, "approve")}
         >
           <Check size={14} className="ui-icon" />
-          {answering === "approve" ? "Approving..." : "Approve"}
+          {answering === "approve" ? "Allowing..." : "Allow once"}
         </button>
       </div>
     </div>

@@ -39,7 +39,7 @@ export const PERMISSION_MODE_OPTIONS = [
   { value: "read-only", label: "Read-only", hint: "Reads and searches only. No edits or commands." },
   { value: "supervised", label: "Supervised", hint: "Asks before every edit and every command." },
   { value: "auto-accept-edits", label: "Auto-accept edits", hint: "Edits run; asks before commands." },
-  { value: "full-access", label: "Full access", hint: "Edits and commands run without asking." },
+  { value: "full-access", label: "Full access", hint: "Edits and commands run without asking; risky commands still ask." },
 ];
 
 export const EXTERNAL_EDITOR_OPTIONS = [

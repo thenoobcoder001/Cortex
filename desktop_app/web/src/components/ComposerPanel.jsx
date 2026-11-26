@@ -122,9 +122,13 @@ export default function ComposerPanel({
           </button>
         )}
       </div>
-      {permissionModeInfo?.note && (
+      {permissionModeInfo?.note ? (
         <div className="permission-mode-note" role="note">{permissionModeInfo.note}</div>
-      )}
+      ) : (permissionMode || "full-access") === "full-access" && permissionModeInfo?.asksForRiskyCommands ? (
+        <div className="permission-mode-note" role="note">
+          Risky commands (recursive deletes, force pushes, downloads, leaving the project folder) still ask first.
+        </div>
+      ) : null}
     </div>
   );
 }
