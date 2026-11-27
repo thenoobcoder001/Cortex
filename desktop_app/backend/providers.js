@@ -127,6 +127,47 @@ async function askOrDecline(askApproval, summary) {
   }
 }
 
+// The reply text of one Codex turn. A turn can hold several agentMessage
+// items (text, a command, more text); keep a paragraph break between them
+// instead of running them together ("...tests pass.Now the build...").
+class CodexAgentText {
+  constructor() {
+    this.text = "";
+    this.lastItemId = null;
+    this.seen = new Set();
+    this.anonymousDeltas = false;
+  }
+
+  // Returns what was appended (separator included), for streaming.
+  add(itemId, delta) {
+    if (!itemId) this.anonymousDeltas = true;
+    let added = delta;
+    if (itemId && itemId !== this.lastItemId && this.text && !this.text.endsWith("\n\n")) {
+      added = `${this.text.endsWith("\n") ? "\n" : "\n\n"}${delta}`;
+    }
+    if (itemId) {
+      this.lastItemId = itemId;
+      this.seen.add(itemId);
+    }
+    this.text += added;
+    return added;
+  }
+
+  // A finished message: only appended if it never streamed.
+  complete(itemId, fullText) {
+    if (!fullText) return "";
+    if (this.anonymousDeltas || (itemId && this.seen.has(itemId))) {
+      if (!this.text) {
+        this.text = fullText;
+        return fullText;
+      }
+      return "";
+    }
+    if (!itemId && this.text) return "";
+    return this.add(itemId, fullText);
+  }
+}
+
 function codexFileChangeSummary(changes) {
   const list = Array.isArray(changes) ? changes : [];
   return {
@@ -435,6 +476,7 @@ class CodexProvider {
     let threadId = this.sessionId || "";
     let currentTurnId = "";
     let assistantText = "";
+    const agentText = new CodexAgentText();
     let lastErrorMessage = "";
     let aborted = false;
     let abortListener = null;
@@ -511,16 +553,17 @@ class CodexProvider {
         if (message.method === "item/agentMessage/delta") {
           const delta = String(message.params?.delta || "");
           if (delta) {
-            assistantText += delta;
-            onOutput?.(delta);
+            const text = agentText.add(String(message.params?.itemId || ""), delta);
+            assistantText = agentText.text;
+            onOutput?.(text);
           }
           return;
         }
         if (message.method === "item/completed" && message.params?.item?.type === "agentMessage") {
-          const finalText = String(message.params?.item?.text || "");
-          if (finalText && !assistantText) {
-            assistantText = finalText;
-          }
+          // A message that never streamed (no deltas) still belongs in the reply.
+          const added = agentText.complete(String(message.params?.item?.id || ""), String(message.params?.item?.text || ""));
+          assistantText = agentText.text;
+          if (added) onOutput?.(added);
           return;
         }
         if (message.method === "error") {
@@ -1695,6 +1738,7 @@ module.exports = {
   AgyCliProvider,
   AgyStreamParser,
   parseAgyModels,
+  CodexAgentText,
   ClaudeCliProvider,
   HermesCliProvider,
   GroqProvider,
