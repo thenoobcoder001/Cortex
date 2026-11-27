@@ -19,6 +19,7 @@ const { CodexProvider, AgyCliProvider, ClaudeCliProvider, HermesCliProvider, Gro
 const { RequestRegistry } = require("./requestRegistry");
 const { ApprovalRegistry } = require("./approvalRegistry");
 const { ensureClaudeSettings } = require("./claudeSettings");
+const { DEFAULT_CARRY_CHARS, carryContext } = require("./contextCarry");
 const {
   DEFAULT_PERMISSION_MODE,
   chatPermissionMode,
@@ -809,18 +810,23 @@ class DesktopSessionService {
     if (this.config.assistantMemory) {
       systemParts.push(`Assistant memory:\n${this.config.assistantMemory}`);
     }
-    // turnChanges is UI metadata; API providers reject unknown message fields.
+    // turnChanges and model are Cortex metadata; API providers reject
+    // unknown message fields.
     const providerMessages = messages.map((message) => {
-      if (!message?.turnChanges) return message;
+      if (!message?.turnChanges && message?.model === undefined) return message;
       const copy = { ...message };
       delete copy.turnChanges;
+      delete copy.model;
       return copy;
     });
     return [{ role: "system", content: systemParts.join("\n\n") }, ...providerMessages];
   }
 
-  recentChatContext(messages, limit = 5) {
-    return messages.filter((message) => ["user", "assistant"].includes(String(message.role || ""))).slice(-limit);
+  // At least `minMessages` recent messages (the "Cross-model context carry"
+  // setting; 0 carries nothing), more up to the character budget, and the
+  // chat's first request if it fell outside (see contextCarry.js).
+  recentChatContext(messages, minMessages = 5, charBudget = DEFAULT_CARRY_CHARS) {
+    return carryContext(messages, { minMessages, charBudget });
   }
 
   captureRepoState(repoRoot) {

@@ -14,6 +14,7 @@ const {
 const { agyToolSummary } = require("./approvalBridge");
 const { assessCommand, declineMessage, riskLabel, riskyGate } = require("./riskyCommands");
 const { ensureClaudeSettings } = require("./claudeSettings");
+const { labelReplies } = require("./contextCarry");
 
 function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
   const titleSource = String(userPrompt || "").split(/\r?\n/, 1)[0].trim() || "Implementation Plan";
@@ -23,8 +24,10 @@ function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
 
 // The assistant reply, plus a small summary of the files this turn changed
 // (full diffs live in the turn record and load on demand).
-function assistantReply(content, turn) {
-  return turn ? { role: "assistant", content, turnChanges: turn } : { role: "assistant", content };
+// `model` records who wrote it, so a later provider can be told.
+function assistantReply(content, turn, model) {
+  const reply = { role: "assistant", content, model: String(model || "") };
+  return turn ? { ...reply, turnChanges: turn } : reply;
 }
 
 async function *drainQueuedEvents(worker, queue, takeWaiter) {
@@ -101,15 +104,6 @@ async function *runCliRequest(provider, messages, model, service, chatId, extraO
   await job;
   if (cliError) throw cliError;
   return finalText;
-}
-
-function isCliModel(model) {
-  return (
-    model.startsWith("codex:")
-    || model.startsWith("agy:")
-    || model.startsWith("claude:")
-    || model.startsWith("hermes:")
-  );
 }
 
 // Answers one tool call from Antigravity's approval hook: reads pass, the
@@ -202,15 +196,24 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     clearCliSession(service.codexProvider);
   }
 
-  // When the user switches provider families, start the new provider fresh
-  // and trim context to avoid confusing it with another provider's history.
-  if (existingModel && service.modelFamily(existingModel) !== service.modelFamily(requestModel) && isCliModel(requestModel)) {
-    baseMessages = service.recentChatContext(baseMessages, service.config.contextCarryMessages ?? 5);
-    const entry = cliProviderEntry(requestModel, service);
-    if (entry) clearCliSession(entry.provider);
-  }
+  // When the user switches provider families, start the new provider fresh.
+  const switchedFamily = Boolean(existingModel) && service.modelFamily(existingModel) !== service.modelFamily(requestModel);
+  const requestCliEntry = cliProviderEntry(requestModel, service);
+  if (switchedFamily && requestCliEntry) clearCliSession(requestCliEntry.provider);
 
-  baseMessages = [...baseMessages, { role: "user", content: message }];
+  // A CLI provider with no session to resume only knows what we hand it:
+  // the recent conversation within a budget (the stored chat keeps
+  // everything). Replies by other models are labelled with their author.
+  const carried = requestCliEntry && !requestCliEntry.provider.sessionId && baseMessages.length
+    ? service.recentChatContext(baseMessages, service.config.contextCarryMessages ?? 5)
+    : null;
+  const userMessage = { role: "user", content: message };
+  const contextForProvider = labelReplies(carried ? [...carried, userMessage] : [...baseMessages, userMessage], {
+    currentModel: requestModel,
+    fallbackModel: switchedFamily ? existingModel : "",
+  });
+
+  baseMessages = [...baseMessages, userMessage];
   const repoStateBefore = service.captureRepoState(requestRepoRoot);
   const shouldCreatePlan = effectivePromptPreset === "plan";
 
@@ -276,7 +279,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     return service.saveCompletedChat({
       chatStore: requestChatStore,
       chatId,
-      messages: [...baseMessages, assistantReply(finalText, changes.turn)],
+      messages: [...baseMessages, assistantReply(finalText, changes.turn, requestModel)],
       model: requestModel,
       providerState: changes.providerState,
       permissionMode: requestPermissionMode,
@@ -288,12 +291,14 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
 
   try {
     const providerState = {};
-    const baseForProvider = service.messagesWithContext([...baseMessages], effectivePromptPreset);
+    const baseForProvider = service.messagesWithContext(contextForProvider, effectivePromptPreset);
     const requestOptions = { signal: service.requestRegistry.get(chatId)?.controller.signal || null };
 
     const cliEntry = cliProviderEntry(requestModel, service);
     if (cliEntry) {
-      const cliOptions = { permissionMode: requestPermissionMode, askApproval };
+      // carriedContext: the messages are already trimmed to the carry budget;
+      // providers pass them on whole instead of their own last-8 cut.
+      const cliOptions = { permissionMode: requestPermissionMode, askApproval, carriedContext: Boolean(carried) };
       // Claude asks through a local MCP server, Antigravity through a
       // PreToolUse hook; both call back into Cortex with a per-turn token
       // that ties those calls to this chat.

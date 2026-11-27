@@ -845,6 +845,10 @@ export default function SettingsPage({
                 onChange={(event) => setContextCarryMessagesDraft(event.target.value.replace(/[^\d]/g, ""))}
                 placeholder="5"
               />
+              <small className="theme-hint">
+                When you switch to another provider, it gets at least this many recent messages, more up to about
+                24,000 characters, plus your first message. 0 carries nothing.
+              </small>
             </label>
           </section>
           )}

@@ -456,7 +456,7 @@ class CodexProvider {
     }
   }
 
-  async chatCompletionAppServerStream(messages, model, { onOutput = null, signal = null, onProcessStart = null, permissionMode = "full-access", askApproval = null } = {}) {
+  async chatCompletionAppServerStream(messages, model, { onOutput = null, signal = null, onProcessStart = null, permissionMode = "full-access", askApproval = null, carriedContext = false } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -659,7 +659,7 @@ class CodexProvider {
             text:
               this.sessionMode === "resume_id" && this.sessionId
                 ? latestUserMessage(messages)
-                : buildCompactPrompt(messages, {}),
+                : buildCompactPrompt(messages, { keep: carriedContext ? Infinity : 8 }),
             text_elements: [],
           },
         ],
@@ -1028,6 +1028,7 @@ class AgyCliProvider {
           `Work in ${this.repoRoot}.`,
           "Return the final answer to the user's request.",
         ].join("\n"),
+        keep: options.carriedContext ? Infinity : 8,
       });
     const child = spawnCommand(cli, this.buildArgs(model, { permission, hookDir: hook?.dir || "" }), {
       cwd: this.repoRoot,
@@ -1253,6 +1254,7 @@ class ClaudeCliProvider {
         "Return only the final answer to the user's request.",
         "Do not output planning or tool chatter.",
       ].join("\n"),
+      keep: options.carriedContext ? Infinity : 8,
     });
     const mode = normalizePermissionMode(permissionMode);
     const useBridge = Boolean(approvalBridge?.url && approvalBridge?.token) && mode !== "read-only";
@@ -1425,7 +1427,7 @@ class HermesCliProvider {
     return args;
   }
 
-  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null, onProcessStart = null } = {}) {
+  async chatCompletionStreamRaw(messages, model, { onOutput = null, signal = null, onProcessStart = null, carriedContext = false } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -1438,6 +1440,7 @@ class HermesCliProvider {
         "You are running in non-interactive single-query mode.",
         "Return only the final answer to the user's request.",
       ].join("\n"),
+      keep: carriedContext ? Infinity : 8,
     });
     // Spawn the hermes executable directly (not through cmd.exe) so the
     // multi-line prompt survives as a single -q argument; cmd.exe would
