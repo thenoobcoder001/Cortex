@@ -1,5 +1,17 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
+function folderExists(target) {
+  if (!target || !path.isAbsolute(target)) return false;
+  try {
+    return fs.statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function handle(ctx) {
   const { method, pathname, body, reply, service, isLocal } = ctx;
 
@@ -37,6 +49,19 @@ async function handle(ctx) {
     return true;
   }
 
+  // Which saved project folders still exist, for the sidebar. Desktop only:
+  // remote callers have no business probing the disk.
+  //   POST /api/projects/exists { paths: [...] } -> { exists: { path: bool } }
+  if (method === "POST" && pathname === "/api/projects/exists") {
+    if (!isLocal) {
+      reply(403, { detail: "Only the desktop app can check project folders." });
+      return true;
+    }
+    const paths = Array.isArray(body.paths) ? body.paths.slice(0, 200).map(String) : [];
+    reply(200, { exists: Object.fromEntries(paths.map((target) => [target, folderExists(target)])) });
+    return true;
+  }
+
   if (method === "POST" && pathname === "/api/providers/test") {
     reply(200, await service.testProviderConnection(body));
     return true;
@@ -45,4 +70,4 @@ async function handle(ctx) {
   return false;
 }
 
-module.exports = { handle };
+module.exports = { handle, folderExists };

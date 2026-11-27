@@ -83,6 +83,41 @@ export default function useProjects({ backendUrl, snapshot }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRepoRoot, backendUrl, expandedRepos, projectChats, savedProjects]);
 
+  // Saved projects whose folder is gone (moved, renamed, deleted). They stay
+  // in the list, marked, until the person removes them. Rechecked when the
+  // list changes and when the window regains focus.
+  const [missingProjects, setMissingProjects] = useState(() => new Set());
+  const projectPathsKey = savedProjects.map((project) => project.path).join("\n");
+  useEffect(() => {
+    if (!backendUrl || !projectPathsKey) {
+      setMissingProjects(new Set());
+      return undefined;
+    }
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const response = await fetch(`${backendUrl}/api/projects/exists`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paths: projectPathsKey.split("\n") }),
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (cancelled) return;
+        const missing = Object.entries(data.exists || {}).filter(([, exists]) => !exists).map(([path]) => path);
+        setMissingProjects(new Set(missing));
+      } catch {
+        // Backend unreachable: say nothing rather than mark everything missing.
+      }
+    };
+    void check();
+    window.addEventListener("focus", check);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", check);
+    };
+  }, [backendUrl, projectPathsKey]);
+
   const chatsForProject = (repoRoot) => {
     const projectPath = normalizeProject(repoRoot);
     if (projectPath === activeRepoRoot) {
@@ -96,6 +131,7 @@ export default function useProjects({ backendUrl, snapshot }) {
     chatsForProject,
     expandedRepos,
     fetchProjectChats,
+    missingProjects,
     savedProjects,
     setProjectChats,
     setSavedProjects,

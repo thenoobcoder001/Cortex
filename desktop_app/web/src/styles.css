@@ -841,6 +841,29 @@ button:disabled {
   color: var(--text);
 }
 
+/* Saved project whose folder no longer exists: greyed, with a label. */
+.project-item.missing .project-main {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  opacity: 0.55;
+}
+
+.project-item.missing .project-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+
+.project-missing-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding-left: 23px;
+}
+
+.project-remove-btn:hover {
+  color: #e8875b;
+}
+
 .project-path {
   color: var(--text-faint);
   font-size: 11px;

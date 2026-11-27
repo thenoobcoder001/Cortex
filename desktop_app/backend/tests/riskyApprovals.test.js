@@ -251,6 +251,27 @@ test("Claude in Full access: per-turn settings ask for shell calls; the bridge d
   }
 });
 
+test("projects/exists reports missing folders to the desktop only", async () => {
+  const repoRoot = makeTempRepo();
+  const service = createService(repoRoot, new CommandProvider("echo"));
+  const backend = await startBackendServer({ host: "127.0.0.1", port: 0, service });
+  try {
+    const gone = path.join(os.tmpdir(), `cortex-gone-${Date.now()}`);
+    const ask = (headers = {}) => fetch(`${backend.url}/api/projects/exists`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ paths: [repoRoot, gone, "relative/path"] }),
+    });
+    const response = await ask();
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).exists, { [repoRoot]: true, [gone]: false, "relative/path": false });
+    const remote = await ask({ "X-PocketAI-Relay-Device": "phone-1" });
+    assert.equal(remote.status, 403);
+  } finally {
+    await backend.close();
+  }
+});
+
 test(".claude/settings.json: new repos ask for risky commands; Cortex's old deny list moves to ask; a person's file is left alone", () => {
   const fresh = makeTempRepo();
   assert.equal(ensureClaudeSettings(fresh), "created");

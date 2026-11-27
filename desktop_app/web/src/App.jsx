@@ -296,8 +296,10 @@ export default function App() {
     setSavedProjects(nextProjects);
     setProjectMenuPath("");
 
-    if (repoRoot === snapshot?.config?.repoRoot && nextProjects.length > 0) {
-      await handleConfigUpdate({ repoRoot: nextProjects[0].path });
+    // Removing the open project switches to another one whose folder exists.
+    const fallback = nextProjects.find((project) => !projects.missingProjects.has(project.path));
+    if (repoRoot === snapshot?.config?.repoRoot && fallback) {
+      await handleConfigUpdate({ repoRoot: fallback.path });
     }
   };
 
@@ -508,6 +510,8 @@ export default function App() {
           handleSubmitRenameChat={chats.handleSubmitRenameChat}
           handleCancelRenameChat={chats.handleCancelRenameChat}
           handleDeleteChat={chats.handleDeleteChat}
+          missingProjects={projects.missingProjects}
+          handleRemoveProject={handleRemoveSavedProject}
         />
 
         <main className="chat-area">

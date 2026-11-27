@@ -24,6 +24,8 @@ export default function ProjectSidebar({
   handleSubmitRenameChat,
   handleCancelRenameChat,
   handleDeleteChat,
+  missingProjects = new Set(),
+  handleRemoveProject,
 }) {
   return (
     <aside className="sidebar">
@@ -36,18 +38,22 @@ export default function ProjectSidebar({
           {savedProjects.length === 0 && (
             <div className="rail-empty">Add a folder or project to start exploring files.</div>
           )}
-          {savedProjects.map((project) => (
+          {savedProjects.map((project) => {
+            const missing = missingProjects.has(project.path);
+            return (
             <div key={project.path} className="project-group">
               <div
-                className={
-                  project.path === snapshot.config.repoRoot ? "project-item active" : "project-item"
-                }
+                className={[
+                  "project-item",
+                  project.path === snapshot.config.repoRoot ? "active" : "",
+                  missing ? "missing" : "",
+                ].filter(Boolean).join(" ")}
               >
                 <button
                   type="button"
                   className="project-main"
                   onClick={() => toggleRepo(project.path)}
-                  title={project.path}
+                  title={missing ? `Folder not found: ${project.path}` : project.path}
                 >
                   <span className="project-name">
                     <Folder size={15} className="project-folder-icon" aria-hidden="true" />
@@ -58,17 +64,30 @@ export default function ProjectSidebar({
                       aria-hidden="true"
                     />
                   </span>
+                  {missing && <span className="project-missing-label">Folder not found</span>}
                 </button>
                 <div className="project-actions" onClick={(event) => event.stopPropagation()}>
-                  <button
-                    type="button"
-                    className="project-action-btn"
-                    onClick={() => void handleNewChat(project.path)}
-                    title="New chat in project"
-                    aria-label="New chat in project"
-                  >
-                    <SquarePen size={15} />
-                  </button>
+                  {missing ? (
+                    <button
+                      type="button"
+                      className="project-action-btn project-remove-btn"
+                      onClick={() => void handleRemoveProject(project.path)}
+                      title="Remove from the list (nothing on disk is touched)"
+                      aria-label="Remove project from list"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="project-action-btn"
+                      onClick={() => void handleNewChat(project.path)}
+                      title="New chat in project"
+                      aria-label="New chat in project"
+                    >
+                      <SquarePen size={15} />
+                    </button>
+                  )}
                   <div className="project-menu-wrap">
                     <button
                       type="button"
@@ -225,7 +244,8 @@ export default function ProjectSidebar({
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </aside>
