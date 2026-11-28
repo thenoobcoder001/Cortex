@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QUICK_COMMANDS } from "../app/constants.js";
 import { readNdjsonStream } from "../app/utils.js";
+import { applyActivityEvent } from "../app/activity.js";
 
 // The chat composer's send flow: the draft, the optimistic "pending turn" per
 // chat while /api/chat/send-stream streams NDJSON events back, quick terminal
@@ -102,7 +103,7 @@ export default function useStreamingSend({
     setSendingChatIds((current) => (current.includes(chatId) ? current : [...current, chatId]));
     setPendingTurns((current) => ({
       ...current,
-      [chatId]: { chatId, userMessage: null, assistantText: "", running: true },
+      [chatId]: { chatId, userMessage: null, assistantText: "", running: true, startedAt: Date.now(), activity: [] },
     }));
 
     try {
@@ -122,6 +123,7 @@ export default function useStreamingSend({
           setPendingTurns((current) => ({
             ...current,
             [eventChatId]: {
+              ...current[eventChatId],
               chatId: eventChatId,
               userMessage: null,
               assistantText: event.type === "assistant"
@@ -130,6 +132,13 @@ export default function useStreamingSend({
               running: true,
             },
           }));
+        } else if (event.type === "tool_call" || event.type === "tool_result") {
+          setPendingTurns((current) => {
+            const previous = current[eventChatId] || {};
+            const activity = applyActivityEvent(previous.activity, event);
+            if (activity === previous.activity) return current;
+            return { ...current, [eventChatId]: { ...previous, chatId: eventChatId, userMessage: null, running: true, activity } };
+          });
         } else if (event.type === "completed") {
           if (event.snapshot) {
             setSnapshot(event.snapshot);
@@ -383,7 +392,7 @@ export default function useStreamingSend({
     setError("");
     setPendingTurns((current) => ({
       ...current,
-      [requestKey]: { chatId: requestKey, userMessage: outgoingMessage, assistantText: "", running: true },
+      [requestKey]: { chatId: requestKey, userMessage: outgoingMessage, assistantText: "", running: true, startedAt: Date.now(), activity: [] },
     }));
     setSendingChatIds((current) => (current.includes(requestKey) ? current : [...current, requestKey]));
 
@@ -422,6 +431,7 @@ export default function useStreamingSend({
               const next = { ...current };
               delete next[requestKey];
               next[eventChatId] = {
+                ...previous,
                 chatId: eventChatId,
                 userMessage: event.message,
                 assistantText: previous.assistantText || "",
@@ -437,6 +447,7 @@ export default function useStreamingSend({
               return {
                 ...current,
                 [eventChatId]: {
+                  ...previous,
                   chatId: eventChatId,
                   userMessage: previous.userMessage || outgoingMessage,
                   assistantText: `${previous.assistantText || ""}${event.text || ""}`,
@@ -446,15 +457,39 @@ export default function useStreamingSend({
             });
             break;
           case "assistant":
-            setPendingTurns((current) => ({
-              ...current,
-              [eventChatId]: {
-                chatId: eventChatId,
-                userMessage: current[eventChatId]?.userMessage || outgoingMessage,
-                assistantText: event.text || "",
-                running: true,
-              },
-            }));
+            setPendingTurns((current) => {
+              const previous = current[eventChatId] || current[requestKey] || {};
+              return {
+                ...current,
+                [eventChatId]: {
+                  ...previous,
+                  chatId: eventChatId,
+                  userMessage: previous.userMessage || outgoingMessage,
+                  assistantText: event.text || "",
+                  running: true,
+                },
+              };
+            });
+            break;
+          case "tool_call":
+          case "tool_result":
+            // The live activity line and step list (commands, reads, edits).
+            setPendingTurns((current) => {
+              const previous = current[eventChatId] || current[requestKey] || {};
+              const activity = applyActivityEvent(previous.activity, event);
+              if (activity === previous.activity) return current;
+              return {
+                ...current,
+                [eventChatId]: {
+                  ...previous,
+                  chatId: eventChatId,
+                  userMessage: previous.userMessage || outgoingMessage,
+                  assistantText: previous.assistantText || "",
+                  running: true,
+                  activity,
+                },
+              };
+            });
             break;
           case "completed":
             if (event.snapshot) {

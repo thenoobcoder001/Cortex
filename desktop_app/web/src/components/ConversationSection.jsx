@@ -1,4 +1,5 @@
 import { Bug, Compass, FlaskConical, ListChecks } from "lucide-react";
+import ActivityLog from "./ActivityLog.jsx";
 import MarkdownMessage from "./MarkdownMessage.jsx";
 import TurnChangesSummary from "./TurnChangesSummary.jsx";
 
@@ -29,6 +30,7 @@ export default function ConversationSection({
   activePendingTurn,
   copyText,
   displayMessages,
+  onOpenAudit,
   onOpenTurnDiff,
   onPickStarter,
   openTurnId,
@@ -60,7 +62,10 @@ export default function ConversationSection({
             className={`message-row ${message.role}${message.pending ? " pending" : ""}`}
           >
             <div className="message-bubble">
-              {message.role === "assistant" && (
+              {message.role === "assistant" && message.activity && (
+                <ActivityLog activity={message.activity} onOpenAudit={onOpenAudit} />
+              )}
+              {message.role === "assistant" && String(message.content || "").trim() && (
                 <div className="message-actions">
                   <button
                     type="button"
@@ -89,7 +94,7 @@ export default function ConversationSection({
           </div>
         ))
       )}
-      {activePendingTurn?.running && !activePendingTurn?.assistantText && (
+      {activePendingTurn?.running && !activePendingTurn?.assistantText && !activePendingTurn?.activity?.length && (
         <div className="message-row assistant">
           <div className="thinking-dots">
             <span></span>

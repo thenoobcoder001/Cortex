@@ -236,8 +236,15 @@ export function buildDisplayMessages(messages, pendingTurn) {
   if (pendingTurn?.userMessage && !pendingUserAlreadySaved) {
     visible.push({ role: "user", content: pendingTurn.userMessage, pending: true });
   }
-  if (pendingTurn?.assistantText) {
-    visible.push({ role: "assistant", content: pendingTurn.assistantText });
+  const pendingSteps = Array.isArray(pendingTurn?.activity) ? pendingTurn.activity : [];
+  if (pendingTurn?.assistantText || pendingSteps.length) {
+    visible.push({
+      role: "assistant",
+      content: pendingTurn.assistantText || "",
+      // `live`: the step log shows "Working for …" and the current step.
+      activity: pendingSteps.length ? { steps: pendingSteps, startedAt: pendingTurn.startedAt, live: true } : undefined,
+      live: Boolean(pendingTurn.running),
+    });
   }
   return visible;
 }
