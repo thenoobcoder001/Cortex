@@ -810,12 +810,13 @@ class DesktopSessionService {
     if (this.config.assistantMemory) {
       systemParts.push(`Assistant memory:\n${this.config.assistantMemory}`);
     }
-    // turnChanges and model are Cortex metadata; API providers reject
-    // unknown message fields.
+    // turnChanges, activity and model are Cortex metadata; API providers
+    // reject unknown message fields.
     const providerMessages = messages.map((message) => {
-      if (!message?.turnChanges && message?.model === undefined) return message;
+      if (!message?.turnChanges && !message?.activity && message?.model === undefined) return message;
       const copy = { ...message };
       delete copy.turnChanges;
+      delete copy.activity;
       delete copy.model;
       return copy;
     });

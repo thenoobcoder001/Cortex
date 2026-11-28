@@ -6,6 +6,7 @@ const platform = require("./platform");
 const { codexPolicy, claudePermissionArgs, agyPermissionConfig, agyFallbackNote, normalizePermissionMode } = require("./permissionModes");
 const { writeClaudeMcpConfig, writeAgyHookWorkspace } = require("./approvalBridge");
 const { claudeRiskyAskSettings, claudeShellAskSettings } = require("./riskyCommands");
+const { codexItemResult, describeAgyTool, describeClaudeTool, describeCodexItem } = require("./activity");
 
 // Strip ANSI escape sequences from PTY output
 function stripAnsi(str) {
@@ -456,7 +457,7 @@ class CodexProvider {
     }
   }
 
-  async chatCompletionAppServerStream(messages, model, { onOutput = null, signal = null, onProcessStart = null, permissionMode = "full-access", askApproval = null, carriedContext = false } = {}) {
+  async chatCompletionAppServerStream(messages, model, { onOutput = null, onEvent = null, signal = null, onProcessStart = null, permissionMode = "full-access", askApproval = null, carriedContext = false } = {}) {
     if (signal?.aborted) {
       throw new InterruptError("Request interrupted.");
     }
@@ -483,6 +484,17 @@ class CodexProvider {
     // Command and file-change items by id: approval requests only carry the
     // item id, the command / diff arrive on item/started.
     const items = new Map();
+    // Steps already reported to the activity log, by item id.
+    const reportedSteps = new Set();
+    const reportStep = (item) => {
+      const id = String(item?.id || "");
+      if (!id || reportedSteps.has(id)) return reportedSteps.has(id);
+      const step = describeCodexItem(item, this.repoRoot);
+      if (!step) return false;
+      reportedSteps.add(id);
+      onEvent?.("tool_call", { id, ...step });
+      return true;
+    };
     const policy = codexPolicy(permissionMode);
 
     const sendRequest = (method, params, timeoutMs = 20000) =>
@@ -547,6 +559,16 @@ class CodexProvider {
           const item = message.params?.item;
           if (item?.id && (item.type === "commandExecution" || item.type === "fileChange")) {
             items.set(String(item.id), item);
+          }
+          if (message.method === "item/started") reportStep(item);
+          return;
+        }
+        if (message.method === "item/completed" && message.params?.item?.type !== "agentMessage") {
+          // A step finished: report it (and its start, if item/started was
+          // missed) so the activity log and the audit see it.
+          const item = message.params?.item;
+          if (reportStep(item)) {
+            onEvent?.("tool_result", { id: String(item.id), ...codexItemResult(item) });
           }
           return;
         }
@@ -1055,7 +1077,7 @@ class AgyCliProvider {
     }
     const parser = new AgyStreamParser({
       onText: (delta) => onOutput?.(delta),
-      onToolCall: ({ id, name, args }) => onEvent?.("tool_call", { id, name, args }),
+      onToolCall: ({ id, name, args }) => onEvent?.("tool_call", { id, name, args, ...describeAgyTool(name, args, this.repoRoot) }),
       onToolResult: ({ id, name, ok, result }) => onEvent?.("tool_result", { id, name, ok, result, change: null }),
     });
     const closed = new Promise((resolve) => child.once("close", resolve));
@@ -1285,8 +1307,22 @@ class ClaudeCliProvider {
     }
   }
 
+  // Tool steps in one stream-json event: tool_use blocks in assistant
+  // messages start a step, tool_result blocks in the next user message end it.
+  reportClaudeSteps(event, onEvent) {
+    if (!onEvent || (event?.type !== "assistant" && event?.type !== "user")) return;
+    const parts = Array.isArray(event?.message?.content) ? event.message.content : [];
+    for (const part of parts) {
+      if (part?.type === "tool_use" && part.id) {
+        onEvent("tool_call", { id: String(part.id), name: String(part.name || ""), ...describeClaudeTool(part.name, part.input, this.repoRoot) });
+      } else if (part?.type === "tool_result" && part.tool_use_id) {
+        onEvent("tool_result", { id: String(part.tool_use_id), ok: part.is_error !== true });
+      }
+    }
+  }
+
   async _runClaudeChild(child, prompt, messages, model, options) {
-    const { onOutput = null, signal = null, onProcessStart = null } = options;
+    const { onOutput = null, onEvent = null, signal = null, onProcessStart = null } = options;
     onProcessStart?.(child.pid);
     child.stdin.write(prompt);
     child.stdin.end();
@@ -1327,6 +1363,7 @@ class ClaudeCliProvider {
           this.sessionId = String(event.session_id);
           this.sessionMode = "resume_id";
         }
+        this.reportClaudeSteps(event, onEvent);
         // Capture CLI-level errors reported in the result event (e.g. bad --resume ID)
         if (event?.type === "result" && event?.is_error === true) {
           const errDetail = Array.isArray(event.errors) && event.errors.length > 0

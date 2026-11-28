@@ -15,6 +15,7 @@ const { agyToolSummary } = require("./approvalBridge");
 const { assessCommand, declineMessage, riskLabel, riskyGate } = require("./riskyCommands");
 const { ensureClaudeSettings } = require("./claudeSettings");
 const { labelReplies } = require("./contextCarry");
+const { ActivityLog, describeApiTool } = require("./activity");
 
 function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
   const titleSource = String(userPrompt || "").split(/\r?\n/, 1)[0].trim() || "Implementation Plan";
@@ -25,9 +26,56 @@ function buildPlanMeta(chatStore, chatId, userPrompt, assistantText) {
 // The assistant reply, plus a small summary of the files this turn changed
 // (full diffs live in the turn record and load on demand).
 // `model` records who wrote it, so a later provider can be told.
-function assistantReply(content, turn, model) {
+// `activity` is the turn's step log (commands, reads, edits), when it had any.
+function assistantReply(content, turn, model, activity = null) {
   const reply = { role: "assistant", content, model: String(model || "") };
-  return turn ? { ...reply, turnChanges: turn } : reply;
+  if (turn) reply.turnChanges = turn;
+  if (activity?.size) reply.activity = activity.end().toJSON();
+  return reply;
+}
+
+// Every command a CLI agent ran goes in the audit trail, whatever the
+// permission mode: approvals only cover the commands that asked. Declined
+// commands didn't run (the decline is already audited). Returns the entry's
+// sequence number, which the activity log links to.
+function auditRanCommand(service, step, { auditMeta, repoRoot, note = "" }) {
+  if (!step?.command || step.status === "declined") return null;
+  const record = service.recordAuditEntry({
+    ...auditMeta,
+    source: "agent",
+    action: "run_command",
+    command: step.command,
+    exitCode: Number.isInteger(step.exitCode) ? step.exitCode : null,
+    success: step.status !== "failed",
+    detail: note || (step.status === "failed" ? "failed" : ""),
+  }, repoRoot);
+  return Number.isInteger(record?.seq) ? record.seq : null;
+}
+
+// Feeds one provider tool event into the turn's activity log (and, for a
+// finished command, the audit). Returns the payload to stream to the UI.
+function trackActivityEvent(service, type, payload, { activity, auditMeta, repoRoot }) {
+  if (!activity || (type !== "tool_call" && type !== "tool_result")) return payload;
+  if (type === "tool_call") {
+    const step = activity.start(payload);
+    return step ? { ...payload, id: step.id, kind: step.kind, label: step.label } : payload;
+  }
+  const step = activity.finish(payload);
+  if (!step) return payload;
+  const auditSeq = auditRanCommand(service, step, { auditMeta, repoRoot });
+  if (auditSeq !== null) step.auditSeq = auditSeq;
+  return { ...payload, kind: step.kind, label: step.label, status: step.status, exitCode: step.exitCode ?? null, durationMs: step.durationMs, auditSeq: step.auditSeq ?? null };
+}
+
+// Commands the CLI started but never reported a result for (an interrupted
+// or crashed run) are still audited, marked as such.
+function auditUnfinishedCommands(service, { activity, auditMeta, repoRoot }) {
+  for (const step of activity?.entries || []) {
+    if (step.status !== "running" || !step.command) continue;
+    step.status = "unknown";
+    const auditSeq = auditRanCommand(service, step, { auditMeta, repoRoot, note: "outcome not reported by the agent" });
+    if (auditSeq !== null) step.auditSeq = auditSeq;
+  }
 }
 
 async function *drainQueuedEvents(worker, queue, takeWaiter) {
@@ -54,7 +102,8 @@ async function *drainQueuedEvents(worker, queue, takeWaiter) {
   }
 }
 
-async function *runCliRequest(provider, messages, model, service, chatId, extraOptions = {}) {
+// `tracking` = { activity, auditMeta, repoRoot } for the activity log and audit.
+async function *runCliRequest(provider, messages, model, service, chatId, extraOptions = {}, tracking = {}) {
   const queue = [];
   const waiter = { current: null };
   let cliError = null;
@@ -80,14 +129,15 @@ async function *runCliRequest(provider, messages, model, service, chatId, extraO
           if (!chunk) return;
           push("cli_output", { stream: "stdout", text: chunk });
         },
-        // Tool steps, for providers that report them (Antigravity).
-        onEvent: (type, payload) => push(type, payload),
+        // Tool steps (commands, reads, edits): the activity log and audit.
+        onEvent: (type, payload) => push(type, trackActivityEvent(service, type, payload, tracking)),
         // A permission fallback decided at run time (e.g. no approval hook).
         onNotice: (message) => push("status", { phase: "permissions", message }),
       });
     } catch (error) {
       cliError = error;
     } finally {
+      auditUnfinishedCommands(service, tracking);
       worker.done = true;
       waiter.current?.();
     }
@@ -261,6 +311,9 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     yield service.event("status", { phase: "permissions", message: modeInfo.note, permissionMode: modeInfo, chatId });
   }
   const approvalContext = { provider: auditMeta.provider, model: requestModel, repoRoot: requestRepoRoot };
+  // What the agent does this turn, shown live and saved on the reply.
+  const activity = new ActivityLog();
+  const tracking = { activity, auditMeta, repoRoot: requestRepoRoot };
   // Providers call this to ask the user; it resolves to { decision, by,
   // message? }. Risky commands ask in every mode (Full access included),
   // the rest of Full access is answered here without a card.
@@ -279,7 +332,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
     return service.saveCompletedChat({
       chatStore: requestChatStore,
       chatId,
-      messages: [...baseMessages, assistantReply(finalText, changes.turn, requestModel)],
+      messages: [...baseMessages, assistantReply(finalText, changes.turn, requestModel, activity)],
       model: requestModel,
       providerState: changes.providerState,
       permissionMode: requestPermissionMode,
@@ -329,7 +382,7 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         };
       }
       let finalText = "";
-      const cliStream = runCliRequest(cliEntry.provider, baseForProvider, requestModel, service, chatId, cliOptions);
+      const cliStream = runCliRequest(cliEntry.provider, baseForProvider, requestModel, service, chatId, cliOptions, tracking);
       while (true) {
         const next = await cliStream.next();
         if (next.done) { finalText = String(next.value || ""); break; }
@@ -371,7 +424,16 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
         usedTools += 1;
         const toolName = toolCall.function.name;
         const args = JSON.parse(toolCall.function.arguments || "{}");
-        yield service.event("tool_call", { name: toolName, args, chatId });
+        // Cortex's own tools audit themselves (toolExecutor), so the API path
+        // only feeds the activity log here.
+        const step = activity.start({ id: toolCall.id, ...describeApiTool(toolName, args, requestRepoRoot) });
+        const stepInfo = step ? { id: step.id, kind: step.kind, label: step.label } : {};
+        const finishStep = (result) => {
+          const failed = String(result || "").startsWith("ERROR");
+          const done = step ? activity.finish({ id: step.id, ok: !failed }) : null;
+          return done ? { ...stepInfo, status: done.status, durationMs: done.durationMs } : stepInfo;
+        };
+        yield service.event("tool_call", { name: toolName, args, chatId, ...stepInfo });
         service.toolExecutor.readOnly = requestToolReadOnly;
         service.toolExecutor.auditMeta = auditMeta;
         // Supervised / auto-accept-edits: ask before the tool touches anything.
@@ -392,14 +454,15 @@ async function *sendMessageEvents(service, text, { chatId = null, repoRoot = nul
           }
           if (answer.decision !== "approve") {
             const declined = `ERROR: ${declineMessage(risk, answer.by)}`;
-            yield service.event("tool_result", { name: toolName, result: declined, change: null, chatId });
+            if (step) activity.finish({ id: step.id, status: "declined", ok: false });
+            yield service.event("tool_result", { name: toolName, result: declined, change: null, chatId, ...stepInfo, status: "declined" });
             workingMessages.push({ role: "tool", tool_call_id: toolCall.id, name: toolName, content: declined });
             continue;
           }
         }
         const [result, change] = await service.toolExecutor.executeWithMetadata(toolName, args, { approved: mustAsk });
         if (change) storedChanges = [...storedChanges, change];
-        yield service.event("tool_result", { name: toolName, result, change, chatId });
+        yield service.event("tool_result", { name: toolName, result, change, chatId, ...finishStep(result) });
         workingMessages.push({
           role: "tool",
           tool_call_id: toolCall.id,
